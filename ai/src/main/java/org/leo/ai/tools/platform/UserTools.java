@@ -91,7 +91,10 @@ public class UserTools {
         user.setPrivilege(normalizePrivilege(privilege));
         user.setEmail(trimToNull(email));
         user.setPhone(trimToNull(phone));
-        user.setStatus(status == null ? 1 : status);
+        user.setStatus(normalizeStatus(status, 1));
+        if (isBuiltInAdmin(user) && user.getStatus() == 0) {
+            throw new IllegalArgumentException("admin用户为系统内置账户，禁止禁用");
+        }
         user.setLoginCount(0);
         user.setTeamId(trimToNull(teamId));
         user.setRemark(trimToNull(remark));
@@ -106,6 +109,7 @@ public class UserTools {
                                            Integer status, String teamId, String remark) {
         User existing = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (existing == null) throw new IllegalArgumentException("用户不存在");
+        boolean builtInAdmin = isBuiltInAdmin(existing);
 
         if (!isBlank(userName) && !userName.equals(existing.getUserName())) {
             if (userService.getUserByName(userName) != null) {
@@ -117,12 +121,30 @@ public class UserTools {
             existing.setPassword(PasswordUtil.md5(password));
         }
         if (!isBlank(privilege)) {
-            existing.setPrivilege(normalizePrivilege(privilege));
+            String normalizedPrivilege = normalizePrivilege(privilege);
+            if (builtInAdmin && !normalizedPrivilege.equals(existing.getPrivilege())) {
+                throw new IllegalArgumentException("admin用户为系统内置账户，禁止修改角色");
+            }
+            existing.setPrivilege(normalizedPrivilege);
         }
         if (email != null)    existing.setEmail(trimToNull(email));
         if (phone != null)    existing.setPhone(trimToNull(phone));
-        if (status != null)   existing.setStatus(status);
-        if (teamId != null)   existing.setTeamId(trimToNull(teamId));
+        if (status != null) {
+            Integer nextStatus = normalizeStatus(status, existing.getStatus());
+            if (builtInAdmin && nextStatus == 0) {
+                throw new IllegalArgumentException("admin用户为系统内置账户，禁止禁用");
+            }
+            existing.setStatus(nextStatus);
+        } else if (builtInAdmin) {
+            existing.setStatus(1);
+        }
+        if (teamId != null) {
+            String normalizedTeamId = trimToNull(teamId);
+            if (builtInAdmin && !sameNullable(normalizedTeamId, trimToNull(existing.getTeamId()))) {
+                throw new IllegalArgumentException("admin用户为系统内置账户，禁止修改所属团队");
+            }
+            existing.setTeamId(normalizedTeamId);
+        }
         if (remark != null)   existing.setRemark(trimToNull(remark));
 
         boolean updated = userService.updateUser(existing);
@@ -133,7 +155,7 @@ public class UserTools {
     public Map<String, Object> deleteUser(String userId) {
         User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (user == null) throw new IllegalArgumentException("用户不存在");
-        if (USERNAME_ADMIN.equals(user.getUserName())) throw new IllegalArgumentException("不能删除admin用户");
+        if (isBuiltInAdmin(user)) throw new IllegalArgumentException("admin用户为系统内置账户，禁止删除");
         boolean deleted = userService.delUser(user.getUserId());
         return buildResult("deleted", deleted, user.getUserId(), user.getUserName());
     }
@@ -191,5 +213,19 @@ public class UserTools {
 
     private boolean isBlank(String value) {
         return trimToNull(value) == null;
+    }
+
+    private Integer normalizeStatus(Integer status, Integer fallback) {
+        if (status == null) return fallback != null ? fallback : 1;
+        return status == 0 ? 0 : 1;
+    }
+
+    private boolean isBuiltInAdmin(User user) {
+        if (user == null) return false;
+        return USERNAME_ADMIN.equals(user.getUserId()) || USERNAME_ADMIN.equals(user.getUserName());
+    }
+
+    private boolean sameNullable(String a, String b) {
+        return a == null ? b == null : a.equals(b);
     }
 }

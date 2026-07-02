@@ -140,7 +140,7 @@ public class UserController {
         user.setUserId(UUID.randomUUID().toString());
         user.setPrivilege(targetPrivilege);
         user.setPassword(PasswordUtil.md5(user.getPassword()));
-        user.setStatus(1);
+        user.setStatus(normalizeStatus(user.getStatus(), 1));
         user.setLoginCount(0);
 
         userService.addUser(user);
@@ -167,8 +167,8 @@ public class UserController {
 
         User target = userService.getUserById(userId);
         if (target == null) return ApiResponse.notFound("用户不存在");
-        if (USERNAME_ADMIN.equals(target.getUserName()) &&
-                !UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
+        boolean targetIsBuiltInAdmin = isBuiltInAdmin(target);
+        if (targetIsBuiltInAdmin && !UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权修改admin用户");
         }
 
@@ -199,18 +199,32 @@ public class UserController {
 
         String newPrivilege = getString(params, "privilege");
         if (newPrivilege != null && UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
-            target.setPrivilege(normalizePrivilege(newPrivilege));
+            String normalizedPrivilege = normalizePrivilege(newPrivilege);
+            if (targetIsBuiltInAdmin && !normalizedPrivilege.equals(target.getPrivilege())) {
+                return ApiResponse.forbidden("admin用户为系统内置账户，禁止修改角色");
+            }
+            target.setPrivilege(normalizedPrivilege);
         }
 
         Object statusObj = params.get("status");
         if (statusObj != null) {
-            try { target.setStatus(Integer.parseInt(statusObj.toString())); } catch (NumberFormatException ignored) {}
+            Integer nextStatus = normalizeStatus(statusObj, target.getStatus());
+            if (targetIsBuiltInAdmin && nextStatus == 0) {
+                return ApiResponse.forbidden("admin用户为系统内置账户，禁止禁用");
+            }
+            target.setStatus(nextStatus);
+        } else if (targetIsBuiltInAdmin) {
+            target.setStatus(1);
         }
 
-        String newTeamId = (String) params.get("teamname");
+        String newTeamId = getString(params, "teamname");
         if (newTeamId == null) newTeamId = getString(params, "teamId");
         if (params.containsKey("teamname") || params.containsKey("teamId")) {
-            target.setTeamId(newTeamId == null || newTeamId.isEmpty() ? null : newTeamId);
+            String normalizedTeamId = normalizeNullableId(newTeamId);
+            if (targetIsBuiltInAdmin && !sameNullable(normalizedTeamId, normalizeNullableId(target.getTeamId()))) {
+                return ApiResponse.forbidden("admin用户为系统内置账户，禁止修改所属团队");
+            }
+            target.setTeamId(normalizedTeamId);
         }
 
         String remark = getString(params, "remark");
@@ -240,8 +254,7 @@ public class UserController {
 
         User target = userService.getUserById(userId);
         if (target == null) return ApiResponse.notFound("用户不存在");
-        if (USERNAME_ADMIN.equals(target.getUserName()) &&
-                !UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
+        if (isBuiltInAdmin(target) && !UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
             return ApiResponse.forbidden("无权重置admin密码");
         }
 
@@ -275,7 +288,7 @@ public class UserController {
 
         User target = userService.getUserById(userId);
         if (target == null) return ApiResponse.notFound("用户不存在");
-        if (USERNAME_ADMIN.equals(target.getUserName())) return ApiResponse.forbidden("不能删除admin用户");
+        if (isBuiltInAdmin(target)) return ApiResponse.forbidden("admin用户为系统内置账户，禁止删除");
 
         try {
             userService.checkDeletePermission(caller, target);
@@ -344,5 +357,33 @@ public class UserController {
         if (UserService.PRIVILEGE_ADMIN.equals(privilege)) return UserService.PRIVILEGE_ADMIN;
         if (UserService.PRIVILEGE_LEADER.equals(privilege)) return UserService.PRIVILEGE_LEADER;
         return UserService.PRIVILEGE_NORMAL;
+    }
+
+    private Integer normalizeStatus(Object status, Integer fallback) {
+        if (status == null) return fallback != null ? fallback : 1;
+        if (status instanceof Number number) return number.intValue() == 0 ? 0 : 1;
+        if (status instanceof Boolean bool) return bool ? 1 : 0;
+
+        String value = status.toString().trim().toLowerCase();
+        if (value.isEmpty()) return fallback != null ? fallback : 1;
+        if ("0".equals(value) || "inactive".equals(value) || "disabled".equals(value)
+                || "disable".equals(value) || "false".equals(value)) {
+            return 0;
+        }
+        return 1;
+    }
+
+    private boolean isBuiltInAdmin(User user) {
+        if (user == null) return false;
+        return USERNAME_ADMIN.equals(user.getUserId()) || USERNAME_ADMIN.equals(user.getUserName());
+    }
+
+    private String normalizeNullableId(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private boolean sameNullable(String a, String b) {
+        return a == null ? b == null : a.equals(b);
     }
 }

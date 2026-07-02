@@ -1,6 +1,7 @@
 package org.leo.web.controller.platform.ai;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
@@ -19,12 +20,14 @@ import org.leo.web.service.PlatformAiService;
 import org.leo.web.util.AiControllerUtil;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -43,9 +46,25 @@ public class PlatformAiController {
             });
 
     private final PlatformAiService platformAiService;
+    private final AiModelConfigService aiModelConfigService;
 
-    public PlatformAiController(PlatformAiService platformAiService) {
+    public PlatformAiController(PlatformAiService platformAiService,
+                                AiModelConfigService aiModelConfigService) {
         this.platformAiService = platformAiService;
+        this.aiModelConfigService = aiModelConfigService;
+    }
+
+    /**
+     * 返回平台 AI 是否已具备可用通道。该接口只暴露布尔状态和计数，
+     * 避免主工作台为了判断入口可用性读取后台配置列表。
+     */
+    @GetMapping("/availability")
+    public Map<String, Object> availability() {
+        int enabledCount = aiModelConfigService.listEnabled().size();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("available", enabledCount > 0);
+        data.put("enabledCount", enabledCount);
+        return ApiResponse.success(data);
     }
 
     /**

@@ -37,7 +37,7 @@ public class LoginInterceptor implements HandlerInterceptor {
 
         User user = (User) request.getSession().getAttribute("user");
         if (user == null) {
-            writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("用户未登录"));
+            writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, ApiResponse.unauthorized("用户未登录"));
             return false;
         }
 
@@ -47,7 +47,7 @@ public class LoginInterceptor implements HandlerInterceptor {
                 && !"GET".equalsIgnoreCase(request.getMethod());
         if (handlerMethod.getBean() instanceof UserController || aiModelWrite || aiProviderWrite) {
             if (!PermissionPolicy.isAdmin(user)) {
-                writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, ApiResponse.unauthorized("管理员权限不足"));
+                writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("管理员权限不足"));
                 return false;
             }
         }

@@ -1,11 +1,14 @@
 package org.leo.web.controller.platform.admin;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AuditLog;
 import org.leo.service.audit.AuditLogService;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.security.PermissionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -46,10 +49,17 @@ public class AuditLogController {
     private static final int DEFAULT_DAYS = 30;
     
     private final AuditLogService auditLogService;
+    private final PermissionService permissionService;
     
     @Autowired
-    public AuditLogController(AuditLogService auditLogService) {
+    public AuditLogController(AuditLogService auditLogService, PermissionService permissionService) {
         this.auditLogService = auditLogService;
+        this.permissionService = permissionService;
+    }
+
+    @ModelAttribute
+    public void requireAdmin(HttpServletRequest request) {
+        permissionService.requireAdmin(permissionService.requireLogin(request));
     }
     
     /**
