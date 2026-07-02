@@ -132,6 +132,9 @@ public class TeamController {
         // 清空该团队所有成员的 teamId，并将 leader 降为 normal
         Team team = teamService.getTeamById(teamId);
         if (team == null) throw ApiException.notFound("团队不存在");
+        if (TeamService.ADMIN_TEAM_ID.equals(team.getTeamId()) || TeamService.ADMIN_TEAM_NAME.equals(team.getTeamName())) {
+            throw ApiException.forbidden("不能删除内置团队 " + TeamService.ADMIN_TEAM_NAME);
+        }
 
         for (User member : userService.getUserByTeamId(teamId)) {
             if (member == null) continue;

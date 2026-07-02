@@ -20,11 +20,11 @@ import java.util.Set;
  * <p>Puppet 可见性规则（基于调用方角色与 Puppet permission 字段）：
  * <ul>
  *   <li>admin  — 可见所有 Puppet</li>
- *   <li>leader — 可见自己的所有 Puppet + 团队成员的非 private Puppet + 所有人的 public Puppet</li>
- *   <li>normal — 可见自己的所有 Puppet + 所有人的 public Puppet</li>
+ *   <li>leader — 可见自己的所有 Puppet + 本团队 team/protected 资源 + 所有人的 public Puppet</li>
+ *   <li>normal — 可见自己的所有 Puppet + 本团队 team/protected 资源 + 所有人的 public Puppet</li>
  * </ul>
  *
- * <p>Puppet permission 值：private / protected / public（默认 private）。
+ * <p>Puppet permission 值：private / team / public（默认 private），兼容旧值 protected。
  */
 @Service
 public class PuppetService {
@@ -95,12 +95,29 @@ public class PuppetService {
         // 全局 public Puppet
         result.addAll(findPuppetByPermission("public"));
 
-        // Leader 额外可见：团队成员的非 private Puppet
-        if (UserService.PRIVILEGE_LEADER.equals(role) && teamMemberIds != null) {
+        // 团队共享 Puppet（team 为新值，protected 为历史兼容值）
+        String teamId = user.getTeamId();
+        if (teamId != null && !teamId.isBlank()) {
+            for (Puppet p : getAllPuppet()) {
+                if (p == null || p.getCreateByUserId() == null || p.getCreateByUserId().equals(user.getUserId())) {
+                    continue;
+                }
+                String permission = p.getPermission();
+                if (("team".equals(permission) || "protected".equals(permission))
+                        && teamId.equals(p.getTeamId())) {
+                    result.add(p);
+                }
+            }
+        }
+
+        // 兼容旧数据：早期 protected Puppet 可能只依赖创建者团队而没有 puppet.teamId。
+        if (teamMemberIds != null) {
             for (String memberId : teamMemberIds) {
                 if (memberId == null || memberId.equals(user.getUserId())) continue;
                 for (Puppet p : findPuppetByCreateUserId(memberId)) {
-                    if (!"private".equals(p.getPermission())) {
+                    if (p != null
+                            && (p.getTeamId() == null || p.getTeamId().isBlank())
+                            && ("team".equals(p.getPermission()) || "protected".equals(p.getPermission()))) {
                         result.add(p);
                     }
                 }

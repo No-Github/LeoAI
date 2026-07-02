@@ -5,6 +5,7 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.service.PuppetService;
+import org.leo.service.user.UserService;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -18,9 +19,11 @@ public class PermissionService {
     private static final String SESSION_ATTR_USER = "user";
 
     private final PuppetService puppetService;
+    private final UserService userService;
 
-    public PermissionService(PuppetService puppetService) {
+    public PermissionService(PuppetService puppetService, UserService userService) {
         this.puppetService = puppetService;
+        this.userService = userService;
     }
 
     public User getCurrentUser(HttpServletRequest request) {
@@ -67,7 +70,7 @@ public class PermissionService {
         Puppet current = puppet;
         int depth = 0;
         while (current != null && depth < MAX_PARENT_DEPTH) {
-            if (!PermissionPolicy.canAccessPuppet(current, user)) {
+            if (!canAccessPuppet(current, user)) {
                 return false;
             }
             String parentId = current.getParentPuppetId();
@@ -78,6 +81,23 @@ public class PermissionService {
             depth++;
         }
         return false;
+    }
+
+    private boolean canAccessPuppet(Puppet puppet, User user) {
+        if (PermissionPolicy.canAccessPuppet(puppet, user)) {
+            return true;
+        }
+        if (puppet == null || user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
+            return false;
+        }
+        if (!PermissionPolicy.isTeamVisiblePermission(puppet.getPermission())) {
+            return false;
+        }
+        if (puppet.getTeamId() != null && !puppet.getTeamId().isBlank()) {
+            return false;
+        }
+        User owner = userService.getUserById(puppet.getCreateByUserId());
+        return owner != null && user.getTeamId().equals(owner.getTeamId());
     }
 
     public static String requireText(String value, String message) {

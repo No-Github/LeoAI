@@ -2,7 +2,7 @@
 -- LeoSpring 初始数据
 -- =====================================================
 
--- 插入默认团队
+-- 插入默认系统管理员团队
 INSERT OR REPLACE INTO teams (
     team_id, 
     team_name, 
@@ -13,8 +13,8 @@ INSERT OR REPLACE INTO teams (
     update_time, 
     remark
 ) VALUES (
-    'admin-team',
-    '管理员团队',
+    'system-admin',
+    '系统管理员',
     'admin',
     '系统默认管理员团队',
     1,
@@ -50,7 +50,7 @@ INSERT OR REPLACE INTO users (
     0,
     datetime('now'),
     datetime('now'),
-    'admin-team',
+    'system-admin',
     '系统默认管理员账户'
 );
 

@@ -177,7 +177,7 @@ public class UserController {
             if (!UserService.PRIVILEGE_NORMAL.equals(target.getPrivilege())) {
                 return ApiResponse.forbidden("队长只能修改普通用户");
             }
-            if (!caller.getTeamId().equals(target.getTeamId())) {
+            if (!sameTeam(caller, target)) {
                 return ApiResponse.forbidden("只能修改本团队成员");
             }
         } else if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
@@ -262,7 +262,7 @@ public class UserController {
             if (!UserService.PRIVILEGE_NORMAL.equals(target.getPrivilege())) {
                 return ApiResponse.forbidden("队长只能重置普通用户密码");
             }
-            if (!caller.getTeamId().equals(target.getTeamId())) {
+            if (!sameTeam(caller, target)) {
                 return ApiResponse.forbidden("只能重置本团队成员密码");
             }
         } else if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
@@ -311,8 +311,7 @@ public class UserController {
         if (caller == null) return ApiResponse.unauthorized("未登录");
 
         List<String> teamMemberIds = null;
-        if (UserService.PRIVILEGE_LEADER.equals(caller.getPrivilege())
-                && caller.getTeamId() != null && !caller.getTeamId().isBlank()) {
+        if (caller.getTeamId() != null && !caller.getTeamId().isBlank()) {
             teamMemberIds = new ArrayList<>();
             for (User member : userService.getUserByTeamId(caller.getTeamId())) {
                 if (member != null) teamMemberIds.add(member.getUserId());
@@ -385,5 +384,11 @@ public class UserController {
 
     private boolean sameNullable(String a, String b) {
         return a == null ? b == null : a.equals(b);
+    }
+
+    private boolean sameTeam(User caller, User target) {
+        if (caller == null || target == null) return false;
+        String callerTeamId = caller.getTeamId();
+        return callerTeamId != null && !callerTeamId.isBlank() && callerTeamId.equals(target.getTeamId());
     }
 }

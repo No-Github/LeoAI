@@ -5,7 +5,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.web.security.PermissionPolicy;
-import org.leo.web.controller.platform.admin.UserController;
 import org.leo.core.util.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +44,7 @@ public class LoginInterceptor implements HandlerInterceptor {
                 && !"GET".equalsIgnoreCase(request.getMethod());
         boolean aiProviderWrite = request.getRequestURI().startsWith(request.getContextPath() + "/platform/admin/ai-providers")
                 && !"GET".equalsIgnoreCase(request.getMethod());
-        if (handlerMethod.getBean() instanceof UserController || aiModelWrite || aiProviderWrite) {
+        if (aiModelWrite || aiProviderWrite) {
             if (!PermissionPolicy.isAdmin(user)) {
                 writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("管理员权限不足"));
                 return false;

@@ -13,13 +13,16 @@ import java.util.List;
  * 团队管理服务。
  *
  * <p>只有 admin 用户可以创建或删除团队；队长只能查询/修改自己负责的团队。
- * 内置团队 {@value #ADMIN_TEAM_NAME} 不可删除。
+ * 内置团队 {@value #ADMIN_TEAM_ID} 不可删除。
  */
 @Service
 public class TeamService {
 
+    /** 内置管理员团队 ID，禁止删除。 */
+    public static final String ADMIN_TEAM_ID = "system-admin";
+
     /** 内置管理员团队名，禁止删除。 */
-    public static final String ADMIN_TEAM_NAME = "adminteam";
+    public static final String ADMIN_TEAM_NAME = "系统管理员";
 
     private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
@@ -88,7 +91,7 @@ public class TeamService {
         if (teamId == null || teamId.isBlank()) throw new IllegalArgumentException("teamId不能为空");
         Team team = teamMapper.findTeamById(teamId.trim());
         if (team == null) throw new RuntimeException("团队不存在，teamId: " + teamId);
-        if (ADMIN_TEAM_NAME.equals(team.getTeamName())) {
+        if (ADMIN_TEAM_ID.equals(team.getTeamId()) || ADMIN_TEAM_NAME.equals(team.getTeamName())) {
             throw new IllegalStateException("不能删除内置团队 " + ADMIN_TEAM_NAME);
         }
         return teamMapper.delTeam(teamId.trim());

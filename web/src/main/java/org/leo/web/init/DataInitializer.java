@@ -17,12 +17,12 @@ import org.springframework.stereotype.Component;
  * <p>初始化内容：
  * <ol>
  *   <li>内置 admin 用户（用户名: admin，默认密码: 54ikun，以 MD5 存储）。</li>
- *   <li>内置 adminteam 团队，admin 为队长。</li>
+ *   <li>内置 system-admin 团队，admin 为队长。</li>
  * </ol>
  *
- * <p>若上述数据已存在，则跳过，不会重复创建或覆盖。
- * 初始化顺序：先创建 admin 用户（不设 teamId），再创建 adminteam，再回写 admin 的 teamId，
- * 避免循环依赖（用户引用团队，团队引用用户）。
+ * <p>若上述数据已存在，则跳过，不会重复创建或覆盖用户密码。
+ * 初始化器会把早期版本的 admin-team/adminteam 口径迁移到 system-admin，
+ * 保证内置管理员账户与内置管理员团队只有一套规范边界。
  */
 @Component
 public class DataInitializer {
@@ -32,8 +32,10 @@ public class DataInitializer {
     private static final String ADMIN_USER_ID   = "admin";
     private static final String ADMIN_USER_NAME = "admin";
     private static final String ADMIN_PASSWORD  = "54ikun";   // 明文，存储时自动 MD5
-    private static final String ADMIN_TEAM_ID   = "adminteam";
-    private static final String ADMIN_TEAM_NAME = TeamService.ADMIN_TEAM_NAME; // "adminteam"
+    private static final String ADMIN_TEAM_ID   = TeamService.ADMIN_TEAM_ID;
+    private static final String ADMIN_TEAM_NAME = TeamService.ADMIN_TEAM_NAME;
+    private static final String LEGACY_ADMIN_TEAM_ID = "admin-team";
+    private static final String LEGACY_ADMINTEAM_ID = "adminteam";
 
     private final UserService userService;
     private final TeamService teamService;
@@ -45,18 +47,10 @@ public class DataInitializer {
 
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
-        boolean adminCreated = initAdminUser();
-        boolean teamCreated  = initAdminTeam();
-
-        // 若 admin 用户刚刚创建或 teamId 尚未设置，回写 teamId
-        if (adminCreated || teamCreated) {
-            User admin = userService.getUserByName(ADMIN_USER_NAME);
-            if (admin != null && (admin.getTeamId() == null || admin.getTeamId().isBlank())) {
-                admin.setTeamId(ADMIN_TEAM_ID);
-                userService.updateUser(admin);
-                logger.info("admin 用户 teamId 回写完成");
-            }
-        }
+        initAdminTeam();
+        initAdminUser();
+        normalizeAdminUser();
+        cleanupLegacyAdminTeams();
     }
 
     // ── 私有初始化逻辑 ────────────────────────────────────────────────────────────
@@ -72,7 +66,7 @@ public class DataInitializer {
         admin.setUserName(ADMIN_USER_NAME);
         admin.setPassword(PasswordUtil.md5(ADMIN_PASSWORD));
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
-        // teamId 先不设，待 team 创建后回写
+        admin.setTeamId(ADMIN_TEAM_ID);
         admin.setStatus(1);
         admin.setLoginCount(0);
         userService.addUser(admin);
@@ -80,10 +74,11 @@ public class DataInitializer {
         return true;
     }
 
-    /** @return true 表示本次新建了 adminteam */
+    /** @return true 表示本次新建了 system-admin */
     private boolean initAdminTeam() {
-        if (teamService.getTeamByName(ADMIN_TEAM_NAME) != null) {
-            logger.debug("内置 adminteam 已存在，跳过初始化");
+        Team existing = teamService.getTeamById(ADMIN_TEAM_ID);
+        if (existing != null) {
+            logger.debug("内置 system-admin 团队已存在，跳过初始化");
             return false;
         }
         Team team = new Team();
@@ -93,7 +88,68 @@ public class DataInitializer {
         team.setDescription("系统内置管理员团队");
         team.setStatus(1);
         teamService.addTeam(team);
-        logger.info("内置 adminteam 团队初始化完成");
+        logger.info("内置 system-admin 团队初始化完成");
         return true;
+    }
+
+    private void normalizeAdminUser() {
+        User admin = userService.getUserById(ADMIN_USER_ID);
+        if (admin == null) {
+            admin = userService.getUserByName(ADMIN_USER_NAME);
+        }
+        if (admin == null) {
+            return;
+        }
+
+        boolean changed = false;
+        if (!ADMIN_USER_ID.equals(admin.getUserId())) {
+            logger.warn("发现用户名为 admin 但 userId 非 admin 的账户，跳过内置账户迁移: {}", admin.getUserId());
+            return;
+        }
+        if (!ADMIN_USER_NAME.equals(admin.getUserName())) {
+            admin.setUserName(ADMIN_USER_NAME);
+            changed = true;
+        }
+        if (!UserService.PRIVILEGE_ADMIN.equals(admin.getPrivilege())) {
+            admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
+            changed = true;
+        }
+        if (admin.getStatus() == null || admin.getStatus() != 1) {
+            admin.setStatus(1);
+            changed = true;
+        }
+        if (!ADMIN_TEAM_ID.equals(admin.getTeamId())) {
+            admin.setTeamId(ADMIN_TEAM_ID);
+            changed = true;
+        }
+        if (changed) {
+            userService.updateUser(admin);
+            logger.info("内置 admin 用户已归一到 {} 团队", ADMIN_TEAM_ID);
+        }
+    }
+
+    private void cleanupLegacyAdminTeams() {
+        cleanupLegacyTeamIfUnused(LEGACY_ADMIN_TEAM_ID);
+        cleanupLegacyTeamIfUnused(LEGACY_ADMINTEAM_ID);
+    }
+
+    private void cleanupLegacyTeamIfUnused(String teamId) {
+        if (ADMIN_TEAM_ID.equals(teamId)) {
+            return;
+        }
+        Team team = teamService.getTeamById(teamId);
+        if (team == null) {
+            return;
+        }
+        if (!userService.getUserByTeamId(teamId).isEmpty()) {
+            logger.info("旧内置团队 {} 仍有成员，暂不自动删除", teamId);
+            return;
+        }
+        try {
+            teamService.delTeam(teamId);
+            logger.info("已清理无人使用的旧内置团队 {}", teamId);
+        } catch (Exception e) {
+            logger.warn("清理旧内置团队 {} 失败: {}", teamId, e.getMessage());
+        }
     }
 }

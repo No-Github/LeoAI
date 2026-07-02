@@ -45,6 +45,9 @@ public class PuppetManageController {
     
     // 权限常量
     private static final String PRIVILEGE_ADMIN = "admin";
+    private static final String PRIVILEGE_LEADER = "leader";
+    private static final String PERMISSION_PRIVATE = "private";
+    private static final String PERMISSION_TEAM = "team";
     private static final String PERMISSION_PROTECTED = "protected";
     private static final String PERMISSION_PUBLIC = "public";
     
@@ -66,25 +69,34 @@ public class PuppetManageController {
     }
     
     @RequestMapping(value = "/children", method = RequestMethod.POST)
-    public HashMap<String, Object> getChildrenByParentPuppetId(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> getChildrenByParentPuppetId(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            
+            User user = getUserFromSession(request);
+            if (user == null || user.getUserId() == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
             String puppetId = ControllerUtil.getRequiredStringParam(params, PARAM_PARENT_PUPPET_ID);
             List<Puppet> puppetList = puppetService.findPuppetByParentPuppetId(puppetId);
-            return ApiResponse.success(puppetList != null ? puppetList : new ArrayList<Puppet>());
+            return ApiResponse.success(filterVisiblePuppets(puppetList, user));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
     }
 
     @RequestMapping(value = "/puppet", method = RequestMethod.POST)
-    public HashMap<String, Object> getPuppetById(@RequestBody HashMap<String, Object> params) {
+    public HashMap<String, Object> getPuppetById(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
-            
+            User user = getUserFromSession(request);
+            if (user == null || user.getUserId() == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
             String puppetId = ControllerUtil.getRequiredStringParam(params, PARAM_PUPPET_ID);
             Puppet puppet = puppetService.findPuppetById(puppetId);
             if (puppet == null) {
                 return ApiResponse.notFound("Puppet不存在");
+            }
+            if (!canViewPuppet(puppet, user)) {
+                return ApiResponse.forbidden("无权限访问此Puppet");
             }
             return ApiResponse.success(puppet);
         } catch (IllegalArgumentException e) {
@@ -94,22 +106,11 @@ public class PuppetManageController {
 
     @RequestMapping(value = "/puppets", method = RequestMethod.GET)
     public HashMap<String, Object> getPuppet(HttpServletRequest request) {
-        // 获取用户、团队和公开的Puppet列表
-        List<Puppet> puppetList0 = getPuppetListByUser(request);
-        List<Puppet> puppetList1 = getPuppetListByTeam(request);
-        List<Puppet> puppetList2 = getPuppetListByPublic();
-        Set<Puppet> uniquePuppets = new HashSet<Puppet>();
-        if (puppetList0 != null) {
-            uniquePuppets.addAll(puppetList0);
+        User user = getUserFromSession(request);
+        if (user == null || user.getUserId() == null) {
+            return ApiResponse.unauthorized("用户未登录");
         }
-        if (puppetList1 != null) {
-            uniquePuppets.addAll(puppetList1);
-        }
-        if (puppetList2 != null) {
-            uniquePuppets.addAll(puppetList2);
-        }
-        // 将结果转换回 List，只保留根节点
-        List<Puppet> mergedList = new ArrayList<Puppet>(uniquePuppets);
+        List<Puppet> mergedList = filterVisiblePuppets(puppetService.getAllPuppet(), user);
         Iterator<Puppet> iterator = mergedList.iterator();
         while (iterator.hasNext()) {
             Puppet puppet = iterator.next();
@@ -127,7 +128,7 @@ public class PuppetManageController {
     private List<Puppet> getPuppetListByUser(HttpServletRequest request) {
         User user = getUserFromSession(request);
         if (user == null || user.getUserId() == null) {
-        return new ArrayList<Puppet>();
+            return new ArrayList<Puppet>();
         }
         List<Puppet> puppetList = puppetService.findPuppetByCreateUserId(user.getUserId());
         return puppetList != null ? puppetList : new ArrayList<Puppet>();
@@ -139,12 +140,12 @@ public class PuppetManageController {
     private List<Puppet> getPuppetListByTeam(HttpServletRequest request) {
         User user = getUserFromSession(request);
         if (user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
-        return new ArrayList<Puppet>();
+            return new ArrayList<Puppet>();
         }
         String teamId = user.getTeamId();
         List<User> userList = userService.getUserByTeamId(teamId);
         if (userList == null || userList.isEmpty()) {
-        return new ArrayList<Puppet>();
+            return new ArrayList<Puppet>();
         }
         List<Puppet> allPuppetList = new ArrayList<Puppet>();
         for (User teamUser : userList) {
@@ -154,7 +155,7 @@ public class PuppetManageController {
             List<Puppet> puppetList = puppetService.findPuppetByCreateUserId(teamUser.getUserId());
             if (puppetList != null) {
                 for (Puppet puppet : puppetList) {
-                    if (puppet != null && PERMISSION_PROTECTED.equals(puppet.getPermission())) {
+                    if (puppet != null && isTeamVisiblePermission(puppet.getPermission()) && isSameTeamPuppet(puppet, user)) {
                         allPuppetList.add(puppet);
                     }
                 }
@@ -169,7 +170,7 @@ public class PuppetManageController {
     private List<Puppet> getPuppetListByPublic() {
         List<Puppet> puppets = puppetService.findPuppetByPermission(PERMISSION_PUBLIC);
         if (puppets == null) {
-        return new ArrayList<Puppet>();
+            return new ArrayList<Puppet>();
         }
         for (Puppet puppet : puppets) {
             if (puppet != null) {
@@ -208,7 +209,7 @@ public class PuppetManageController {
             List<Puppet> puppetList = puppetService.findPuppetByCreateUserId(teamUser.getUserId());
             if (puppetList != null) {
                 for (Puppet puppet : puppetList) {
-                    if (puppet != null && PERMISSION_PROTECTED.equals(puppet.getPermission())) {
+                    if (puppet != null && isTeamVisiblePermission(puppet.getPermission()) && isSameTeamPuppet(puppet, user)) {
                         allPuppetList.add(puppet);
                     }
                 }
@@ -241,6 +242,12 @@ public class PuppetManageController {
             return ApiResponse.unauthorized("用户未登录");
         }
         puppet.setCreateByUserId(user.getUserId());
+        String permission = normalizePuppetPermission(puppet.getPermission());
+        if (PERMISSION_PUBLIC.equals(permission) && !isAdmin(user)) {
+            return ApiResponse.forbidden("只有管理员可以创建公开Puppet");
+        }
+        puppet.setPermission(permission);
+        puppet.setTeamId(resolvePuppetTeamId(puppet, user, null));
         String id = UUID.randomUUID().toString();
         puppet.setPuppetId(id);
         boolean result = puppetService.insertPuppet(puppet);
@@ -270,6 +277,14 @@ public class PuppetManageController {
         if (!hasPermissionToModify(existingPuppet, user)) {
             return ApiResponse.forbidden("无权限修改此Puppet");
         }
+
+        String permission = normalizePuppetPermission(puppet.getPermission());
+        if (PERMISSION_PUBLIC.equals(permission) && !isAdmin(user)) {
+            return ApiResponse.forbidden("只有管理员可以设置公开Puppet");
+        }
+        puppet.setPermission(permission);
+        puppet.setCreateByUserId(existingPuppet.getCreateByUserId());
+        puppet.setTeamId(resolvePuppetTeamId(puppet, user, existingPuppet));
         
         boolean result = puppetService.updatePuppetById(puppet);
         if (result) {
@@ -294,6 +309,12 @@ public class PuppetManageController {
         }
         // 删除前先查出 puppet，用于获取 createByUserId 清理工作目录
         Puppet puppet = puppetService.findPuppetById(puppetId);
+        if (puppet == null) {
+            return ApiResponse.notFound("Puppet不存在");
+        }
+        if (!hasPermissionToModify(puppet, user)) {
+            return ApiResponse.forbidden("无权限删除此Puppet");
+        }
         boolean result = puppetService.deletePuppetById(puppetId);
         if (result) {
             // 联动清理 puppet 级工作目录（basic-info、catalina-info 等）
@@ -340,16 +361,102 @@ public class PuppetManageController {
     private User getUserFromSession(HttpServletRequest request) {
         return (User) request.getSession().getAttribute(SESSION_ATTR_USER);
     }
+
+    private List<Puppet> filterVisiblePuppets(List<Puppet> puppets, User user) {
+        if (puppets == null || puppets.isEmpty()) {
+            return new ArrayList<Puppet>();
+        }
+        List<Puppet> visible = new ArrayList<Puppet>();
+        for (Puppet puppet : puppets) {
+            if (canViewPuppet(puppet, user)) {
+                visible.add(puppet);
+            }
+        }
+        return visible;
+    }
+
+    private boolean canViewPuppet(Puppet puppet, User user) {
+        if (puppet == null || user == null || user.getUserId() == null) {
+            return false;
+        }
+        if (isAdmin(user)) {
+            return true;
+        }
+        if (user.getUserId().equals(puppet.getCreateByUserId())) {
+            return true;
+        }
+        if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
+            return true;
+        }
+        return isSameTeamPuppet(puppet, user) && isTeamVisiblePermission(puppet.getPermission());
+    }
     
     /**
      * 检查是否有权限修改Puppet
      */
     private boolean hasPermissionToModify(Puppet puppet, User user) {
-        if (puppet.getCreateByUserId() != null && 
+        if (puppet == null || user == null || user.getUserId() == null) {
+            return false;
+        }
+        if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
+            return isAdmin(user);
+        }
+        if (puppet.getCreateByUserId() != null &&
             puppet.getCreateByUserId().equals(user.getUserId())) {
             return true;
         }
-        return PRIVILEGE_ADMIN.equals(user.getPrivilege());
+        if (isAdmin(user)) {
+            return true;
+        }
+        return PRIVILEGE_LEADER.equals(user.getPrivilege())
+                && isTeamVisiblePermission(puppet.getPermission())
+                && isSameTeamPuppet(puppet, user);
+    }
+
+    private boolean isAdmin(User user) {
+        return user != null && PRIVILEGE_ADMIN.equals(user.getPrivilege());
+    }
+
+    private boolean isTeamVisiblePermission(String permission) {
+        return PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED.equals(permission);
+    }
+
+    private boolean isSameTeamPuppet(Puppet puppet, User user) {
+        if (puppet == null || user == null || user.getTeamId() == null || user.getTeamId().isBlank()) {
+            return false;
+        }
+        if (user.getTeamId().equals(puppet.getTeamId())) {
+            return true;
+        }
+        if (puppet.getTeamId() != null && !puppet.getTeamId().isBlank()) {
+            return false;
+        }
+        User owner = userService.getUserById(puppet.getCreateByUserId());
+        return owner != null && user.getTeamId().equals(owner.getTeamId());
+    }
+
+    private String normalizePuppetPermission(String permission) {
+        if (PERMISSION_PUBLIC.equals(permission)) {
+            return PERMISSION_PUBLIC;
+        }
+        if (PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED.equals(permission)) {
+            return PERMISSION_TEAM;
+        }
+        return PERMISSION_PRIVATE;
+    }
+
+    private String resolvePuppetTeamId(Puppet puppet, User user, Puppet existingPuppet) {
+        if (isAdmin(user)) {
+            String requestedTeamId = puppet.getTeamId();
+            if (requestedTeamId != null && !requestedTeamId.isBlank()) {
+                return requestedTeamId.trim();
+            }
+            return existingPuppet != null ? existingPuppet.getTeamId() : user.getTeamId();
+        }
+        if (user.getTeamId() != null && !user.getTeamId().isBlank()) {
+            return user.getTeamId();
+        }
+        return existingPuppet != null ? existingPuppet.getTeamId() : null;
     }
 
     @RequestMapping(value = "/puppet-jdbc", method = RequestMethod.POST)

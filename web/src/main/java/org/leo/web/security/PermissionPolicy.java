@@ -12,14 +12,25 @@ import org.leo.core.session.PuppetNodeSession;
 public final class PermissionPolicy {
 
     public static final String PRIVILEGE_ADMIN = "admin";
+    public static final String PRIVILEGE_LEADER = "leader";
+    public static final String PERMISSION_PRIVATE = "private";
+    public static final String PERMISSION_TEAM = "team";
+    public static final String PERMISSION_PROTECTED_LEGACY = "protected";
     private static final String PERMISSION_PUBLIC = "public";
-    private static final String PERMISSION_PROTECTED = "protected";
 
     private PermissionPolicy() {
     }
 
     public static boolean isAdmin(User user) {
         return user != null && PRIVILEGE_ADMIN.equals(user.getPrivilege());
+    }
+
+    public static boolean isLeader(User user) {
+        return user != null && PRIVILEGE_LEADER.equals(user.getPrivilege());
+    }
+
+    public static boolean isTeamVisiblePermission(String permission) {
+        return PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED_LEGACY.equals(permission);
     }
 
     public static boolean canAccessSession(PuppetNodeSession session, User user) {
@@ -46,7 +57,7 @@ public final class PermissionPolicy {
         if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
             return true;
         }
-        return PERMISSION_PROTECTED.equals(puppet.getPermission())
+        return isTeamVisiblePermission(puppet.getPermission())
                 && user.getTeamId() != null
                 && user.getTeamId().equals(puppet.getTeamId());
     }

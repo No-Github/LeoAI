@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     proxy_port INTEGER,
     balance_enabled INTEGER DEFAULT 0, -- 0:禁用 1:启用（负载均衡稳定功能）
     max_req_count INTEGER DEFAULT 0,
-    permission VARCHAR(20) DEFAULT 'read', -- read, write, admin
+    permission VARCHAR(20) DEFAULT 'private', -- private, team, public（兼容旧值 protected）
     last_heartbeat DATETIME,
     heartbeat_interval INTEGER DEFAULT 30000, -- 心跳间隔(毫秒)
     create_time DATETIME NOT NULL,
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS puppet_jdbc (
     timeout_seconds INTEGER DEFAULT 30, -- 连接超时时间(秒)
     create_user_id VARCHAR(50) NOT NULL,
     team_id VARCHAR(50), -- 所属团队，NULL表示个人连接
-    is_public INTEGER DEFAULT 0, -- 0:私有 1:公开(团队内共享)
+    is_public INTEGER DEFAULT 0, -- 0:私有 1:团队内共享
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     description TEXT,
