@@ -3,9 +3,11 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.service.audit.PuppetAuditService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -25,11 +27,28 @@ public class SqlTools {
     /** 单引号字符串字面量 */
     private static final Pattern STRING_LITERAL = Pattern.compile("'(?:[^'\\\\]|\\\\.)*'");
 
+    private final PuppetAuditService auditService;
+
+    public SqlTools(PuppetAuditService auditService) {
+        this.auditService = auditService;
+    }
+
     @Tool("执行 SQL 语句（允许写入和结构变更）。验证连接、枚举库表、查询或提取证据。⚠️ 只读查询优先使用 querySql。")
     public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+        Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
+        String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
+        try {
+            Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+            auditService.logSuccess(sessionId, node, "SQL_EXEC", "AI执行SQL", operationPath,
+                    auditParams, "AI执行SQL成功");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "SQL_EXEC", "AI执行SQL", operationPath,
+                    auditParams, e.getMessage());
+            throw e;
+        }
     }
 
     @Tool("执行只读 SQL 查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH）。拒绝写入或结构变更。")
@@ -40,7 +59,18 @@ public class SqlTools {
         }
         String sessionId = AiToolContext.requireSessionId();
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+        Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
+        String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
+        try {
+            Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+            auditService.logSuccess(sessionId, node, "SQL_QUERY", "AI查询SQL", operationPath,
+                    auditParams, "AI查询SQL成功");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "SQL_QUERY", "AI查询SQL", operationPath,
+                    auditParams, e.getMessage());
+            throw e;
+        }
     }
 
     /**
@@ -91,4 +121,41 @@ public class SqlTools {
         return null;
     }
 
+    private Map<String, Object> sqlAuditParams(String sessionId,
+                                               String driverClassName,
+                                               String jdbcUrl,
+                                               String user,
+                                               String password,
+                                               String sqlScript) {
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("sessionId", sessionId);
+        params.put("driverClassName", driverClassName);
+        params.put("jdbcUrl", jdbcUrl);
+        params.put("user", user);
+        params.put("password", password);
+        params.put("sql", sqlScript);
+        return params;
+    }
+
+    private String sqlOperationPath(String jdbcUrl, String sqlScript) {
+        String sql = truncate(sqlScript, 180);
+        if (jdbcUrl == null || jdbcUrl.isBlank()) {
+            return sql;
+        }
+        if (sql == null || sql.isBlank()) {
+            return jdbcUrl;
+        }
+        return jdbcUrl + " | " + sql;
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim().replaceAll("\\s+", " ");
+        if (trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxLength) + "...";
+    }
 }

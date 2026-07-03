@@ -66,6 +66,7 @@ INSERT OR REPLACE INTO system_configs (
 ('system.name', 'LeoSpring', 'string', '系统名称', datetime('now'), datetime('now')),
 ('system.version', '2.1', 'string', '系统版本', datetime('now'), datetime('now')),
 ('system.description', 'LeoSpring - 轻量级远程主机管理平台', 'string', '系统描述', datetime('now'), datetime('now')),
+('audit.mode', 'on', 'string', '审计日志模式：on=开启，write=关闭低风险读操作，off=完全关闭', datetime('now'), datetime('now')),
 ('log.retention.days', '30', 'number', '日志保留天数', datetime('now'), datetime('now')),
 ('session.timeout.minutes', '30', 'number', '会话超时时间(分钟)', datetime('now'), datetime('now')),
 ('heartbeat.interval.ms', '30000', 'number', '心跳间隔(毫秒)', datetime('now'), datetime('now')),

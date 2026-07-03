@@ -142,6 +142,14 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     remark TEXT -- 备注
 );
 
+CREATE INDEX IF NOT EXISTS idx_audit_logs_create_time ON audit_logs(create_time);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_puppet_id ON audit_logs(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_session_id ON audit_logs(session_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON audit_logs(status);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip);
+
 -- 13. AI 供应商与模型配置
 CREATE TABLE IF NOT EXISTS ai_providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

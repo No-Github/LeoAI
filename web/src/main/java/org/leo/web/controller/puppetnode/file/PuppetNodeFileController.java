@@ -128,6 +128,14 @@ public class PuppetNodeFileController {
             response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encoded);
             response.setHeader("Content-Length", String.valueOf(f.length()));
 
+            Map<String, Object> auditParams = new HashMap<>();
+            auditParams.put("path", path);
+            auditParams.put("filename", downloadName);
+            auditParams.put("size", f.length());
+            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_LOCAL", "下载本地文件", path, auditParams,
+                    ApiResponse.CODE_SUCCESS, "下载本地文件", "SUCCESS", null,
+                    AuditLogUtil.getClientIp(request), false);
+
             try (InputStream in = Files.newInputStream(resolved);
                  ServletOutputStream out = response.getOutputStream()) {
                 byte[] buf = new byte[64 * 1024];
@@ -168,6 +176,10 @@ public class PuppetNodeFileController {
             logger.debug("开始分块上传文件: {}, 偏移量: {}, 数据大小: {}", filePath, offset, data.length);
         }
         Map<String, Object> results = puppetCall(() -> node.fileUploadChunk(filePath, offset, data), "文件分块上传失败");
+        if (offset == 0) {
+            AuditLogUtil.logSuccess(node, "FILE_UPLOAD", "上传文件", filePath, params,
+                    ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp());
+        }
         return ApiResponse.success(results != null ? results : new HashMap<>());
     }
 
@@ -187,6 +199,10 @@ public class PuppetNodeFileController {
 
         final long finalSize = size;
         Map<String, Object> results = puppetCall(() -> node.fileDownloadChunk(path, finalSize, offset), "文件分片预览失败");
+        if (offset == 0L) {
+            AuditLogUtil.logSuccess(node, "FILE_READ", "读取文件", path, params,
+                    ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
+        }
         return ApiResponse.success(normalizeChunkResult(results));
     }
 
@@ -203,6 +219,8 @@ public class PuppetNodeFileController {
             Object codeObj = results.get("code");
             int code = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
             if (code == 200 || code == 100) {
+                AuditLogUtil.logSuccess(node, "FILE_READ", "读取文件", path, params,
+                        ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
                 Object dataObj = results.get("data");
                 byte[] chunkData = null;
                 if (dataObj instanceof byte[]) {
@@ -279,6 +297,8 @@ public class PuppetNodeFileController {
         String content = (String) params.get("content");
         JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
         Map<String, Object> results = puppetCall(() -> node.createFile(path, content), "新建文件失败");
+        AuditLogUtil.logSuccess(node, "FILE_NEW", "新建文件", path, params,
+                ApiResponse.CODE_SUCCESS, "新建文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
 
@@ -333,6 +353,8 @@ public class PuppetNodeFileController {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
         Map<String, Object> results = puppetCall(() -> javaPuppetNode.createDir(path), "新建目录失败");
+        AuditLogUtil.logSuccess(javaPuppetNode, "FILE_NEW_DIR", "新建目录", path, params,
+                ApiResponse.CODE_SUCCESS, "新建目录成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
 

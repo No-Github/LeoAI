@@ -21,6 +21,7 @@ import org.leo.web.dto.puppetnode.sql.SqlRequests.MetadataRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.QueryTableRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.UpdateRowRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,12 +58,12 @@ public class PuppetNodeSQLController {
      */
     @PostMapping("/exec")
     public Map<String, Object> execSql(@RequestBody ExecRequest request) {
-        return sqlCall("执行SQL失败", () -> {
+        return auditedSqlCall("执行SQL失败", request, "SQL_EXEC", "执行SQL",
+                sqlOperationPath(request, null, null, request == null ? null : request.sql()), node -> {
             String sqlScript = requireText(request.sql(), "sql");
-            JavaPuppetNode javaPuppetNode = puppetNode(request);
             logger.debug("执行SQL，sessionId: {}", request.sessionId());
             Map<String, Object> results = puppetNodeSqlService.executeSql(
-                    javaPuppetNode, request.connectionOptions(), sqlScript);
+                    node, request.connectionOptions(), sqlScript);
             return ApiResponse.success("ok", results);
         });
     }
@@ -115,10 +116,12 @@ public class PuppetNodeSQLController {
 
     @PostMapping("/data/query-table")
     public Map<String, Object> queryTable(@RequestBody QueryTableRequest request) {
-        return sqlCall("查询表数据失败", () -> ApiResponse.success(
+        return auditedSqlCall("查询表数据失败", request, "SQL_QUERY_TABLE", "查询表数据",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), null), node -> ApiResponse.success(
                 "ok",
                 puppetNodeSqlService.queryTable(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database(),
                         request.table(),
@@ -136,10 +139,12 @@ public class PuppetNodeSQLController {
 
     @PostMapping("/tables/create")
     public Map<String, Object> createTable(@RequestBody CreateTableRequest request) {
-        return sqlCall("创建表失败", () -> ApiResponse.success(
+        return auditedSqlCall("创建表失败", request, "SQL_TABLE_CREATE", "创建数据表",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), null), node -> ApiResponse.success(
                 "创建成功",
                 puppetNodeSqlService.createTable(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database(),
                         request.table(),
@@ -148,20 +153,23 @@ public class PuppetNodeSQLController {
 
     @PostMapping("/databases/create")
     public Map<String, Object> createDatabase(@RequestBody CreateDatabaseRequest request) {
-        return sqlCall("创建数据库失败", () -> ApiResponse.success(
+        return auditedSqlCall("创建数据库失败", request, "SQL_DATABASE_CREATE", "创建数据库",
+                sqlOperationPath(request, request == null ? null : request.database(), null, null), node -> ApiResponse.success(
                 "创建成功",
                 puppetNodeSqlService.createDatabase(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database())));
     }
 
     @PostMapping("/rows/insert")
     public Map<String, Object> insertRow(@RequestBody InsertRowRequest request) {
-        return sqlCall("插入数据失败", () -> ApiResponse.success(
+        return auditedSqlCall("插入数据失败", request, "SQL_ROW_INSERT", "插入数据",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), null), node -> ApiResponse.success(
                 "创建成功",
                 puppetNodeSqlService.insertRow(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database(),
                         request.table(),
@@ -170,10 +178,12 @@ public class PuppetNodeSQLController {
 
     @PostMapping("/rows/update")
     public Map<String, Object> updateRow(@RequestBody UpdateRowRequest request) {
-        return sqlCall("更新数据失败", () -> ApiResponse.success(
+        return auditedSqlCall("更新数据失败", request, "SQL_ROW_UPDATE", "更新数据",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), null), node -> ApiResponse.success(
                 "更新成功",
                 puppetNodeSqlService.updateRows(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database(),
                         request.table(),
@@ -183,10 +193,12 @@ public class PuppetNodeSQLController {
 
     @PostMapping("/rows/delete")
     public Map<String, Object> deleteRow(@RequestBody DeleteRowRequest request) {
-        return sqlCall("删除数据失败", () -> ApiResponse.success(
+        return auditedSqlCall("删除数据失败", request, "SQL_ROW_DELETE", "删除数据",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), null), node -> ApiResponse.success(
                 "删除成功",
                 puppetNodeSqlService.deleteRows(
-                        puppetNode(request),
+                        node,
                         request.connectionOptions(),
                         request.database(),
                         request.table(),
@@ -196,10 +208,12 @@ public class PuppetNodeSQLController {
     @PostMapping("/export/table")
     public Map<String, Object> exportTable(HttpServletRequest httpRequest,
                                            @RequestBody ExportTableRequest request) {
-        return sqlCall("创建导出任务失败", () -> {
+        return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_TABLE", "导出数据表",
+                sqlOperationPath(request, request == null ? null : request.database(),
+                        request == null ? null : request.table(), request == null ? null : request.format()), node -> {
             User user = requireUser(httpRequest);
             return ApiResponse.success("导出任务已创建", sqlExportService.startTableExport(
-                    puppetNode(request),
+                    node,
                     user.getUserId(),
                     request.sessionId(),
                     request.connectionOptions(),
@@ -212,10 +226,12 @@ public class PuppetNodeSQLController {
     @PostMapping("/export/database")
     public Map<String, Object> exportDatabase(HttpServletRequest httpRequest,
                                               @RequestBody ExportDatabaseRequest request) {
-        return sqlCall("创建导出任务失败", () -> {
+        return auditedSqlCall("创建导出任务失败", request, "SQL_EXPORT_DATABASE", "导出数据库",
+                sqlOperationPath(request, request == null ? null : request.database(), null,
+                        request == null ? null : request.format()), node -> {
             User user = requireUser(httpRequest);
             return ApiResponse.success("导出任务已创建", sqlExportService.startDatabaseExport(
-                    puppetNode(request),
+                    node,
                     user.getUserId(),
                     request.sessionId(),
                     request.connectionOptions(),
@@ -238,26 +254,41 @@ public class PuppetNodeSQLController {
     @PostMapping("/export/pause")
     public Map<String, Object> pauseExport(HttpServletRequest httpRequest,
                                            @RequestBody ExportTaskRequest request) {
-        return sqlCall("暂停导出任务失败", () -> ApiResponse.success(
-                "已请求暂停导出任务",
-                sqlExportService.pause(requireUser(httpRequest).getUserId(), request.taskId())));
+        return sqlCall("暂停导出任务失败", () -> {
+            User user = requireUser(httpRequest);
+            Map<String, Object> result = ApiResponse.success(
+                    "已请求暂停导出任务",
+                    sqlExportService.pause(user.getUserId(), request.taskId()));
+            AuditLogUtil.logSystemOperation(user, "SQL_EXPORT_PAUSE", "暂停SQL导出任务",
+                    request.taskId(), exportTaskAuditParams(request), ApiResponse.CODE_SUCCESS,
+                    "暂停SQL导出任务", "SUCCESS", null, AuditLogUtil.getClientIp(httpRequest), false);
+            return result;
+        });
     }
 
     @PostMapping("/export/stop")
     public Map<String, Object> stopExport(HttpServletRequest httpRequest,
                                           @RequestBody ExportTaskRequest request) {
-        return sqlCall("停止导出任务失败", () -> ApiResponse.success(
-                "已停止导出任务",
-                sqlExportService.stop(requireUser(httpRequest).getUserId(), request.taskId())));
+        return sqlCall("停止导出任务失败", () -> {
+            User user = requireUser(httpRequest);
+            Map<String, Object> result = ApiResponse.success(
+                    "已停止导出任务",
+                    sqlExportService.stop(user.getUserId(), request.taskId()));
+            AuditLogUtil.logSystemOperation(user, "SQL_EXPORT_STOP", "停止SQL导出任务",
+                    request.taskId(), exportTaskAuditParams(request), ApiResponse.CODE_SUCCESS,
+                    "停止SQL导出任务", "SUCCESS", null, AuditLogUtil.getClientIp(httpRequest), false);
+            return result;
+        });
     }
 
     @PostMapping("/export/resume")
     public Map<String, Object> resumeExport(HttpServletRequest httpRequest,
                                             @RequestBody ExportResumeRequest request) {
-        return sqlCall("恢复导出任务失败", () -> {
+        return auditedSqlCall("恢复导出任务失败", request, "SQL_EXPORT_RESUME", "恢复SQL导出任务",
+                request == null ? null : request.taskId(), node -> {
             User user = requireUser(httpRequest);
             return ApiResponse.success("导出任务已恢复", sqlExportService.resume(
-                    puppetNode(request),
+                    node,
                     user.getUserId(),
                     request.sessionId(),
                     request.taskId(),
@@ -289,6 +320,41 @@ public class PuppetNodeSQLController {
         } catch (IllegalArgumentException e) {
             throw ApiException.badRequest(e.getMessage());
         } catch (Exception e) {
+            throw ApiException.serverError(failureMessage + ": " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> auditedSqlCall(String failureMessage,
+                                               ConnectionPayload request,
+                                               String operationType,
+                                               String operationName,
+                                               String operationPath,
+                                               SqlNodeAction action) {
+        JavaPuppetNode node = null;
+        Map<String, Object> auditParams = auditParams(request);
+        try {
+            node = puppetNode(request);
+            Map<String, Object> result = action.execute(node);
+            AuditLogUtil.logSuccess(node, operationType, operationName, operationPath, auditParams,
+                    ApiResponse.CODE_SUCCESS, "操作成功", AuditLogUtil.getClientIp());
+            return result;
+        } catch (ApiException e) {
+            if (node != null) {
+                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+                        e.getMessage(), AuditLogUtil.getClientIp());
+            }
+            throw e;
+        } catch (IllegalArgumentException e) {
+            if (node != null) {
+                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+                        e.getMessage(), AuditLogUtil.getClientIp());
+            }
+            throw ApiException.badRequest(e.getMessage());
+        } catch (Exception e) {
+            if (node != null) {
+                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+                        e.getMessage(), AuditLogUtil.getClientIp());
+            }
             throw ApiException.serverError(failureMessage + ": " + e.getMessage());
         }
     }
@@ -345,8 +411,128 @@ public class PuppetNodeSQLController {
                 || "y".equalsIgnoreCase(text);
     }
 
+    private Map<String, Object> auditParams(ConnectionPayload request) {
+        Map<String, Object> params = new HashMap<>();
+        if (request == null) {
+            return params;
+        }
+        params.put("sessionId", request.sessionId());
+        putConnectionAuditParams(params, request);
+
+        if (request instanceof ExecRequest execRequest) {
+            params.put("sql", execRequest.sql());
+        } else if (request instanceof MetadataRequest metadataRequest) {
+            params.put("database", metadataRequest.database());
+            params.put("table", metadataRequest.table());
+        } else if (request instanceof QueryTableRequest queryRequest) {
+            params.put("database", queryRequest.database());
+            params.put("table", queryRequest.table());
+            params.put("page", queryRequest.page());
+            params.put("pageSize", queryRequest.pageSize());
+            params.put("filters", queryRequest.filters());
+        } else if (request instanceof CreateTableRequest createTableRequest) {
+            params.put("database", createTableRequest.database());
+            params.put("table", createTableRequest.table());
+            params.put("columns", createTableRequest.columns());
+        } else if (request instanceof CreateDatabaseRequest createDatabaseRequest) {
+            params.put("database", createDatabaseRequest.database());
+        } else if (request instanceof InsertRowRequest insertRowRequest) {
+            params.put("database", insertRowRequest.database());
+            params.put("table", insertRowRequest.table());
+            params.put("row", insertRowRequest.row());
+        } else if (request instanceof UpdateRowRequest updateRowRequest) {
+            params.put("database", updateRowRequest.database());
+            params.put("table", updateRowRequest.table());
+            params.put("where", updateRowRequest.where());
+            params.put("update", updateRowRequest.update());
+        } else if (request instanceof DeleteRowRequest deleteRowRequest) {
+            params.put("database", deleteRowRequest.database());
+            params.put("table", deleteRowRequest.table());
+            params.put("where", deleteRowRequest.where());
+        } else if (request instanceof ExportTableRequest exportTableRequest) {
+            params.put("database", exportTableRequest.database());
+            params.put("table", exportTableRequest.table());
+            params.put("format", exportTableRequest.format());
+        } else if (request instanceof ExportDatabaseRequest exportDatabaseRequest) {
+            params.put("database", exportDatabaseRequest.database());
+            params.put("tables", exportDatabaseRequest.tables());
+            params.put("includeStructure", exportDatabaseRequest.includeStructure());
+            params.put("includeData", exportDatabaseRequest.includeData());
+            params.put("format", exportDatabaseRequest.format());
+        } else if (request instanceof ExportResumeRequest exportResumeRequest) {
+            params.put("taskId", exportResumeRequest.taskId());
+        }
+        return params;
+    }
+
+    private void putConnectionAuditParams(Map<String, Object> params, ConnectionPayload request) {
+        Map<String, Object> options = request.connectionOptions();
+        params.put("dbType", firstText(options, "type", request.type()));
+        params.put("dbUrl", firstText(options, "url", request.url()));
+        params.put("dbUser", firstText(options, "user", request.user()));
+        params.put("driver", firstText(options, "driver", request.driver()));
+    }
+
+    private Map<String, Object> exportTaskAuditParams(ExportTaskRequest request) {
+        Map<String, Object> params = new HashMap<>();
+        if (request != null) {
+            params.put("taskId", request.taskId());
+        }
+        return params;
+    }
+
+    private String sqlOperationPath(ConnectionPayload request, String database, String table, String detail) {
+        if (request == null) {
+            return truncate(detail, 220);
+        }
+        Map<String, Object> options = request.connectionOptions();
+        StringBuilder path = new StringBuilder();
+        appendPathPart(path, firstText(options, "type", request.type()));
+        appendPathPart(path, firstText(options, "url", request.url()));
+        appendPathPart(path, database);
+        appendPathPart(path, table);
+        if (detail != null && !detail.isBlank()) {
+            appendPathPart(path, truncate(detail, 180));
+        }
+        return path.isEmpty() ? null : path.toString();
+    }
+
+    private String firstText(Map<String, Object> options, String key, String fallback) {
+        Object value = options == null ? null : options.get(key);
+        if (value != null && !value.toString().isBlank()) {
+            return value.toString();
+        }
+        return fallback == null || fallback.isBlank() ? null : fallback;
+    }
+
+    private void appendPathPart(StringBuilder builder, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append(" | ");
+        }
+        builder.append(value.trim());
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim().replaceAll("\\s+", " ");
+        if (trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxLength) + "...";
+    }
+
     @FunctionalInterface
     private interface SqlAction {
         Map<String, Object> execute() throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface SqlNodeAction {
+        Map<String, Object> execute(JavaPuppetNode node) throws Exception;
     }
 }

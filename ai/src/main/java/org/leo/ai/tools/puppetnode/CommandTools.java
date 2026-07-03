@@ -4,6 +4,7 @@ import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.service.audit.PuppetAuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
@@ -39,6 +40,12 @@ public class CommandTools {
 
     private static final String SIMPLE_COMMAND_CACHE_PREFIX = "simple-command:";
     private static final String OS_PLATFORM_CACHE_KEY = "os-platform";
+
+    private final PuppetAuditService auditService;
+
+    public CommandTools(PuppetAuditService auditService) {
+        this.auditService = auditService;
+    }
 
     // ══════════════════════════════════════════════════════════════════════════════
     //  公开 @Tool 方法（仅 3 个）
@@ -88,14 +95,23 @@ public class CommandTools {
     public Map<String, Object> stopTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        String output = readFromTerminal(sessionId, taskId);
-        stopTerminal(sessionId, taskId);
-        HashMap<String, Object> result = new HashMap<>();
-        result.put("taskId", taskId);
-        result.put("output", output);
-        result.put("status", "stopped");
-        compressOutputField(result);
-        return result;
+        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        try {
+            String output = readFromTerminal(sessionId, taskId);
+            stopTerminal(sessionId, taskId);
+            auditService.logSuccess(sessionId, node, "COMMAND_STOP", "AI停止命令进程", taskId,
+                    commandAuditParams(sessionId, null, "async-stop", taskId, null), "停止命令进程成功");
+            HashMap<String, Object> result = new HashMap<>();
+            result.put("taskId", taskId);
+            result.put("output", output);
+            result.put("status", "stopped");
+            compressOutputField(result);
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "COMMAND_STOP", "AI停止命令进程", taskId,
+                    commandAuditParams(sessionId, null, "async-stop", taskId, null), e.getMessage());
+            throw e;
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
@@ -116,17 +132,30 @@ public class CommandTools {
         }
 
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        Map<String, Object> raw = timeoutSeconds > 0
-                ? node.execSimpleCommand(cmd, timeoutSeconds)
-                : node.execSimpleCommand(cmd);
+        Map<String, Object> auditParams = commandAuditParams(sessionId, cmd, "sync", null, timeoutSeconds);
+        try {
+            Map<String, Object> raw = timeoutSeconds > 0
+                    ? node.execSimpleCommand(cmd, timeoutSeconds)
+                    : node.execSimpleCommand(cmd);
 
-        Map<String, Object> result = normalizeSimpleResult(cmd, raw, timeoutSeconds);
-        compressOutputField(result);
-        // 仅成功完成才缓存，避免把 timeout/exception 结果固化下来
-        if (!Boolean.TRUE.equals(result.get("timedOut")) && !result.containsKey("error")) {
-            PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, result);
+            Map<String, Object> result = normalizeSimpleResult(cmd, raw, timeoutSeconds);
+            compressOutputField(result);
+            if (result.containsKey("error")) {
+                auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+                        String.valueOf(result.get("error")));
+            } else {
+                auditService.logSuccess(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+                        "AI命令执行完成");
+            }
+            // 仅成功完成才缓存，避免把 timeout/exception 结果固化下来
+            if (!Boolean.TRUE.equals(result.get("timedOut")) && !result.containsKey("error")) {
+                PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, result);
+            }
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
+            throw e;
         }
-        return result;
     }
 
     /**
@@ -178,13 +207,36 @@ public class CommandTools {
     /** 异步启动（原 startCommand）。 */
     private Map<String, Object> startAsync(String sessionId, String cmd) throws Exception {
         String taskId = createTerminal(sessionId);
-        writeToTerminal(sessionId, cmd, taskId);
+        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        Map<String, Object> auditParams = commandAuditParams(sessionId, cmd, "async", taskId, null);
+        try {
+            writeToTerminal(sessionId, cmd, taskId);
+            auditService.logSuccess(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+                    "AI异步命令已启动");
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
+            throw e;
+        }
         HashMap<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");
         result.put("cmd", cmd);
         result.put("hint", "命令已异步启动。使用 queryTask(taskId) 获取输出，使用 stopTask(taskId) 终止。");
         return result;
+    }
+
+    private Map<String, Object> commandAuditParams(String sessionId,
+                                                   String cmd,
+                                                   String mode,
+                                                   String taskId,
+                                                   Integer timeoutSeconds) {
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("sessionId", sessionId);
+        params.put("cmd", cmd);
+        params.put("mode", mode);
+        params.put("taskId", taskId);
+        params.put("timeoutSeconds", timeoutSeconds);
+        return params;
     }
 
     // ══════════════════════════════════════════════════════════════════════════════

@@ -6,6 +6,7 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.service.audit.AuditLogService;
+import org.leo.service.audit.AuditPolicyService;
 import org.leo.core.util.json.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +18,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -31,11 +33,17 @@ public class AuditLogUtil {
     private static final Logger logger = LoggerFactory.getLogger(AuditLogUtil.class);
     
     private static AuditLogService auditLogService;
+    private static AuditPolicyService auditPolicyService;
     private static ApplicationContext applicationContext;
     
     @Autowired
     public void setAuditLogService(AuditLogService auditLogService) {
         AuditLogUtil.auditLogService = auditLogService;
+    }
+
+    @Autowired
+    public void setAuditPolicyService(AuditPolicyService auditPolicyService) {
+        AuditLogUtil.auditPolicyService = auditPolicyService;
     }
     
     @Autowired
@@ -55,6 +63,20 @@ public class AuditLogUtil {
             }
         }
         return auditLogService;
+    }
+
+    /**
+     * 获取AuditPolicyService实例
+     */
+    private static AuditPolicyService getAuditPolicyService() {
+        if (auditPolicyService == null && applicationContext != null) {
+            try {
+                auditPolicyService = applicationContext.getBean(AuditPolicyService.class);
+            } catch (Exception e) {
+                logger.warn("无法获取AuditPolicyService实例: {}", e.getMessage());
+            }
+        }
+        return auditPolicyService;
     }
     
     /**
@@ -82,9 +104,7 @@ public class AuditLogUtil {
                                     String errorMessage,
                                     String clientIp) {
         try {
-            AuditLogService service = getAuditLogService();
-            if (service == null) {
-                logger.warn("AuditLogService未初始化，无法记录审计日志");
+            if (!shouldRecord(operationType, false)) {
                 return;
             }
             
@@ -111,36 +131,48 @@ public class AuditLogUtil {
                     auditLog.setSessionId(sessionIdObj.toString());
                 }
             }
-            
-            // 设置操作信息
-            auditLog.setOperationType(operationType);
-            auditLog.setOperationName(operationName);
-            auditLog.setOperationPath(operationPath);
-            
-            // 设置请求参数（JSON格式，敏感信息需脱敏）
-            if (requestParams != null) {
-                try {
-                    // 脱敏处理：移除敏感信息
-                    Map<String, Object> sanitizedParams = sanitizeParams(new HashMap<String, Object>(requestParams));
-                    auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));
-                } catch (Exception e) {
-                    logger.warn("序列化请求参数失败: {}", e.getMessage());
-                    auditLog.setRequestParams(requestParams.toString());
-                }
-            }
-            
-            // 设置响应信息
-            auditLog.setResponseCode(responseCode);
-            auditLog.setResponseMessage(responseMessage);
-            auditLog.setStatus(status != null ? status : "SUCCESS");
-            auditLog.setErrorMessage(errorMessage);
-            auditLog.setClientIp(clientIp);
-            
-            // 记录日志（避免影响主流程性能，可以考虑异步处理）
-            service.insertAuditLog(auditLog);
+
+            writeAuditLog(auditLog, operationType, operationName, operationPath,
+                    requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
             
         } catch (Exception e) {
             logger.error("记录审计日志失败: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 记录系统侧操作，不要求绑定 Puppet 会话。
+     */
+    public static void logSystemOperation(User user,
+                                          String operationType,
+                                          String operationName,
+                                          String operationPath,
+                                          Map<String, Object> requestParams,
+                                          Integer responseCode,
+                                          String responseMessage,
+                                          String status,
+                                          String errorMessage,
+                                          String clientIp,
+                                          boolean forceRecord) {
+        try {
+            if (!shouldRecord(operationType, forceRecord)) {
+                return;
+            }
+            AuditLog auditLog = new AuditLog();
+            if (user != null) {
+                auditLog.setUserId(user.getUserId());
+                auditLog.setUserName(user.getUserName());
+            }
+            if (requestParams != null && requestParams.containsKey("sessionId")) {
+                Object sessionIdObj = requestParams.get("sessionId");
+                if (sessionIdObj != null) {
+                    auditLog.setSessionId(sessionIdObj.toString());
+                }
+            }
+            writeAuditLog(auditLog, operationType, operationName, operationPath,
+                    requestParams, responseCode, responseMessage, status, errorMessage, clientIp);
+        } catch (Exception e) {
+            logger.error("记录系统审计日志失败: {}", e.getMessage(), e);
         }
     }
     
@@ -185,6 +217,53 @@ public class AuditLogUtil {
                                String clientIp) {
         logOperation(javaPuppetNode, operationType, operationName, operationPath, 
                     requestParams, null, null, "ERROR", errorMessage, clientIp);
+    }
+
+    private static boolean shouldRecord(String operationType, boolean forceRecord) {
+        AuditPolicyService service = getAuditPolicyService();
+        if (service == null) {
+            return true;
+        }
+        return service.shouldRecord(operationType, forceRecord);
+    }
+
+    private static void writeAuditLog(AuditLog auditLog,
+                                      String operationType,
+                                      String operationName,
+                                      String operationPath,
+                                      Map<String, Object> requestParams,
+                                      Integer responseCode,
+                                      String responseMessage,
+                                      String status,
+                                      String errorMessage,
+                                      String clientIp) {
+        AuditLogService service = getAuditLogService();
+        if (service == null) {
+            logger.warn("AuditLogService未初始化，无法记录审计日志");
+            return;
+        }
+
+        auditLog.setOperationType(operationType);
+        auditLog.setOperationName(operationName);
+        auditLog.setOperationPath(operationPath);
+
+        if (requestParams != null) {
+            Map<String, Object> sanitizedParams = sanitizeParams(new HashMap<String, Object>(requestParams));
+            try {
+                auditLog.setRequestParams(JsonUtil.toJsonString(sanitizedParams));
+            } catch (Exception e) {
+                logger.warn("序列化请求参数失败: {}", e.getMessage());
+                auditLog.setRequestParams(sanitizedParams.toString());
+            }
+        }
+
+        auditLog.setResponseCode(responseCode);
+        auditLog.setResponseMessage(responseMessage);
+        auditLog.setStatus(status != null ? status : "SUCCESS");
+        auditLog.setErrorMessage(errorMessage);
+        auditLog.setClientIp(clientIp);
+
+        service.insertAuditLog(auditLog);
     }
     
     /**
@@ -236,18 +315,53 @@ public class AuditLogUtil {
         if (params == null) {
             return new HashMap<>();
         }
-        Map<String, Object> sanitized = new HashMap<String, Object>(params);
-        
-        // 需要脱敏的字段名
-        String[] sensitiveFields = {"password", "pwd", "passwd", "secret", "token", "key", "credential"};
-        
-        for (String field : sensitiveFields) {
-            if (sanitized.containsKey(field)) {
-                sanitized.put(field, "***");
-            }
+        Map<String, Object> sanitized = new HashMap<String, Object>();
+        for (Map.Entry<String, Object> entry : params.entrySet()) {
+            String key = entry.getKey();
+            sanitized.put(key, sanitizeValue(key, entry.getValue()));
         }
-        
         return sanitized;
     }
-}
 
+    @SuppressWarnings("unchecked")
+    private static Object sanitizeValue(String fieldName, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (isSensitiveField(fieldName)) {
+            return "***";
+        }
+        if (value instanceof Map<?, ?>) {
+            Map<String, Object> nested = new HashMap<String, Object>();
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                String key = entry.getKey() == null ? "" : entry.getKey().toString();
+                nested.put(key, sanitizeValue(key, entry.getValue()));
+            }
+            return nested;
+        }
+        if (value instanceof List<?>) {
+            return ((List<?>) value).stream()
+                    .map(item -> sanitizeValue(fieldName, item))
+                    .toList();
+        }
+        return value;
+    }
+
+    private static boolean isSensitiveField(String fieldName) {
+        if (fieldName == null) {
+            return false;
+        }
+        String normalized = fieldName.trim().toLowerCase();
+        return "password".equals(normalized)
+                || "pwd".equals(normalized)
+                || "passwd".equals(normalized)
+                || "secret".equals(normalized)
+                || "token".equals(normalized)
+                || "key".equals(normalized)
+                || "credential".equals(normalized)
+                || "content".equals(normalized)
+                || "data".equals(normalized)
+                || "filedata".equals(normalized)
+                || "base64".equals(normalized);
+    }
+}

@@ -1,6 +1,7 @@
 package org.leo.service.audit;
 
 import org.leo.core.entity.AuditLog;
+import org.leo.core.entity.AuditLogQuery;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -29,6 +30,8 @@ public class AuditLogService {
     private static final DateTimeFormatter DAY_KEY_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DAY_LABEL_FORMAT = DateTimeFormatter.ofPattern("MM-dd");
     private static final int RECENT_DAYS = 7;
+    private static final int DEFAULT_LIMIT = 50;
+    private static final int MAX_LIMIT = 1000;
 
     @Autowired
     public AuditLogService(AuditLogMapper auditLogMapper) {
@@ -166,13 +169,26 @@ public class AuditLogService {
      */
     public List<AuditLog> findAllAuditLogs(Integer limit, Integer offset) {
         if (limit == null || limit <= 0) {
-            limit = 100;
+            limit = DEFAULT_LIMIT;
         }
+        limit = Math.min(limit, MAX_LIMIT);
         if (offset == null || offset < 0) {
             offset = 0;
         }
         List<AuditLog> logs = auditLogMapper.findAllAuditLogs(limit, offset);
         return logs != null ? logs : new java.util.ArrayList();
+    }
+
+    public List<AuditLog> searchAuditLogs(AuditLogQuery query) {
+        AuditLogQuery normalizedQuery = normalizeQuery(query);
+        List<AuditLog> logs = auditLogMapper.searchAuditLogs(normalizedQuery);
+        return logs != null ? logs : new ArrayList<>();
+    }
+
+    public Integer countAuditLogs(AuditLogQuery query) {
+        AuditLogQuery normalizedQuery = normalizeQuery(query);
+        Integer count = auditLogMapper.countAuditLogs(normalizedQuery);
+        return count != null ? count : 0;
     }
 
     /**
@@ -294,11 +310,89 @@ public class AuditLogService {
         return deleted != null ? deleted : 0;
     }
 
+    public Integer deleteAuditLogsByIds(List<String> logIds) {
+        if (logIds == null || logIds.isEmpty()) {
+            return 0;
+        }
+        List<String> normalizedIds = logIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (normalizedIds.isEmpty()) {
+            return 0;
+        }
+        Integer deleted = auditLogMapper.deleteAuditLogsByIds(normalizedIds);
+        return deleted != null ? deleted : 0;
+    }
+
+    public Integer deleteAuditLogsByFilter(AuditLogQuery query) {
+        AuditLogQuery normalizedQuery = normalizeQuery(query);
+        if (!hasDeleteFilter(normalizedQuery)) {
+            throw new IllegalArgumentException("按筛选条件删除至少需要一个筛选条件");
+        }
+        Integer deleted = auditLogMapper.deleteAuditLogsByFilter(normalizedQuery);
+        return deleted != null ? deleted : 0;
+    }
+
+    public boolean hasDeleteFilter(AuditLogQuery query) {
+        if (query == null) {
+            return false;
+        }
+        return hasText(query.getUserId())
+                || hasText(query.getUserName())
+                || hasText(query.getPuppetId())
+                || hasText(query.getPuppetName())
+                || hasText(query.getSessionId())
+                || hasText(query.getOperationType())
+                || hasText(query.getStatus())
+                || hasText(query.getClientIp())
+                || hasText(query.getKeyword())
+                || hasText(query.getRemark())
+                || hasText(query.getStartTime())
+                || hasText(query.getEndTime());
+    }
+
     private int normalizeTrendDays(Integer days) {
         if (days == null || days <= 0) {
             return RECENT_DAYS;
         }
         return Math.min(days, 90);
+    }
+
+    private AuditLogQuery normalizeQuery(AuditLogQuery query) {
+        AuditLogQuery normalizedQuery = query != null ? query : new AuditLogQuery();
+        normalizedQuery.setUserId(trimToNull(normalizedQuery.getUserId()));
+        normalizedQuery.setUserName(trimToNull(normalizedQuery.getUserName()));
+        normalizedQuery.setPuppetId(trimToNull(normalizedQuery.getPuppetId()));
+        normalizedQuery.setPuppetName(trimToNull(normalizedQuery.getPuppetName()));
+        normalizedQuery.setSessionId(trimToNull(normalizedQuery.getSessionId()));
+        normalizedQuery.setOperationType(trimToNull(normalizedQuery.getOperationType()));
+        normalizedQuery.setStatus(trimToNull(normalizedQuery.getStatus()));
+        normalizedQuery.setClientIp(trimToNull(normalizedQuery.getClientIp()));
+        normalizedQuery.setKeyword(trimToNull(normalizedQuery.getKeyword()));
+        normalizedQuery.setRemark(trimToNull(normalizedQuery.getRemark()));
+        normalizedQuery.setStartTime(trimToNull(normalizedQuery.getStartTime()));
+        normalizedQuery.setEndTime(trimToNull(normalizedQuery.getEndTime()));
+        Integer limit = normalizedQuery.getLimit();
+        if (limit == null || limit <= 0) {
+            limit = DEFAULT_LIMIT;
+        }
+        normalizedQuery.setLimit(Math.min(limit, MAX_LIMIT));
+        Integer offset = normalizedQuery.getOffset();
+        normalizedQuery.setOffset(offset == null || offset < 0 ? 0 : offset);
+        return normalizedQuery;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private int defaultCount(Integer count) {

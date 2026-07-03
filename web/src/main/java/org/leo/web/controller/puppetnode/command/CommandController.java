@@ -35,19 +35,15 @@ public class CommandController {
 
             javaNode = (JavaPuppetNode) ControllerUtil.getAbstractPuppetNode(sessionId);
             Map<String, Object> results = javaNode.execCommand(type, cmd, processId);
-            AuditLogUtil.logSuccess(javaNode,
-                    "COMMAND_EXEC", "执行命令", cmd, auditParams,
-                    ApiResponse.CODE_SUCCESS, "执行命令成功", AuditLogUtil.getClientIp());
+            logCommandAuditSuccess(javaNode, type, cmd, processId, auditParams);
             return ApiResponse.success(results != null ? results : Collections.emptyMap());
         } catch (ApiException e) {
-            AuditLogUtil.logFailure(javaNode,
-                    "COMMAND_EXEC", "执行命令", cmd, auditParams,
-                    e.getMessage(), AuditLogUtil.getClientIp());
+            logCommandAuditFailure(javaNode, request == null ? null : request.type(), cmd,
+                    request == null ? null : request.processId(), auditParams, e.getMessage());
             throw e;
         } catch (Exception e) {
-            AuditLogUtil.logFailure(javaNode,
-                    "COMMAND_EXEC", "执行命令", cmd, auditParams,
-                    e.getMessage(), AuditLogUtil.getClientIp());
+            logCommandAuditFailure(javaNode, request == null ? null : request.type(), cmd,
+                    request == null ? null : request.processId(), auditParams, e.getMessage());
             throw ApiException.serverError("执行命令失败: " + e.getMessage());
         }
     }
@@ -88,5 +84,46 @@ public class CommandController {
         params.put("type", request.type());
         params.put("processId", request.processId());
         return params;
+    }
+
+    private void logCommandAuditSuccess(JavaPuppetNode node,
+                                        String type,
+                                        String cmd,
+                                        String processId,
+                                        Map<String, Object> auditParams) {
+        if (node == null) {
+            return;
+        }
+        if ("read".equals(type)) {
+            return;
+        }
+        if ("stop".equals(type)) {
+            AuditLogUtil.logSuccess(node, "COMMAND_STOP", "停止命令进程", processId, auditParams,
+                    ApiResponse.CODE_SUCCESS, "停止命令进程成功", AuditLogUtil.getClientIp());
+            return;
+        }
+        AuditLogUtil.logSuccess(node, "COMMAND_EXEC", "执行命令", cmd, auditParams,
+                ApiResponse.CODE_SUCCESS, "执行命令成功", AuditLogUtil.getClientIp());
+    }
+
+    private void logCommandAuditFailure(JavaPuppetNode node,
+                                        String type,
+                                        String cmd,
+                                        String processId,
+                                        Map<String, Object> auditParams,
+                                        String errorMessage) {
+        if (node == null) {
+            return;
+        }
+        if ("read".equals(type)) {
+            return;
+        }
+        if ("stop".equals(type)) {
+            AuditLogUtil.logFailure(node, "COMMAND_STOP", "停止命令进程", processId, auditParams,
+                    errorMessage, AuditLogUtil.getClientIp());
+            return;
+        }
+        AuditLogUtil.logFailure(node, "COMMAND_EXEC", "执行命令", cmd, auditParams,
+                errorMessage, AuditLogUtil.getClientIp());
     }
 }

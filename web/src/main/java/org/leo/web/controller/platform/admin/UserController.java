@@ -118,13 +118,16 @@ public class UserController {
         if (targetName == null || targetName.isBlank()) {
             return ApiResponse.badRequest("用户名不能为空");
         }
+        targetName = targetName.trim();
+        user.setUserName(targetName);
         if (user.getPassword() == null || user.getPassword().isBlank()) {
             return ApiResponse.badRequest("密码不能为空");
         }
 
         // 确定目标角色
         String targetPrivilege = normalizePrivilege(user.getPrivilege());
-        String targetTeamId = user.getTeamId();
+        String targetTeamId = normalizeNullableId(user.getTeamId());
+        user.setTeamId(targetTeamId);
 
         // 权限校验
         try {

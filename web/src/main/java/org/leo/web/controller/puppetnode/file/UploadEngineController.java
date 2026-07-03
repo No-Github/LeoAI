@@ -5,6 +5,7 @@ import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.service.UploadEngineService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
+import org.leo.web.util.AuditLogUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +70,8 @@ public class UploadEngineController {
                     sourceFile.getFileName().toString(),
                     resolvedChunkSize
             );
+            AuditLogUtil.logSuccess(puppetNode, "FILE_UPLOAD", "上传文件", vfsPath + " -> " + filePath, params,
+                    ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {
             logger.warn("upload-engine start failed: {}", e.getMessage());
@@ -110,6 +113,9 @@ public class UploadEngineController {
             }
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
             Map<String, Object> data = uploadEngineService.cancel(taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_UPLOAD_CANCEL", "取消上传任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "取消上传任务", "SUCCESS", null,
+                    AuditLogUtil.getClientIp(request), false);
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("取消上传任务失败: " + e.getMessage());

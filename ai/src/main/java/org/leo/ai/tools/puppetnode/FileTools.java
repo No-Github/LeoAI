@@ -8,6 +8,7 @@ import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.service.DownloadEngineService;
 import org.leo.service.UploadEngineService;
+import org.leo.service.audit.PuppetAuditService;
 import org.leo.service.user.UserService;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
@@ -39,11 +40,16 @@ public class FileTools {
     private final DownloadEngineService downloadEngineService;
     private final UploadEngineService uploadEngineService;
     private final UserService userService;
+    private final PuppetAuditService auditService;
 
-    public FileTools(DownloadEngineService downloadEngineService, UploadEngineService uploadEngineService, UserService userService) {
+    public FileTools(DownloadEngineService downloadEngineService,
+                     UploadEngineService uploadEngineService,
+                     UserService userService,
+                     PuppetAuditService auditService) {
         this.downloadEngineService = downloadEngineService;
         this.uploadEngineService = uploadEngineService;
         this.userService = userService;
+        this.auditService = auditService;
     }
 
     // ── 分块传输 ─────────────────────────────────────────────────────────────
@@ -59,14 +65,26 @@ public class FileTools {
         JavaPuppetNode javaPuppetNode = session.getJavaPuppetNode();
         int resolvedThreads = threads == null ? 4 : threads;
         int resolvedChunkSize = chunkSize == null ? (1024 * 1024) : chunkSize;
-        return downloadEngineService.startOrResume(
-                javaPuppetNode,
-                userId,
-                sessionId,
-                filePath,
-                resolvedThreads,
-                resolvedChunkSize
-        );
+        Map<String, Object> auditParams = fileAuditParams(sessionId, filePath, null, null);
+        auditParams.put("threads", resolvedThreads);
+        auditParams.put("chunkSize", resolvedChunkSize);
+        try {
+            Map<String, Object> result = downloadEngineService.startOrResume(
+                    javaPuppetNode,
+                    userId,
+                    sessionId,
+                    filePath,
+                    resolvedThreads,
+                    resolvedChunkSize
+            );
+            auditService.logSuccess(sessionId, javaPuppetNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
+                    auditParams, "AI下载任务已启动");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, javaPuppetNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
+                    auditParams, e.getMessage());
+            throw e;
+        }
     }
 
     @Tool("启动文件上传任务（平台侧 VFS→puppet 侧）。vfsPath 相对 VFS 根目录（users/<userId>/uploads/... 或 skills/...）。filePath 为目标服务器落地路径。chunkSize 默认 1048576。")
@@ -86,15 +104,26 @@ public class FileTools {
             throw new IllegalArgumentException("平台侧文件不存在: " + vfsPath);
         }
         int resolvedChunkSize = chunkSize == null ? (1024 * 1024) : chunkSize;
-        return uploadEngineService.start(
-                javaPuppetNode,
-                userId,
-                sessionId,
-                filePath,
-                sourceFile.toFile(),
-                sourceFile.getFileName().toString(),
-                resolvedChunkSize
-        );
+        Map<String, Object> auditParams = fileAuditParams(sessionId, filePath, vfsPath, null);
+        auditParams.put("chunkSize", resolvedChunkSize);
+        try {
+            Map<String, Object> result = uploadEngineService.start(
+                    javaPuppetNode,
+                    userId,
+                    sessionId,
+                    filePath,
+                    sourceFile.toFile(),
+                    sourceFile.getFileName().toString(),
+                    resolvedChunkSize
+            );
+            auditService.logSuccess(sessionId, javaPuppetNode, "FILE_UPLOAD", "AI上传文件",
+                    vfsPath + " -> " + filePath, auditParams, "AI上传任务已启动");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, javaPuppetNode, "FILE_UPLOAD", "AI上传文件",
+                    vfsPath + " -> " + filePath, auditParams, e.getMessage());
+            throw e;
+        }
     }
 
     // ── 文本文件读取（带会话缓存）───────────────────────────────────────────
@@ -113,7 +142,17 @@ public class FileTools {
             return (Map<String, Object>) cachedMap;
         }
 
-        Map<String, Object> chunk = fileDownloadChunk(sessionId, path, readSize, 0);
+        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        Map<String, Object> auditParams = fileAuditParams(sessionId, path, null, readSize);
+        Map<String, Object> chunk;
+        try {
+            chunk = node.fileDownloadChunk(path, readSize, 0);
+            auditService.logSuccess(sessionId, node, "FILE_READ", "AI读取文件", path, auditParams,
+                    "AI读取文件成功");
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "FILE_READ", "AI读取文件", path, auditParams, e.getMessage());
+            throw e;
+        }
         HashMap<String, Object> result = new HashMap<>();
         result.put("path", path);
         result.put("maxBytes", readSize);
@@ -168,22 +207,34 @@ public class FileTools {
         boolean isWin = isWindowsPuppet(sessionId, node);
         String cmd = buildSearchCommand(directory, pattern, fileGlob, limit, isWin);
 
-        Map<String, Object> raw = node.execSimpleCommand(cmd, 30);
-        String output = extractCommandOutput(raw);
+        Map<String, Object> auditParams = fileAuditParams(sessionId, directory, null, null);
+        auditParams.put("pattern", pattern);
+        auditParams.put("fileGlob", fileGlob);
+        auditParams.put("limit", limit);
+        try {
+            Map<String, Object> raw = node.execSimpleCommand(cmd, 30);
+            String output = extractCommandOutput(raw);
 
-        List<Map<String, Object>> matches = parseSearchResults(output, limit);
+            List<Map<String, Object>> matches = parseSearchResults(output, limit);
 
-        HashMap<String, Object> result = new HashMap<>();
-        result.put("directory", directory);
-        result.put("pattern", pattern);
-        result.put("fileGlob", fileGlob);
-        result.put("totalMatches", matches.size());
-        result.put("matches", matches);
-        result.put("truncated", matches.size() >= limit);
-        if (output.length() > 12000) {
-            result.put("rawOutputTruncated", true);
+            HashMap<String, Object> result = new HashMap<>();
+            result.put("directory", directory);
+            result.put("pattern", pattern);
+            result.put("fileGlob", fileGlob);
+            result.put("totalMatches", matches.size());
+            result.put("matches", matches);
+            result.put("truncated", matches.size() >= limit);
+            if (output.length() > 12000) {
+                result.put("rawOutputTruncated", true);
+            }
+            auditService.logSuccess(sessionId, node, "FILE_SEARCH", "AI搜索文件内容", directory,
+                    auditParams, "AI搜索文件内容成功");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, node, "FILE_SEARCH", "AI搜索文件内容", directory,
+                    auditParams, e.getMessage());
+            throw e;
         }
-        return result;
     }
 
     // ── 内部辅助方法 ─────────────────────────────────────────────────────────
@@ -194,6 +245,15 @@ public class FileTools {
     Map<String, Object> fileDownloadChunk(String sessionId, String path, long size, long offset) throws Exception {
         JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
         return node.fileDownloadChunk(path, size, offset);
+    }
+
+    private Map<String, Object> fileAuditParams(String sessionId, String path, String sourcePath, Long maxBytes) {
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("sessionId", sessionId);
+        params.put("path", path);
+        params.put("sourcePath", sourcePath);
+        params.put("maxBytes", maxBytes);
+        return params;
     }
 
     /** 构造跨平台搜索命令。 */

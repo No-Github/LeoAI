@@ -14,7 +14,10 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 控制器工具类
@@ -27,6 +30,63 @@ public class ControllerUtil {
     
     private static final String PARAM_SESSION_ID = "sessionId";
     private static final String SESSION_ATTR_USER = "user";
+    private static final Set<String> GENERIC_AUDIT_SKIP_PARTS = new LinkedHashSet<>(Set.of(
+            "_LIST",
+            "_QUERY",
+            "_PROGRESS",
+            "_TASKS",
+            "_STATUS",
+            "_INFO",
+            "_DETAIL",
+            "_META",
+            "_STATS",
+            "_SUMMARY",
+            "_POLL"
+    ));
+    private static final Set<String> GENERIC_AUDIT_ACTION_PARTS = new LinkedHashSet<>(Set.of(
+            "_ADD",
+            "_CANCEL",
+            "_CHMOD",
+            "_CLEAR",
+            "_CONNECT",
+            "_COPY",
+            "_CREATE",
+            "_DELETE",
+            "_DISCONNECT",
+            "_DOWNLOAD",
+            "_DUMP",
+            "_EDIT",
+            "_EXEC",
+            "_EXPORT",
+            "_IMPORT",
+            "_INVOKE",
+            "_KILL",
+            "_MONITOR",
+            "_MOVE",
+            "_PAUSE",
+            "_REMOVE",
+            "_RENAME",
+            "_RESTART",
+            "_RESUME",
+            "_RUN",
+            "_SEND",
+            "_START",
+            "_STOP",
+            "_TOGGLE",
+            "_TOUCH",
+            "_UNPAUSE",
+            "_UPDATE",
+            "_UPLOAD",
+            "_WRITE"
+    ));
+    private static final Set<String> GENERIC_AUDIT_ALWAYS_TYPES = new LinkedHashSet<>(Set.of(
+            "CLIPBOARD_READ",
+            "WIFI_PROFILE_DETAIL",
+            "WIFI_PROFILE_DUMP_ALL_PASSWORDS",
+            "BROWSER_DATA_BOOKMARKS",
+            "BROWSER_DATA_HISTORY",
+            "BROWSER_DATA_SENSITIVE_FILES"
+    ));
     
     /**
      * 获取必需的字符串参数
@@ -259,20 +319,172 @@ public class ControllerUtil {
      */
     public static HashMap<String, Object> handlePuppetCall(
             Map<String, Object> params, String errorPrefix, PuppetCall call) {
+        String operationType = inferOperationTypeFromRequest();
+        return handlePuppetCall(params, operationType, null, null, errorPrefix, call,
+                shouldAuditGenericOperation(operationType));
+    }
+
+    /**
+     * 统一封装 puppet 调用样板，并附带审计日志记录。
+     */
+    public static HashMap<String, Object> handlePuppetCall(
+            Map<String, Object> params,
+            String operationType,
+            String operationName,
+            String operationPath,
+            String errorPrefix,
+            PuppetCall call) {
+        return handlePuppetCall(params, operationType, operationName, operationPath, errorPrefix, call, true);
+    }
+
+    private static HashMap<String, Object> handlePuppetCall(
+            Map<String, Object> params,
+            String operationType,
+            String operationName,
+            String operationPath,
+            String errorPrefix,
+            PuppetCall call,
+            boolean auditEnabled) {
+        JavaPuppetNode node = null;
+        String resolvedOperationType = safeText(operationType, inferOperationTypeFromRequest());
+        String resolvedOperationName = safeText(operationName, normalizeOperationName(errorPrefix, resolvedOperationType));
+        String resolvedOperationPath = safeText(operationPath, currentRequestPath());
+        String clientIp = AuditLogUtil.getClientIp();
+
         try {
-            JavaPuppetNode node = getPuppetNode(params);
+            node = getPuppetNode(params);
             Map<String, Object> result = call.apply(node);
-            if (result == null) return ApiResponse.error(errorPrefix + ": 返回为空");
-            Object codeObj = result.get("code");
-            if (codeObj instanceof Number && ((Number) codeObj).intValue() == 200) return ApiResponse.success(result);
-            Object msgObj = result.get("msg");
-            return ApiResponse.error(msgObj != null ? msgObj.toString() : errorPrefix + ": 失败");
+            if (result == null) {
+                String message = safeText(errorPrefix, "Puppet调用失败") + ": 返回为空";
+                if (auditEnabled) {
+                    AuditLogUtil.logFailure(node, resolvedOperationType, resolvedOperationName,
+                            resolvedOperationPath, params, message, clientIp);
+                }
+                return ApiResponse.error(message);
+            }
+
+            Integer responseCode = extractResponseCode(result);
+            String responseMessage = extractResponseMessage(result);
+            if (responseCode != null && responseCode.intValue() == ApiResponse.CODE_SUCCESS) {
+                if (auditEnabled) {
+                    AuditLogUtil.logSuccess(node, resolvedOperationType, resolvedOperationName,
+                            resolvedOperationPath, params, responseCode, responseMessage, clientIp);
+                }
+                return ApiResponse.success(result);
+            }
+
+            String message = safeText(responseMessage, safeText(errorPrefix, "Puppet调用失败") + ": 失败");
+            if (auditEnabled) {
+                AuditLogUtil.logOperation(node, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, responseCode, responseMessage, "FAILED", message, clientIp);
+            }
+            return ApiResponse.error(message);
         } catch (ApiException ae) {
+            if (auditEnabled && node != null) {
+                AuditLogUtil.logOperation(node, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, ae.getCode(), ae.getMessage(), "FAILED",
+                        ae.getMessage(), clientIp);
+            }
             // 参数/权限/未找到等明确异常,保留原状态码
             throw ae;
         } catch (Exception e) {
-            return ApiResponse.error(errorPrefix + ": " + e.getMessage());
+            String message = safeText(errorPrefix, "Puppet调用失败") + ": " + e.getMessage();
+            if (auditEnabled && node != null) {
+                AuditLogUtil.logError(node, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, message, clientIp);
+            }
+            return ApiResponse.error(message);
         }
+    }
+
+    private static Integer extractResponseCode(Map<String, Object> result) {
+        Object codeObj = result.get("code");
+        if (codeObj instanceof Number) {
+            return ((Number) codeObj).intValue();
+        }
+        if (codeObj != null) {
+            try {
+                return Integer.valueOf(Integer.parseInt(codeObj.toString()));
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static String extractResponseMessage(Map<String, Object> result) {
+        Object msgObj = result.get("msg");
+        if (msgObj == null) {
+            msgObj = result.get("message");
+        }
+        return msgObj == null ? null : msgObj.toString();
+    }
+
+    private static String normalizeOperationName(String errorPrefix, String operationType) {
+        if (errorPrefix == null || errorPrefix.isBlank()) {
+            return operationType;
+        }
+        String name = errorPrefix.trim();
+        if (name.endsWith("失败") && name.length() > 2) {
+            name = name.substring(0, name.length() - 2);
+        }
+        return name.isBlank() || "操作".equals(name) ? operationType : name;
+    }
+
+    private static String currentRequestPath() {
+        try {
+            ServletRequestAttributes attributes =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null) {
+                return null;
+            }
+            return attributes.getRequest().getRequestURI();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String inferOperationTypeFromRequest() {
+        String path = currentRequestPath();
+        if (path == null || path.isBlank()) {
+            return "PUPPET_OPERATION";
+        }
+        String normalizedPath = path.trim();
+        int queryIndex = normalizedPath.indexOf('?');
+        if (queryIndex >= 0) {
+            normalizedPath = normalizedPath.substring(0, queryIndex);
+        }
+        normalizedPath = normalizedPath.replaceFirst("^/+", "");
+        if (normalizedPath.startsWith("puppet-node/")) {
+            normalizedPath = normalizedPath.substring("puppet-node/".length());
+        }
+        String operationType = normalizedPath
+                .replaceAll("[^A-Za-z0-9]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "")
+                .toUpperCase(Locale.ROOT);
+        return operationType.isBlank() ? "PUPPET_OPERATION" : operationType;
+    }
+
+    private static boolean shouldAuditGenericOperation(String operationType) {
+        if (operationType == null || operationType.isBlank()) {
+            return false;
+        }
+        String normalizedType = operationType.trim().toUpperCase(Locale.ROOT);
+        if (GENERIC_AUDIT_ALWAYS_TYPES.contains(normalizedType)) {
+            return true;
+        }
+        for (String skipPart : GENERIC_AUDIT_SKIP_PARTS) {
+            if (normalizedType.endsWith(skipPart) || normalizedType.contains(skipPart + "_")) {
+                return false;
+            }
+        }
+        for (String actionPart : GENERIC_AUDIT_ACTION_PARTS) {
+            if (normalizedType.endsWith(actionPart) || normalizedType.contains(actionPart + "_")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ==================== 通用参数读取 ====================

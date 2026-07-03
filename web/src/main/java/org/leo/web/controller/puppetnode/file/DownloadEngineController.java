@@ -4,6 +4,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.service.DownloadEngineService;
+import org.leo.web.util.AuditLogUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +57,8 @@ public class DownloadEngineController {
             int chunkSize = params.get("chunkSize") == null ? (1024 * 1024) : ((Number) params.get("chunkSize")).intValue();
 
             Map<String, Object> data = downloadEngineService.startOrResume(puppetNode, userId, sessionId, filePath, threads, chunkSize);
+            AuditLogUtil.logSuccess(puppetNode, "FILE_DOWNLOAD", "下载文件", filePath, params,
+                    ApiResponse.CODE_SUCCESS, "开始下载文件", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {
             logger.warn("download-engine start failed: {}", e.getMessage());
@@ -96,6 +99,9 @@ public class DownloadEngineController {
             }
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
             Map<String, Object> data = downloadEngineService.cancel(taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_CANCEL", "取消下载任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "取消下载任务", "SUCCESS", null,
+                    AuditLogUtil.getClientIp(request), false);
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("取消下载任务失败: " + e.getMessage());
@@ -118,6 +124,8 @@ public class DownloadEngineController {
             JavaPuppetNode puppetNode = ControllerUtil.getPuppetNode(params);
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
             Map<String, Object> data = downloadEngineService.resume(puppetNode, userId, sessionId, taskId);
+            AuditLogUtil.logSuccess(puppetNode, "FILE_DOWNLOAD_RESUME", "恢复下载任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "恢复下载任务", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("恢复下载任务失败: " + e.getMessage());
@@ -144,4 +152,3 @@ public class DownloadEngineController {
         }
     }
 }
-
