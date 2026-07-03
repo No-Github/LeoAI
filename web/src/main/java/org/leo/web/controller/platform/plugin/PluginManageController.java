@@ -60,8 +60,6 @@ public class PluginManageController {
     
     // 结果字段常量
     private static final String RESULT_PLUGIN_ID = "pluginId";
-    private static final String RESULT_PLUGIN_NAME = "pluginName";
-    private static final String RESULT_JAVA_CODE = "javaCode";
     
     // 会话属性常量
     private static final String SESSION_ATTR_USER = "user";
@@ -289,115 +287,10 @@ public class PluginManageController {
         }
     }
 
-    @RequestMapping(value = "/plugins/upload", method = RequestMethod.POST)
-    public HashMap<String, Object> uploadPlugin(
-            @RequestParam("file") MultipartFile file,
-            HttpServletRequest request) throws Exception {
-        
-        if (file == null || file.isEmpty()) {
-            return ApiResponse.badRequest("文件不能为空");
-        }
-        
-        String originalFilename = file.getOriginalFilename();
-        if (originalFilename == null) {
-            return ApiResponse.badRequest("文件名不能为空");
-        }
-        
-        String fileName = originalFilename.toLowerCase();
-        byte[] fileBytes = file.getBytes();
-        
-        // 检查文件类型，只允许.plugin文件
-        if (!fileName.endsWith(PLUGIN_FILE_EXTENSION)) {
-            return ApiResponse.badRequest("不支持的文件类型，仅支持 .plugin 文件");
-        }
-        
-        // 检查用户登录
-        User user = getUserFromSession(request);
-        if (user == null || user.getUserId() == null) {
-            return ApiResponse.unauthorized("用户未登录");
-        }
-        
-        Plugin componentPlugin;
-
-        // 处理 .plugin 文件（已加密的插件文件）
-        try {
-            // 尝试解密并解析插件文件
-            String decrypted = AesUtil.decrypt(new String(fileBytes, StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
-            componentPlugin = (Plugin) JsonUtil.fromJsonString(decrypted, Plugin.class);
-
-            // 所有插件信息都从插件文件中解析，不允许通过参数覆盖
-            // 更新创建信息
-            componentPlugin.setCreateUserId(user.getUserId());
-            componentPlugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
-
-            // 重新派生 pluginId：java 走类名，脚本走插件名
-            String identifier = isJavaPlugin(componentPlugin.getPluginType())
-                    ? DecompilerUtil.extractClassName(componentPlugin.getBytecode())
-                    : componentPlugin.getPluginName();
-            String pluginId = generatePluginId(identifier, componentPlugin.getVersion());
-            componentPlugin.setPluginId(pluginId);
-
-        } catch (Exception e) {
-            return ApiResponse.badRequest("插件文件解析失败: " + e.getMessage());
-        }
-        
-        // 验证插件信息完整性
-        if (componentPlugin.getBytecode() == null || componentPlugin.getBytecode().length == 0) {
-            return ApiResponse.badRequest("插件字节码不能为空");
-        }
-        
-        // 安装并保存插件
-        pluginManager.inStallPlugin(componentPlugin);
-        boolean saved = savePlugin(componentPlugin);
-        
-        if (saved) {
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put(RESULT_PLUGIN_ID, componentPlugin.getPluginId());
-            data.put(RESULT_PLUGIN_NAME, componentPlugin.getPluginName());
-            return ApiResponse.success("插件上传成功", data);
-        } else {
-            return ApiResponse.error("插件保存失败");
-        }
-    }
-
     @RequestMapping(value = "/plugins", method = RequestMethod.GET)
     public HashMap<String, Object> getPlugin() {
         ArrayList<Plugin> plugins = (ArrayList<Plugin>) pluginManager.getPluginAsList();
         return ApiResponse.success(plugins);
-    }
-    
-    @RequestMapping(value = "/plugins/by-type", method = RequestMethod.POST)
-    public HashMap<String, Object> getPluginByType(@RequestBody HashMap<String, Object> params) throws Exception {
-        if (params == null) {
-            return ApiResponse.badRequest("params参数不能为空");
-        }
-        String type = (String) params.get("pluginType");
-        if (type == null) {
-            return ApiResponse.badRequest("pluginType不能为空");
-        }
-        ArrayList<Plugin> plugins = (ArrayList<Plugin>) pluginManager.getPluginAsListByType(type);
-        return ApiResponse.success(plugins);
-    }
-
-    @RequestMapping(value = "/decompile", method = RequestMethod.POST)
-    public HashMap<String, Object> decompile(@RequestBody HashMap<String, Object> params) throws IOException {
-        if (params == null) {
-            return ApiResponse.badRequest("params参数不能为空");
-        }
-        // 反编译 = 看 Java 字节码源码；脚本类型直接返回原始 UTF-8 文本即可
-        String pluginType = (String) params.get(PARAM_PLUGIN_TYPE);
-        Object bytecodeObj = params.get("bytecode");
-        if (bytecodeObj == null || !(bytecodeObj instanceof String)) {
-            return ApiResponse.badRequest("bytecode参数不能为空且必须是Base64字符串");
-        }
-        byte[] bytecode = Base64.getDecoder().decode((String) bytecodeObj);
-        HashMap<String, Object> data = new HashMap<String, Object>();
-        if (isJavaPlugin(pluginType)) {
-            data.put(RESULT_JAVA_CODE, DecompilerUtil.decompile(bytecode));
-        } else {
-            data.put("scriptText", new String(bytecode, StandardCharsets.UTF_8));
-        }
-        return ApiResponse.success(data);
     }
 
     // ── 导出 ──────────────────────────────────────────────────────────────────

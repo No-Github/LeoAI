@@ -316,16 +316,6 @@ public class PuppetNodeSession {
         return getAllHostIds().add(hostId);
     }
 
-    public boolean removeHostId(String hostId) {
-        if (hostId == null || allHostIds == null) return false;
-        return allHostIds.remove(hostId);
-    }
-
-    public boolean containsHostId(String hostId) {
-        if (hostId == null || allHostIds == null) return false;
-        return allHostIds.contains(hostId);
-    }
-
     public void updateCurrentHostId(String hostId) { setCurrentHostId(hostId); }
 
     // ── BasicInfo ─────────────────────────────────────────────────────────────

@@ -137,15 +137,4 @@ public class ClassNameGenerator {
         return name;
     }
 
-    /**
-     * 测试方法 - 生成类名示例
-     * 注意：此方法仅用于测试，生产环境应使用日志框架
-     */
-    public static void main(String[] args) {
-        // 测试生成 10 个不同的类名
-        for (int i = 0; i < 10; i++) {
-            // 使用System.out仅用于测试目的
-            System.out.println(generateServletStyleClassName());
-        }
-    }
 }

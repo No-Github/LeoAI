@@ -48,15 +48,6 @@ public final class SessionDtos {
 
     public record AllHostIdsResponse(String sessionId, List<String> allHostIds, int count) {}
 
-    public record HostIdMutateResponse(
-            String sessionId,
-            List<String> allHostIds,
-            boolean changed,
-            String msg
-    ) {}
-
-    public record HostIdContainsResponse(String sessionId, String hostId, boolean contains) {}
-
     // ─── 侦察摘要 ─────────────────────────────────────────────────────────────
 
     public record ReconSummaryResponse(

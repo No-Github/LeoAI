@@ -4,8 +4,6 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.session.SessionDtos.AllHostIdsResponse;
 import org.leo.web.dto.platform.session.SessionDtos.CurrentHostIdResponse;
-import org.leo.web.dto.platform.session.SessionDtos.HostIdContainsResponse;
-import org.leo.web.dto.platform.session.SessionDtos.HostIdMutateResponse;
 import org.leo.web.dto.platform.session.SessionDtos.HostIdRequest;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
@@ -26,9 +24,6 @@ import java.util.HashMap;
  *   <li>{@code POST /platform/session/current-host-id}        — 获取当前 hostId</li>
  *   <li>{@code POST /platform/session/current-host-id/set}    — 设置当前 hostId</li>
  *   <li>{@code POST /platform/session/all-host-ids}           — 获取所有 hostId</li>
- *   <li>{@code POST /platform/session/host-id/add}            — 添加 hostId</li>
- *   <li>{@code POST /platform/session/host-id/remove}         — 移除 hostId</li>
- *   <li>{@code POST /platform/session/host-id/contains}       — 检查 hostId 是否存在</li>
  * </ul>
  */
 @RestController
@@ -57,37 +52,6 @@ public class HostIdController {
         PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
         var ids = new ArrayList<>(session.getAllHostIds());
         return ApiResponse.success(new AllHostIdsResponse(sessionId, ids, ids.size()));
-    }
-
-    @PostMapping("/host-id/add")
-    public HashMap<String, Object> addHostId(@RequestBody HostIdRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
-        String hostId    = requireText(request.hostId(),    "hostId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
-        boolean added = session.addHostId(hostId);
-        var ids = new ArrayList<>(session.getAllHostIds());
-        return ApiResponse.success(new HostIdMutateResponse(
-                sessionId, ids, added, added ? "hostId 添加成功" : "hostId 已存在"));
-    }
-
-    @PostMapping("/host-id/remove")
-    public HashMap<String, Object> removeHostId(@RequestBody HostIdRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
-        String hostId    = requireText(request.hostId(),    "hostId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
-        boolean removed = session.removeHostId(hostId);
-        var ids = new ArrayList<>(session.getAllHostIds());
-        return ApiResponse.success(new HostIdMutateResponse(
-                sessionId, ids, removed, removed ? "hostId 移除成功" : "hostId 不存在"));
-    }
-
-    @PostMapping("/host-id/contains")
-    public HashMap<String, Object> containsHostId(@RequestBody HostIdRequest request) {
-        String sessionId = requireText(request.sessionId(), "sessionId");
-        String hostId    = requireText(request.hostId(),    "hostId");
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
-        return ApiResponse.success(
-                new HostIdContainsResponse(sessionId, hostId, session.containsHostId(hostId)));
     }
 
     // ── 私有辅助 ──────────────────────────────────────────────────────────────

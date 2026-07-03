@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
@@ -14,6 +16,8 @@ import java.sql.Statement;
 
 @Component
 public class DatabaseInitializer implements CommandLineRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
 
     private static final String PLACEHOLDER_KEY = "placeholder-configure-db-or-env";
 
@@ -37,7 +41,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/schema.sql"));
         }
         if (needsSeedData()) {
-            System.out.println("检测到无用户数据，写入默认团队与管理员账户...");
+            log.info("检测到无用户数据，写入默认团队与管理员账户...");
             try (Connection conn = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/data.sql"));
             }
@@ -73,7 +77,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                 st.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + typeDecl);
             }
         } catch (SQLException e) {
-            System.err.println("迁移失败: ALTER TABLE " + table + " ADD COLUMN " + column + " — " + e.getMessage());
+            log.warn("迁移失败: ALTER TABLE {} ADD COLUMN {} - {}", table, column, e.getMessage());
         }
     }
 
@@ -89,7 +93,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                         + "WHERE context_window_tokens IS NOT NULL AND context_window_tokens <= 0");
             }
         } catch (SQLException e) {
-            System.err.println("迁移失败: normalize ai_model_configs optional defaults — " + e.getMessage());
+            log.warn("迁移失败: normalize ai_model_configs optional defaults - {}", e.getMessage());
         }
     }
 
@@ -117,7 +121,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                 backfillProtocol(conn, "ai_model_configs");
             }
         } catch (SQLException e) {
-            System.err.println("迁移失败: backfill ai protocol columns — " + e.getMessage());
+            log.warn("迁移失败: backfill ai protocol columns - {}", e.getMessage());
         }
     }
 
@@ -136,7 +140,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         try (Connection conn = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/ai_model_schema.sql"));
         } catch (Exception e) {
-            System.err.println("迁移失败: ensure ai_providers — " + e.getMessage());
+            log.warn("迁移失败: ensure ai_providers - {}", e.getMessage());
         }
     }
 
@@ -174,8 +178,8 @@ public class DatabaseInitializer implements CommandLineRunner {
      */
     private void validateApiKeys() {
         if (isPlaceholderOrBlank(openaiApiKey)) {
-            System.out.println("[WARN] OpenAI API key 未配置（环境变量 OPENAI_API_KEY 或数据库 AI 渠道）");
-            System.out.println("[WARN] 如已通过数据库 AI 渠道配置，可忽略以上警告");
+            log.warn("OpenAI API key 未配置（环境变量 OPENAI_API_KEY 或数据库 AI 渠道）");
+            log.warn("如已通过数据库 AI 渠道配置，可忽略以上警告");
         }
     }
 
@@ -193,10 +197,10 @@ public class DatabaseInitializer implements CommandLineRunner {
             ResultSet rs = st.executeQuery("PRAGMA journal_mode=WAL");
             if (rs.next()) {
                 String mode = rs.getString(1);
-                System.out.println("SQLite journal_mode: " + mode);
+                log.info("SQLite journal_mode: {}", mode);
             }
         } catch (SQLException e) {
-            System.err.println("开启 WAL 模式失败: " + e.getMessage());
+            log.warn("开启 WAL 模式失败: {}", e.getMessage());
         }
     }
 

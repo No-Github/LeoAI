@@ -1,6 +1,8 @@
 package org.leo.core.init;
 
 import org.leo.core.config.LeoConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -18,6 +20,8 @@ import java.nio.file.StandardCopyOption;
 @Component
 public class FingerprintSeedInitializer implements CommandLineRunner {
 
+    private static final Logger log = LoggerFactory.getLogger(FingerprintSeedInitializer.class);
+
     private static final String FINGERPRINT_DIR_NAME = "fingerprint";
     private static final String SEED_LOCATION_PATTERN = "classpath:fingerprint/*.json";
 
@@ -25,7 +29,7 @@ public class FingerprintSeedInitializer implements CommandLineRunner {
     public void run(String... args) throws Exception {
         File targetDir = new File(new File(LeoConfig.getVfsPath()), FINGERPRINT_DIR_NAME);
         if (!targetDir.exists() && !targetDir.mkdirs()) {
-            System.err.println("[FingerprintSeed] 指纹目录创建失败: " + targetDir.getAbsolutePath());
+            log.warn("[FingerprintSeed] 指纹目录创建失败: {}", targetDir.getAbsolutePath());
             return;
         }
 
@@ -33,7 +37,7 @@ public class FingerprintSeedInitializer implements CommandLineRunner {
         try {
             seeds = new PathMatchingResourcePatternResolver().getResources(SEED_LOCATION_PATTERN);
         } catch (Exception e) {
-            System.err.println("[FingerprintSeed] 加载内置指纹失败: " + e.getMessage());
+            log.warn("[FingerprintSeed] 加载内置指纹失败: {}", e.getMessage());
             return;
         }
 
@@ -51,12 +55,10 @@ public class FingerprintSeedInitializer implements CommandLineRunner {
                 Files.copy(in, destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 copied++;
             } catch (Exception e) {
-                System.err.println("[FingerprintSeed] 拷贝失败: " + filename + " — " + e.getMessage());
+                log.warn("[FingerprintSeed] 拷贝失败: {} - {}", filename, e.getMessage());
             }
         }
 
-        System.out.println("[FingerprintSeed] 内置指纹同步完成: 新增 " + copied
-                + " 条, 跳过 " + skipped + " 条 (已存在)");
+        log.info("[FingerprintSeed] 内置指纹同步完成: 新增 {} 条, 跳过 {} 条 (已存在)", copied, skipped);
     }
 }
-

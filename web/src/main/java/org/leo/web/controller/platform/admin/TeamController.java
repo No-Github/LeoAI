@@ -67,16 +67,6 @@ public class TeamController {
         return ApiResponse.success(teams);
     }
 
-    @RequestMapping(value = "/teams/names", method = RequestMethod.GET)
-    public Map<String, Object> getAllTeamName(HttpServletRequest request) {
-        requireAdmin(request);
-        List<String> names = new ArrayList<>();
-        for (Team t : teamService.getAllTeam()) {
-            if (t != null && t.getTeamName() != null) names.add(t.getTeamName());
-        }
-        return ApiResponse.success(names);
-    }
-
     // ── 创建 ─────────────────────────────────────────────────────────────────────
 
     /**

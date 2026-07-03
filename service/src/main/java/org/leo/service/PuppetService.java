@@ -1,28 +1,17 @@
 package org.leo.service;
 
 import org.leo.core.entity.Puppet;
-import org.leo.core.entity.User;
 import org.leo.dao.mapper.PuppetMapper;
-import org.leo.service.user.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Puppet 管理服务。
- *
- * <p>Puppet 可见性规则（基于调用方角色与 Puppet permission 字段）：
- * <ul>
- *   <li>admin  — 可见所有 Puppet</li>
- *   <li>leader — 可见自己的所有 Puppet + 本团队 team/protected 资源 + 所有人的 public Puppet</li>
- *   <li>normal — 可见自己的所有 Puppet + 本团队 team/protected 资源 + 所有人的 public Puppet</li>
- * </ul>
  *
  * <p>Puppet permission 值：private / team / public（默认 private），兼容旧值 protected。
  */
@@ -66,65 +55,6 @@ public class PuppetService {
     public List<Puppet> getAllPuppet() {
         List<Puppet> list = puppetMapper.getAllPuppet();
         return list != null ? list : new ArrayList<>();
-    }
-
-    // ── 基于角色的可见性查询 ──────────────────────────────────────────────────────
-
-    /**
-     * 根据当前用户的角色与团队成员列表，返回该用户可见的所有 Puppet（去重）。
-     *
-     * @param user          当前登录用户
-     * @param teamMemberIds 当前用户所在团队的成员 ID 列表（leader 时传入，其余可为 null）
-     * @return 去重后的可见 Puppet 列表
-     */
-    public List<Puppet> getVisiblePuppets(User user, List<String> teamMemberIds) {
-        if (user == null) return new ArrayList<>();
-
-        String role = user.getPrivilege();
-
-        // Admin 可见所有
-        if (UserService.PRIVILEGE_ADMIN.equals(role)) {
-            return getAllPuppet();
-        }
-
-        Set<Puppet> result = new LinkedHashSet<>();
-
-        // 自己创建的所有 Puppet（private/protected/public 均可见）
-        result.addAll(findPuppetByCreateUserId(user.getUserId()));
-
-        // 全局 public Puppet
-        result.addAll(findPuppetByPermission("public"));
-
-        // 团队共享 Puppet（team 为新值，protected 为历史兼容值）
-        String teamId = user.getTeamId();
-        if (teamId != null && !teamId.isBlank()) {
-            for (Puppet p : getAllPuppet()) {
-                if (p == null || p.getCreateByUserId() == null || p.getCreateByUserId().equals(user.getUserId())) {
-                    continue;
-                }
-                String permission = p.getPermission();
-                if (("team".equals(permission) || "protected".equals(permission))
-                        && teamId.equals(p.getTeamId())) {
-                    result.add(p);
-                }
-            }
-        }
-
-        // 兼容旧数据：早期 protected Puppet 可能只依赖创建者团队而没有 puppet.teamId。
-        if (teamMemberIds != null) {
-            for (String memberId : teamMemberIds) {
-                if (memberId == null || memberId.equals(user.getUserId())) continue;
-                for (Puppet p : findPuppetByCreateUserId(memberId)) {
-                    if (p != null
-                            && (p.getTeamId() == null || p.getTeamId().isBlank())
-                            && ("team".equals(p.getPermission()) || "protected".equals(p.getPermission()))) {
-                        result.add(p);
-                    }
-                }
-            }
-        }
-
-        return new ArrayList<>(result);
     }
 
     // ── 写操作 ───────────────────────────────────────────────────────────────────

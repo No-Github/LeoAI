@@ -88,15 +88,6 @@ public interface AuditLogMapper {
     @Select("SELECT * FROM audit_logs WHERE log_id = #{logId}")
     AuditLog findAuditLogById(@Param("logId") String logId);
 
-    @Select("SELECT * FROM audit_logs WHERE user_id = #{userId} ORDER BY create_time DESC LIMIT #{limit} OFFSET #{offset}")
-    List<AuditLog> findAuditLogsByUserId(@Param("userId") String userId, @Param("limit") Integer limit, @Param("offset") Integer offset);
-
-    @Select("SELECT * FROM audit_logs WHERE puppet_id = #{puppetId} ORDER BY create_time DESC LIMIT #{limit} OFFSET #{offset}")
-    List<AuditLog> findAuditLogsByPuppetId(@Param("puppetId") String puppetId, @Param("limit") Integer limit, @Param("offset") Integer offset);
-
-    @Select("SELECT * FROM audit_logs WHERE operation_type = #{operationType} ORDER BY create_time DESC LIMIT #{limit} OFFSET #{offset}")
-    List<AuditLog> findAuditLogsByOperationType(@Param("operationType") String operationType, @Param("limit") Integer limit, @Param("offset") Integer offset);
-
     @Select("SELECT * FROM audit_logs ORDER BY create_time DESC LIMIT #{limit} OFFSET #{offset}")
     List<AuditLog> findAllAuditLogs(@Param("limit") Integer limit, @Param("offset") Integer offset);
 

@@ -154,44 +154,6 @@ public class DisguiseService {
         ensureDisguiseLogic(encodeBody, decodeBody);
     }
 
-    public HashMap<String, Object> uploadDisguise(MultipartFile file, User user) throws Exception {
-        ensureLoggedIn(user);
-        if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("文件不能为空");
-        }
-        String originalFilename = file.getOriginalFilename();
-        if (isBlank(originalFilename)) {
-            throw new IllegalArgumentException("文件名不能为空");
-        }
-
-        Disguise disguise;
-        try {
-            String decrypted = AesUtil.decrypt(new String(file.getBytes(), StandardCharsets.UTF_8), LeoConfig.getPluginEncryptKey());
-            disguise = (Disguise) JsonUtil.fromJsonString(decrypted, Disguise.class);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Disguise 文件解析失败: " + e.getMessage(), e);
-        }
-        if (disguise == null) {
-            throw new IllegalArgumentException("Disguise 文件内容无效");
-        }
-
-        disguise.setCreateUserId(user.getUserId());
-        disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
-        disguise.setVersion(defaultVersion(disguise.getVersion()));
-
-        String disguiseId = generateDisguiseId(disguise.getDisguiseName(), disguise.getVersion());
-        ensureDisguiseIdNotExists(disguiseId);
-        disguise.setDisguiseId(disguiseId);
-
-        ensureDisguiseLogic(disguise.getEncodeBody(), disguise.getDecodeBody());
-        installAndPersist(disguise);
-
-        HashMap<String, Object> data = new HashMap<>();
-        data.put("disguiseId", disguise.getDisguiseId());
-        data.put("disguiseName", disguise.getDisguiseName());
-        return data;
-    }
-
     // ── 导出 ──────────────────────────────────────────────────────────────────
 
     /**

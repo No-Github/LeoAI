@@ -81,18 +81,6 @@ public class DisguiseManagerController {
         }
     }
 
-    @RequestMapping(value = "/upload-disguises", method = RequestMethod.POST)
-    public HashMap<String, Object> uploadDisguise(@RequestParam("file") MultipartFile file, HttpServletRequest request) {
-        try {
-            HashMap<String, Object> data = disguiseService.uploadDisguise(file, getCurrentUser(request));
-            return ApiResponse.success("Disguise 上传成功", data);
-        } catch (IllegalArgumentException e) {
-            return toValidationResponse(e);
-        } catch (Exception e) {
-            return ApiResponse.error("Disguise 保存失败: " + e.getMessage());
-        }
-    }
-
     @RequestMapping(value = "/disguises/get", method = RequestMethod.POST)
     public HashMap<String, Object> getDisguiseById(@RequestBody HashMap<String, Object> params) {
         try {

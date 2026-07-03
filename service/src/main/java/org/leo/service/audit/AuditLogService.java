@@ -114,57 +114,6 @@ public class AuditLogService {
     }
 
     /**
-     * 根据用户ID查询审计日志
-     */
-    public List<AuditLog> findAuditLogsByUserId(String userId, Integer limit, Integer offset) {
-        if (userId == null || userId.isBlank()) {
-            return new java.util.ArrayList();
-        }
-        if (limit == null || limit <= 0) {
-            limit = 100;
-        }
-        if (offset == null || offset < 0) {
-            offset = 0;
-        }
-        List<AuditLog> logs = auditLogMapper.findAuditLogsByUserId(userId, limit, offset);
-        return logs != null ? logs : new java.util.ArrayList();
-    }
-
-    /**
-     * 根据主机ID查询审计日志
-     */
-    public List<AuditLog> findAuditLogsByPuppetId(String puppetId, Integer limit, Integer offset) {
-        if (puppetId == null || puppetId.isBlank()) {
-            return new java.util.ArrayList();
-        }
-        if (limit == null || limit <= 0) {
-            limit = 100;
-        }
-        if (offset == null || offset < 0) {
-            offset = 0;
-        }
-        List<AuditLog> logs = auditLogMapper.findAuditLogsByPuppetId(puppetId, limit, offset);
-        return logs != null ? logs : new java.util.ArrayList();
-    }
-
-    /**
-     * 根据操作类型查询审计日志
-     */
-    public List<AuditLog> findAuditLogsByOperationType(String operationType, Integer limit, Integer offset) {
-        if (operationType == null || operationType.isBlank()) {
-            return new java.util.ArrayList();
-        }
-        if (limit == null || limit <= 0) {
-            limit = 100;
-        }
-        if (offset == null || offset < 0) {
-            offset = 0;
-        }
-        List<AuditLog> logs = auditLogMapper.findAuditLogsByOperationType(operationType, limit, offset);
-        return logs != null ? logs : new java.util.ArrayList();
-    }
-
-    /**
      * 查询所有审计日志
      */
     public List<AuditLog> findAllAuditLogs(Integer limit, Integer offset) {

@@ -1,11 +1,9 @@
 package org.leo.web.controller.platform.admin;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
-import org.leo.service.PuppetService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
@@ -36,12 +33,10 @@ public class UserController {
     private static final String SESSION_USER = "user";
     private static final String USERNAME_ADMIN = "admin";
 
-    private final PuppetService puppetService;
     private final UserService userService;
     private final TeamService teamService;
 
-    public UserController(PuppetService puppetService, UserService userService, TeamService teamService) {
-        this.puppetService = puppetService;
+    public UserController(UserService userService, TeamService teamService) {
         this.userService = userService;
         this.teamService = teamService;
     }
@@ -68,23 +63,6 @@ public class UserController {
             if (self != null) users.add(self);
         }
         return ApiResponse.success(sanitize(users));
-    }
-
-    /**
-     * 获取所有用户名列表（admin only）。
-     */
-    @RequestMapping(value = "/users/names", method = RequestMethod.GET)
-    public HashMap<String, Object> getAllUserName(HttpServletRequest request) {
-        User caller = getSessionUser(request);
-        if (caller == null) return ApiResponse.unauthorized("未登录");
-        if (!UserService.PRIVILEGE_ADMIN.equals(caller.getPrivilege())) {
-            return ApiResponse.forbidden("无权访问");
-        }
-        List<String> names = new ArrayList<>();
-        for (User u : userService.getAllUser()) {
-            if (u != null && u.getUserName() != null) names.add(u.getUserName());
-        }
-        return ApiResponse.success(names);
     }
 
     /**
@@ -301,39 +279,6 @@ public class UserController {
 
         boolean ok = userService.delUser(target.getUserId());
         return ok ? ApiResponse.success() : ApiResponse.error("删除失败");
-    }
-
-    // ── Puppet 查询 ──────────────────────────────────────────────────────────────
-
-    /**
-     * 获取当前用户可见的 Puppet 列表（基于角色与 permission 规则）。
-     */
-    @RequestMapping(value = "/puppets", method = RequestMethod.GET)
-    public HashMap<String, Object> getVisiblePuppets(HttpServletRequest request) {
-        User caller = getSessionUser(request);
-        if (caller == null) return ApiResponse.unauthorized("未登录");
-
-        List<String> teamMemberIds = null;
-        if (caller.getTeamId() != null && !caller.getTeamId().isBlank()) {
-            teamMemberIds = new ArrayList<>();
-            for (User member : userService.getUserByTeamId(caller.getTeamId())) {
-                if (member != null) teamMemberIds.add(member.getUserId());
-            }
-        }
-
-        List<Puppet> puppets = puppetService.getVisiblePuppets(caller, teamMemberIds);
-        return ApiResponse.success(puppets);
-    }
-
-    // ── 元数据 ───────────────────────────────────────────────────────────────────
-
-    @RequestMapping(value = "/privileges", method = RequestMethod.GET)
-    public HashMap<String, Object> getPrivileges() {
-        return ApiResponse.success(Arrays.asList(
-                UserService.PRIVILEGE_ADMIN,
-                UserService.PRIVILEGE_LEADER,
-                UserService.PRIVILEGE_NORMAL
-        ));
     }
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────────

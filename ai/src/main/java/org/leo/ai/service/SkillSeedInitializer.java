@@ -1,6 +1,8 @@
 package org.leo.ai.service;
 
 import org.leo.core.config.LeoConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -19,6 +21,8 @@ import java.nio.file.StandardCopyOption;
 @Component
 public class SkillSeedInitializer implements CommandLineRunner {
 
+    private static final Logger log = LoggerFactory.getLogger(SkillSeedInitializer.class);
+
     private static final String SKILLS_DIR  = "skills";
     private static final String SEED_MARKER = "skills/";
     private static final String SEED_PATTERN = "classpath:skills/**/*";
@@ -31,7 +35,7 @@ public class SkillSeedInitializer implements CommandLineRunner {
         try {
             seeds = new PathMatchingResourcePatternResolver().getResources(SEED_PATTERN);
         } catch (Exception e) {
-            System.err.println("[SkillSeed] 加载内置 skill 资源失败: " + e.getMessage());
+            log.warn("[SkillSeed] 加载内置 skill 资源失败: {}", e.getMessage());
             return;
         }
 
@@ -56,7 +60,7 @@ public class SkillSeedInitializer implements CommandLineRunner {
             Path destFile = vfsSkillsRoot.resolve(relativePath).normalize();
             // 路径安全校验，防止路径穿越
             if (!destFile.startsWith(vfsSkillsRoot)) {
-                System.err.println("[SkillSeed] 非法路径，跳过: " + relativePath);
+                log.warn("[SkillSeed] 非法路径，跳过: {}", relativePath);
                 continue;
             }
 
@@ -70,9 +74,9 @@ public class SkillSeedInitializer implements CommandLineRunner {
                 Files.copy(in, destFile, StandardCopyOption.REPLACE_EXISTING);
                 copied++;
             } catch (Exception e) {
-                System.err.println("[SkillSeed] 拷贝失败: " + relativePath + " — " + e.getMessage());
+                log.warn("[SkillSeed] 拷贝失败: {} - {}", relativePath, e.getMessage());
             }
         }
-        System.out.println("[SkillSeed] 内置 skill 同步完成: 新增 " + copied + " 个文件, 跳过 " + skipped + " 个 (已存在)");
+        log.info("[SkillSeed] 内置 skill 同步完成: 新增 {} 个文件, 跳过 {} 个 (已存在)", copied, skipped);
     }
 }
