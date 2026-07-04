@@ -2,7 +2,7 @@ package org.leo.service.puppetnode.plugin;
 
 import org.leo.core.entity.Plugin;
 import org.leo.core.manager.PluginManager;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.JavaPluginCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.springframework.stereotype.Service;
 
@@ -21,8 +21,8 @@ public class JavaPluginService {
     private static final String RESULT_PLUGIN_PARAM = "pluginParam";
     private static final String RESULT_PLUGIN_BYTECODE = "pluginBytecode";
 
-    public Map<String, Object> invokePlugin(JavaPuppetNode javaPuppetNode, String pluginId, String pluginParamJson) throws Exception {
-        if (javaPuppetNode == null) {
+    public Map<String, Object> invokePlugin(JavaPluginCapable pluginNode, String pluginId, String pluginParamJson) throws Exception {
+        if (pluginNode == null) {
             throw new IllegalArgumentException("puppetNode不能为空");
         }
         Plugin plugin = getRequiredPlugin(pluginId);
@@ -32,7 +32,7 @@ public class JavaPluginService {
         if (type == null || PLUGIN_TYPE_JAVA.equalsIgnoreCase(type)) {
             // Java 字节码插件：发 bytecode + 业务参数给 PluginComponent
             Map<String, Object> payload = buildInvokePayload(plugin, pluginParamJson);
-            results = javaPuppetNode.invokeComponent(COMPONENT_PLUGIN, payload);
+            results = pluginNode.invokeComponent(COMPONENT_PLUGIN, payload);
         } else {
             // 脚本插件：bytecode 字段保存 UTF-8 脚本文本，走 node.execScript()
             // 与 AI 工具 ScriptTools.execScript() 完全相同的路径，复用 ExecScriptService
@@ -43,7 +43,7 @@ public class JavaPluginService {
                 throw new IllegalArgumentException("脚本内容为空: " + plugin.getPluginId());
             }
             String script = new String(bytecode, StandardCharsets.UTF_8);
-            results = javaPuppetNode.execScript(type, script);
+            results = pluginNode.execScript(type, script);
         }
         if (results == null) {
             throw new IllegalStateException("组件调用返回结果为空");

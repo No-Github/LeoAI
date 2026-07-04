@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.registry;
 
+import org.leo.core.puppet.capability.RegistryCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -27,7 +28,7 @@ public class RegistryController {
             return ApiResponse.badRequest("keyPath 参数必填");
         }
         boolean recursive = ControllerUtil.getBool(params, "recursive");
-        return ControllerUtil.handlePuppetCall(params, "查询注册表失败", node -> node.queryRegistry(keyPath, recursive));
+        return ControllerUtil.handleCapabilityCall(params, RegistryCapable.class, "查询注册表失败", node -> node.queryRegistry(keyPath, recursive));
     }
 
     /**
@@ -46,7 +47,7 @@ public class RegistryController {
         int maxResults = ControllerUtil.getInt(params, "maxResults", 50);
         String finalKeyPath = keyPath;
         String finalSearchTarget = searchTarget;
-        return ControllerUtil.handlePuppetCall(params, "搜索注册表失败",
+        return ControllerUtil.handleCapabilityCall(params, RegistryCapable.class, "搜索注册表失败",
                 node -> node.searchRegistry(finalKeyPath, pattern, finalSearchTarget, maxResults));
     }
 
@@ -67,7 +68,7 @@ public class RegistryController {
         boolean force = !params.containsKey("force") || ControllerUtil.getBool(params, "force");
         String finalValueType = valueType;
         String finalValueData = valueData;
-        return ControllerUtil.handlePuppetCall(params, "添加注册表值失败",
+        return ControllerUtil.handleCapabilityCall(params, RegistryCapable.class, "添加注册表值失败",
                 node -> node.addRegistry(keyPath, valueName, finalValueType, finalValueData, force));
     }
 
@@ -82,7 +83,7 @@ public class RegistryController {
         }
         String valueName = ControllerUtil.getStr(params, "valueName");
         boolean force = !params.containsKey("force") || ControllerUtil.getBool(params, "force");
-        return ControllerUtil.handlePuppetCall(params, "删除注册表失败",
+        return ControllerUtil.handleCapabilityCall(params, RegistryCapable.class, "删除注册表失败",
                 node -> node.deleteRegistry(keyPath, valueName, force));
     }
 
@@ -95,6 +96,6 @@ public class RegistryController {
         if (keyPath == null) {
             return ApiResponse.badRequest("keyPath 参数必填");
         }
-        return ControllerUtil.handlePuppetCall(params, "导出注册表失败", node -> node.exportRegistry(keyPath));
+        return ControllerUtil.handleCapabilityCall(params, RegistryCapable.class, "导出注册表失败", node -> node.exportRegistry(keyPath));
     }
 }

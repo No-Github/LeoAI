@@ -2,7 +2,8 @@ package org.leo.web.controller.puppetnode.scan;
 
 
 import org.leo.core.config.LeoConfig;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
@@ -39,10 +40,11 @@ public class FingerprintController {
      */
     @RequestMapping(value = "/start-scan", method = RequestMethod.POST)
     public HashMap<String, Object> startScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String fingerprintId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             fingerprintId = ControllerUtil.getRequiredStringParam(params, "fingerprintId");
 
             Object targets = params.get("targets");
@@ -73,7 +75,7 @@ public class FingerprintController {
             componentParams.put("rule", normalizeJson(rule));
             componentParams.put("threads", Integer.valueOf(threads));
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_START", "启动指纹扫描", fingerprintId, params,
@@ -169,17 +171,18 @@ public class FingerprintController {
      */
     @RequestMapping(value = "/query-result", method = RequestMethod.POST)
     public HashMap<String, Object> queryResult(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<>();
             componentParams.put("methodName", "queryResult");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_QUERY", "查询指纹扫描结果", taskId, params,
@@ -218,17 +221,18 @@ public class FingerprintController {
      */
     @RequestMapping(value = "/pause-scan", method = RequestMethod.POST)
     public HashMap<String, Object> pauseScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<>();
             componentParams.put("methodName", "pauseScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_PAUSE", "暂停指纹扫描", taskId, params,
@@ -267,17 +271,18 @@ public class FingerprintController {
      */
     @RequestMapping(value = "/resume-scan", method = RequestMethod.POST)
     public HashMap<String, Object> resumeScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<>();
             componentParams.put("methodName", "resumeScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_RESUME", "继续指纹扫描", taskId, params,
@@ -316,17 +321,18 @@ public class FingerprintController {
      */
     @RequestMapping(value = "/stop-scan", method = RequestMethod.POST)
     public HashMap<String, Object> stopScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<>();
             componentParams.put("methodName", "stopScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_STOP", "终止指纹扫描", taskId, params,
@@ -357,4 +363,3 @@ public class FingerprintController {
         }
     }
 }
-

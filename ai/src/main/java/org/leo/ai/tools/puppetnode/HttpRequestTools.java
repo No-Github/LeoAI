@@ -3,7 +3,7 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.HttpSenderCapable;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
@@ -47,7 +47,7 @@ public class HttpRequestTools {
                 Map<String, Object> cachedMap = (Map<String, Object>) cached;
                 return cachedMap;
             }
-            JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+            HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
             Map<String, String> headerMap = parseHeaders(headers);
             Map<String, Object> result = node.httpRequest(method, url, headerMap, body, connectTimeout, readTimeout, followRedirects);
             if (result != null && isSuccess(result)) {
@@ -56,7 +56,7 @@ public class HttpRequestTools {
             compressResponseBody(result);
             return result;
         }
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         Map<String, String> headerMap = parseHeaders(headers);
         Map<String, Object> result = node.httpRequest(method, url, headerMap, body, connectTimeout, readTimeout, followRedirects);
         compressResponseBody(result);
@@ -71,7 +71,7 @@ public class HttpRequestTools {
                                               boolean useTls, boolean followRedirects,
                                               int connectTimeout, int readTimeout) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         Map<String, Object> result = node.sendRawHttp(rawHttp, targetHost, targetPort, useTls, followRedirects, connectTimeout, readTimeout);
         compressResponseBody(result);
         return result;
@@ -89,21 +89,21 @@ public class HttpRequestTools {
                                          boolean useTls, int threads, int delayMs,
                                          Map<String, Object> matchRules) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         return node.startFuzz(rawHttp, payloads, targetHost, targetPort, useTls, threads, delayMs, matchRules);
     }
 
     @Tool("查询 Fuzzer 任务进度和结果。传入 startFuzz 返回的 taskId。返回 status（RUNNING/FINISHED/STOPPED）、completed/total 进度、results 列表（每条包含 payloads、statusCode、bodyLength、matched 等）。")
     public Map<String, Object> queryFuzz(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         return node.queryFuzz(taskId);
     }
 
     @Tool("停止正在运行的 Fuzzer 任务。传入 taskId，强制终止所有进行中的请求。")
     public Map<String, Object> stopFuzz(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         return node.stopFuzz(taskId);
     }
 

@@ -1,7 +1,7 @@
 package org.leo.web.controller.puppetnode.proxy;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ReverseTunnelCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,7 +40,7 @@ public class ReverseTunnelController {
                 return ApiResponse.badRequest("remoteListenPort、forwardHost、forwardPort 均为必填项");
             }
 
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ReverseTunnelCapable node = ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
             Map<String, Object> result = node.startReverseTunnel(
                     remoteListenPort.intValue(),
                     bindAddr,
@@ -65,7 +65,7 @@ public class ReverseTunnelController {
             if (listenId == null || listenId.length() == 0) {
                 return ApiResponse.badRequest("listenId 为必填项");
             }
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ReverseTunnelCapable node = ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
             Map<String, Object> result = node.stopReverseTunnel(listenId);
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -81,7 +81,7 @@ public class ReverseTunnelController {
     @RequestMapping(value = "/stop-all", method = RequestMethod.POST)
     public HashMap<String, Object> stopAll(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ReverseTunnelCapable node = ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
             Map<String, Object> result = node.stopAllReverseTunnels();
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -97,7 +97,7 @@ public class ReverseTunnelController {
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ReverseTunnelCapable node = ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
             List<Map<String, Object>> rules = node.listReverseTunnels();
             return ApiResponse.success(rules != null ? rules : new ArrayList<Map<String, Object>>());
         } catch (IllegalArgumentException e) {
@@ -118,7 +118,7 @@ public class ReverseTunnelController {
             if (listenId == null || listenId.length() == 0) {
                 return ApiResponse.badRequest("listenId 为必填项");
             }
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ReverseTunnelCapable node = ControllerUtil.requireCapability(params, ReverseTunnelCapable.class);
             Socks5ProxyStatistics.StatisticsSnapshot snapshot = node.getReverseTunnelStatistics(listenId);
             if (snapshot == null) {
                 return ApiResponse.error("该反向隧道未启动或不存在");

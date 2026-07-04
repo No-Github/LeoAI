@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.BasicInfoCapable;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
@@ -21,7 +21,7 @@ public class BasicInfoTools {
             return (Map<String, Object>) cachedMap;
         }
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        BasicInfoCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BasicInfoCapable.class);
         Map<String, Object> results = node.getBasicInfo();
         if (results != null) {
             PuppetNodeSessionUtils.putAiContextValue(sessionId, BASIC_INFO_CACHE_KEY, results);

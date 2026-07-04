@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.scan;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.web.util.AuditLogUtil;
@@ -51,9 +52,10 @@ public class ReconScanController {
      */
     @RequestMapping(value = "/start-scan", method = RequestMethod.POST)
     public HashMap<String, Object> startScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
 
             Object targetsObj = params.get("targets");
             if (!(targetsObj instanceof List)) {
@@ -82,7 +84,7 @@ public class ReconScanController {
             componentParams.put("rules",   rules);
             componentParams.put("threads", Integer.valueOf(threads));
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "RECON_START", "启动侦察扫描", null, params,
@@ -117,17 +119,18 @@ public class ReconScanController {
 
     @RequestMapping(value = "/query-result", method = RequestMethod.POST)
     public HashMap<String, Object> queryResult(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<String, Object>();
             componentParams.put("methodName", "queryResult");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 AuditLogUtil.logFailure(javaPuppetNode, "RECON_QUERY", "查询侦察扫描结果", taskId, params,
@@ -162,17 +165,18 @@ public class ReconScanController {
 
     @RequestMapping(value = "/pause-scan", method = RequestMethod.POST)
     public HashMap<String, Object> pauseScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<String, Object>();
             componentParams.put("methodName", "pauseScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 return ApiResponse.error("暂停侦察扫描失败: 组件调用返回结果为空");
@@ -192,17 +196,18 @@ public class ReconScanController {
 
     @RequestMapping(value = "/resume-scan", method = RequestMethod.POST)
     public HashMap<String, Object> resumeScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<String, Object>();
             componentParams.put("methodName", "resumeScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 return ApiResponse.error("继续侦察扫描失败: 组件调用返回结果为空");
@@ -222,17 +227,18 @@ public class ReconScanController {
 
     @RequestMapping(value = "/stop-scan", method = RequestMethod.POST)
     public HashMap<String, Object> stopScan(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
             HashMap<String, Object> componentParams = new HashMap<String, Object>();
             componentParams.put("methodName", "stopScan");
             componentParams.put("taskId", taskId);
 
-            Map<String, Object> results = javaPuppetNode.invokeComponent(COMPONENT_CLASS, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(COMPONENT_CLASS, componentParams);
 
             if (results == null) {
                 return ApiResponse.error("终止侦察扫描失败: 组件调用返回结果为空");

@@ -3,7 +3,7 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.entity.Plugin;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.JavaPluginCapable;
 import org.leo.service.puppetnode.plugin.JavaPluginService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -38,7 +38,7 @@ public class JavaPluginTools {
     @Tool("调用指定 Java 插件。插件本身由平台侧加载和管理，但会绑定当前 session 对应的 puppet 目标执行。sessionId 和 pluginId 必填；pluginParamJson 传 JSON 对象字符串，例如 {\"key\":\"value\"}。适用于让 AI 直接复用平台已加载插件能力处理目标会话。")
     public Map<String, Object> invokeJavaPlugin(String pluginId, String pluginParamJson) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPluginService.invokePlugin(javaPuppetNode, pluginId, pluginParamJson);
+        JavaPluginCapable pluginNode = PuppetNodeSessionUtils.requireCapability(sessionId, JavaPluginCapable.class);
+        return javaPluginService.invokePlugin(pluginNode, pluginId, pluginParamJson);
     }
 }

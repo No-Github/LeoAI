@@ -175,6 +175,29 @@ public class ControllerUtil {
         return getAbstractPuppetNode(getPuppetNodeSession(sessionId));
     }
 
+    public static <T> T requireCapability(Map<String, Object> params, Class<T> capabilityType) {
+        PuppetNodeSession session = getPuppetNodeSession(params);
+        return requireCapability(session, capabilityType);
+    }
+
+    public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {
+        PuppetNodeSession session = getPuppetNodeSession(sessionId);
+        return requireCapability(session, capabilityType);
+    }
+
+    private static <T> T requireCapability(PuppetNodeSession session, Class<T> capabilityType) {
+        if (capabilityType == null) {
+            throw ApiException.badRequest("capabilityType不能为空");
+        }
+        AbstractPuppetNode node = getAbstractPuppetNode(session);
+        if (capabilityType.isInstance(node)) {
+            return capabilityType.cast(node);
+        }
+        String nodeType = node.getPuppet() != null ? node.getPuppet().getType() : node.getClass().getSimpleName();
+        throw ApiException.badRequest("当前 Puppet 类型不支持能力: " + capabilityType.getSimpleName()
+                + " (type=" + safeText(nodeType, "unknown") + ")");
+    }
+
     private static AbstractPuppetNode getAbstractPuppetNode(PuppetNodeSession session) {
         AbstractPuppetNode node = session.getPuppetNode();
         if (node == null) {
@@ -307,6 +330,99 @@ public class ControllerUtil {
     @FunctionalInterface
     public interface PuppetCall {
         Map<String, Object> apply(JavaPuppetNode node) throws Exception;
+    }
+
+    /** 函数式接口:供 handleCapabilityCall 注入能力逻辑 */
+    @FunctionalInterface
+    public interface CapabilityCall<T> {
+        Map<String, Object> apply(T node) throws Exception;
+    }
+
+    /**
+     * 统一封装多类型 Puppet 能力调用样板:获取节点 → 校验能力 → 执行回调 → 检查 code==200 → 返回 ApiResponse。
+     */
+    public static <T> HashMap<String, Object> handleCapabilityCall(
+            Map<String, Object> params, Class<T> capabilityType, String errorPrefix, CapabilityCall<T> call) {
+        String operationType = inferOperationTypeFromRequest();
+        return handleCapabilityCall(params, capabilityType, operationType, null, null, errorPrefix, call,
+                shouldAuditGenericOperation(operationType));
+    }
+
+    /**
+     * 统一封装多类型 Puppet 能力调用样板，并附带审计日志记录。
+     */
+    public static <T> HashMap<String, Object> handleCapabilityCall(
+            Map<String, Object> params,
+            Class<T> capabilityType,
+            String operationType,
+            String operationName,
+            String operationPath,
+            String errorPrefix,
+            CapabilityCall<T> call) {
+        return handleCapabilityCall(params, capabilityType, operationType, operationName, operationPath,
+                errorPrefix, call, true);
+    }
+
+    private static <T> HashMap<String, Object> handleCapabilityCall(
+            Map<String, Object> params,
+            Class<T> capabilityType,
+            String operationType,
+            String operationName,
+            String operationPath,
+            String errorPrefix,
+            CapabilityCall<T> call,
+            boolean auditEnabled) {
+        AbstractPuppetNode auditNode = null;
+        String resolvedOperationType = safeText(operationType, inferOperationTypeFromRequest());
+        String resolvedOperationName = safeText(operationName, normalizeOperationName(errorPrefix, resolvedOperationType));
+        String resolvedOperationPath = safeText(operationPath, currentRequestPath());
+        String clientIp = AuditLogUtil.getClientIp();
+
+        try {
+            PuppetNodeSession session = getPuppetNodeSession(params);
+            auditNode = getAbstractPuppetNode(session);
+            T node = requireCapability(session, capabilityType);
+            Map<String, Object> result = call.apply(node);
+            if (result == null) {
+                String message = safeText(errorPrefix, "Puppet调用失败") + ": 返回为空";
+                if (auditEnabled) {
+                    AuditLogUtil.logFailure(auditNode, resolvedOperationType, resolvedOperationName,
+                            resolvedOperationPath, params, message, clientIp);
+                }
+                return ApiResponse.error(message);
+            }
+
+            Integer responseCode = extractResponseCode(result);
+            String responseMessage = extractResponseMessage(result);
+            if (responseCode != null && responseCode.intValue() == ApiResponse.CODE_SUCCESS) {
+                if (auditEnabled) {
+                    AuditLogUtil.logSuccess(auditNode, resolvedOperationType, resolvedOperationName,
+                            resolvedOperationPath, params, responseCode, responseMessage, clientIp);
+                }
+                return ApiResponse.success(result);
+            }
+
+            String message = safeText(responseMessage, safeText(errorPrefix, "Puppet调用失败") + ": 失败");
+            if (auditEnabled) {
+                AuditLogUtil.logOperation(auditNode, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, responseCode, responseMessage, "FAILED", message, clientIp);
+            }
+            return ApiResponse.error(message);
+        } catch (ApiException ae) {
+            if (auditEnabled && auditNode != null) {
+                AuditLogUtil.logOperation(auditNode, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, ae.getCode(), ae.getMessage(), "FAILED",
+                        ae.getMessage(), clientIp);
+            }
+            throw ae;
+        } catch (Exception e) {
+            String message = safeText(errorPrefix, "Puppet调用失败") + ": " + e.getMessage();
+            if (auditEnabled && auditNode != null) {
+                AuditLogUtil.logError(auditNode, resolvedOperationType, resolvedOperationName,
+                        resolvedOperationPath, params, message, clientIp);
+            }
+            return ApiResponse.error(message);
+        }
     }
 
     /**

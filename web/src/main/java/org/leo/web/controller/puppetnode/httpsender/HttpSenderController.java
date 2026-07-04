@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.httpsender;
 
+import org.leo.core.puppet.capability.HttpSenderCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,7 +49,7 @@ public class HttpSenderController {
                 targetPort = useTls ? 443 : 80;
             }
             int finalTargetPort = targetPort;
-            return ControllerUtil.handlePuppetCall(params, "发送请求失败",
+            return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "发送请求失败",
                     node -> node.sendRawHttp(rawHttp, targetHost, finalTargetPort, useTls, followRedirects, connectTimeout, readTimeout));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -90,7 +91,7 @@ public class HttpSenderController {
                 targetPort = useTls ? 443 : 80;
             }
             int finalTargetPort = targetPort;
-            return ControllerUtil.handlePuppetCall(params, "启动 Fuzzer 失败",
+            return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "启动 Fuzzer 失败",
                     node -> node.startFuzz(rawHttp, payloads, targetHost, finalTargetPort, useTls, threads, delayMs, matchRules));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -108,7 +109,7 @@ public class HttpSenderController {
     public HashMap<String, Object> queryFuzz(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "查询 Fuzzer 任务失败", node -> node.queryFuzz(taskId));
+            return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "查询 Fuzzer 任务失败", node -> node.queryFuzz(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -125,7 +126,7 @@ public class HttpSenderController {
     public HashMap<String, Object> stopFuzz(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "停止 Fuzzer 任务失败", node -> node.stopFuzz(taskId));
+            return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "停止 Fuzzer 任务失败", node -> node.stopFuzz(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }

@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ScanCapable;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
@@ -17,36 +17,36 @@ public class ScanTools {
             + "返回 taskId，用 queryScanPortResult 轮询进度和开放端口。")
     public Map<String, Object> startScanPort(String scanHost, int[] scanPorts, int scanTimeout, int threadsNum) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum);
     }
 
     @Tool("查询端口扫描任务的当前进度、已发现的开放端口列表及完成状态。任务完成后调用 stopScanPort 释放资源。")
     public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.queryScanPortResult(taskId);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.queryScanPortResult(taskId);
     }
 
     @Tool("暂停端口扫描任务（临时中止，不终止）。")
     public Map<String, Object> pauseScanPort(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.pauseScanPort(taskId);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.pauseScanPort(taskId);
     }
 
     @Tool("恢复已暂停的端口扫描任务。")
     public Map<String, Object> resumeScanPort(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.resumeScanPort(taskId);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.resumeScanPort(taskId);
     }
 
     @Tool("停止端口扫描任务（终止扫描释放资源）。")
     public Map<String, Object> stopScanPort(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.stopScanPort(taskId);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.stopScanPort(taskId);
     }
 
     @Tool("批量检测主机存活情况。scanHostsList 为 IP 列表，scanTimeout 为每个主机的超时毫秒。返回各主机是否可达。")
@@ -55,8 +55,8 @@ public class ScanTools {
         if (scanHostsList == null || scanHostsList.isEmpty()) {
             throw new IllegalArgumentException("scanHostsList 不能为空");
         }
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.scanReachableHost(scanHostsList, scanTimeout);
+        ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
+        return scanNode.scanReachableHost(scanHostsList, scanTimeout);
     }
 
 }

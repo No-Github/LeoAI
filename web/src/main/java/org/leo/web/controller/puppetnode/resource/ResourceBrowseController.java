@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.resource;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ResourceCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import org.leo.web.util.AuditLogUtil;
@@ -38,10 +39,11 @@ public class ResourceBrowseController {
 
     @RequestMapping(value = "/get", method = RequestMethod.POST)
     public HashMap<String, Object> getResource(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode node = null;
+        AbstractPuppetNode auditNode = null;
         String resourcePath = null;
         try {
-            node = ControllerUtil.getPuppetNode(params);
+            ResourceCapable node = ControllerUtil.requireCapability(params, ResourceCapable.class);
+            auditNode = ControllerUtil.getAbstractPuppetNode(params);
             String mode = ControllerUtil.getOptionalStringParam(params, "mode");
             String className = ControllerUtil.getOptionalStringParam(params, "className");
             resourcePath = ControllerUtil.getOptionalStringParam(params, "resourcePath");
@@ -67,7 +69,7 @@ public class ResourceBrowseController {
             int code = ((Number) componentResult.get("code")).intValue();
             if (code != ApiResponse.CODE_SUCCESS) {
                 String msg = (String) componentResult.get("msg");
-                AuditLogUtil.logFailure(node, "RESOURCE_GET", "读取资源", resourcePath, params,
+                AuditLogUtil.logFailure(auditNode, "RESOURCE_GET", "读取资源", resourcePath, params,
                         msg, AuditLogUtil.getClientIp());
                 if (code == 404) {
                     return ApiResponse.notFound(msg != null ? msg : "资源未找到");
@@ -110,13 +112,13 @@ public class ResourceBrowseController {
                 data.put("preview", "hex");
             }
 
-            AuditLogUtil.logSuccess(node, "RESOURCE_GET", "读取资源", resourcePath, params,
+            AuditLogUtil.logSuccess(auditNode, "RESOURCE_GET", "读取资源", resourcePath, params,
                     ApiResponse.CODE_SUCCESS, "读取资源成功", AuditLogUtil.getClientIp());
             return ApiResponse.success("读取资源成功", data);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
-            AuditLogUtil.logFailure(node, "RESOURCE_GET", "读取资源", resourcePath, params,
+            AuditLogUtil.logFailure(auditNode, "RESOURCE_GET", "读取资源", resourcePath, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.error("读取资源失败: " + e.getMessage());
         }

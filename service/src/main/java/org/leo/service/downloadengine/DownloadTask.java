@@ -1,6 +1,6 @@
 package org.leo.service.downloadengine;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 
 import java.io.File;
 import java.io.RandomAccessFile;
@@ -25,7 +25,7 @@ public class DownloadTask {
         COMPLETED
     }
 
-    private final JavaPuppetNode puppetNode;
+    private final FileCapable fileNode;
     private final String sessionId;
     private final String taskId;
     private final DownloadStore store;
@@ -62,7 +62,7 @@ public class DownloadTask {
     private ExecutorService executor;
     private final Object writeLock = new Object();
 
-    private DownloadTask(JavaPuppetNode puppetNode,
+    private DownloadTask(FileCapable fileNode,
                          String sessionId,
                          String taskId,
                          String filePath,
@@ -74,7 +74,7 @@ public class DownloadTask {
                          DownloadStore store,
                          BitSet doneChunks,
                          int totalChunks) {
-        this.puppetNode = puppetNode;
+        this.fileNode = fileNode;
         this.sessionId = sessionId;
         this.taskId = taskId;
         this.filePath = filePath;
@@ -92,7 +92,7 @@ public class DownloadTask {
         this.createAtMs = System.currentTimeMillis();
     }
 
-    public static DownloadTask createNewOrLoad(JavaPuppetNode puppetNode,
+    public static DownloadTask createNewOrLoad(FileCapable fileNode,
                                                String sessionId,
                                                String taskId,
                                                String filePath,
@@ -107,7 +107,7 @@ public class DownloadTask {
             long metaLen = toLong(meta.get("expectedLength"));
             String metaPath = Objects.toString(meta.get("filePath"), null);
             if (Objects.equals(metaPath, filePath) && Objects.equals(metaMd5, expectedMd5) && metaLen == expectedLength) {
-                return loadFromDisk(puppetNode, sessionId, taskId, store);
+                return loadFromDisk(fileNode, sessionId, taskId, store);
             }
         }
 
@@ -116,7 +116,7 @@ public class DownloadTask {
         BitSet done = new BitSet(totalChunks);
 
         DownloadTask task = new DownloadTask(
-                puppetNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
+                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
         );
         task.persistMeta(State.NEW);
         task.persistChunks();
@@ -124,7 +124,7 @@ public class DownloadTask {
         return task;
     }
 
-    public static DownloadTask loadFromDisk(JavaPuppetNode puppetNode, String sessionId, String taskId, DownloadStore store) throws Exception {
+    public static DownloadTask loadFromDisk(FileCapable fileNode, String sessionId, String taskId, DownloadStore store) throws Exception {
         Map<String, Object> meta = store.readMeta();
         if (meta == null) {
             throw new IllegalStateException("任务元数据缺失: " + taskId);
@@ -145,7 +145,7 @@ public class DownloadTask {
         }
 
         DownloadTask task = new DownloadTask(
-                puppetNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
+                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
         );
         task.createAtMs = toLong(meta.get("createAtMs"));
         task.lastError = Objects.toString(meta.get("lastError"), null);
@@ -278,7 +278,7 @@ public class DownloadTask {
             if (cancelled.get()) return;
             try {
                 @SuppressWarnings("unchecked")
-                Map<String, Object> res = puppetNode.fileDownloadChunk(filePath, size, offset);
+                Map<String, Object> res = fileNode.fileDownloadChunk(filePath, size, offset);
                 int code = (int) toLong(res.get("code"));
                 if (code == 404 || code == 403 || code == 416) {
                     throw new IllegalStateException("不可恢复错误: code=" + code + ", msg=" + res.get("msg"));
@@ -373,7 +373,7 @@ public class DownloadTask {
             }
             try {
                 @SuppressWarnings("unchecked")
-                Map<String, Object> md5Res = puppetNode.getFileMD5(filePath);
+                Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
                 String remoteMd5 = Objects.toString(md5Res.get("md5"), Objects.toString(md5Res.get("data"), null));
                 if (remoteMd5 == null || !remoteMd5.equalsIgnoreCase(expectedMd5)) {
                     fail("远端文件MD5不一致，可能发生变更，expected=" + expectedMd5 + ", actual=" + remoteMd5);
@@ -511,4 +511,3 @@ public class DownloadTask {
         }
     }
 }
-

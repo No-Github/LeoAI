@@ -3,7 +3,8 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.CommandCapable;
 import org.leo.service.audit.PuppetAuditService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,11 +96,11 @@ public class CommandTools {
     public Map<String, Object> stopTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         try {
             String output = readFromTerminal(sessionId, taskId);
             stopTerminal(sessionId, taskId);
-            auditService.logSuccess(sessionId, node, "COMMAND_STOP", "AI停止命令进程", taskId,
+            auditService.logSuccess(sessionId, auditNode, "COMMAND_STOP", "AI停止命令进程", taskId,
                     commandAuditParams(sessionId, null, "async-stop", taskId, null), "停止命令进程成功");
             HashMap<String, Object> result = new HashMap<>();
             result.put("taskId", taskId);
@@ -108,7 +109,7 @@ public class CommandTools {
             compressOutputField(result);
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "COMMAND_STOP", "AI停止命令进程", taskId,
+            auditService.logFailure(sessionId, auditNode, "COMMAND_STOP", "AI停止命令进程", taskId,
                     commandAuditParams(sessionId, null, "async-stop", taskId, null), e.getMessage());
             throw e;
         }
@@ -131,20 +132,21 @@ public class CommandTools {
             return (Map<String, Object>) cachedMap;
         }
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CommandCapable commandNode = getCommandNode(sessionId);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = commandAuditParams(sessionId, cmd, "sync", null, timeoutSeconds);
         try {
             Map<String, Object> raw = timeoutSeconds > 0
-                    ? node.execSimpleCommand(cmd, timeoutSeconds)
-                    : node.execSimpleCommand(cmd);
+                    ? commandNode.execSimpleCommand(cmd, timeoutSeconds)
+                    : commandNode.execSimpleCommand(cmd);
 
             Map<String, Object> result = normalizeSimpleResult(cmd, raw, timeoutSeconds);
             compressOutputField(result);
             if (result.containsKey("error")) {
-                auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+                auditService.logFailure(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
                         String.valueOf(result.get("error")));
             } else {
-                auditService.logSuccess(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+                auditService.logSuccess(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
                         "AI命令执行完成");
             }
             // 仅成功完成才缓存，避免把 timeout/exception 结果固化下来
@@ -153,7 +155,7 @@ public class CommandTools {
             }
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
+            auditService.logFailure(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
             throw e;
         }
     }
@@ -207,14 +209,14 @@ public class CommandTools {
     /** 异步启动（原 startCommand）。 */
     private Map<String, Object> startAsync(String sessionId, String cmd) throws Exception {
         String taskId = createTerminal(sessionId);
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = commandAuditParams(sessionId, cmd, "async", taskId, null);
         try {
             writeToTerminal(sessionId, cmd, taskId);
-            auditService.logSuccess(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
+            auditService.logSuccess(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
                     "AI异步命令已启动");
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
+            auditService.logFailure(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
             throw e;
         }
         HashMap<String, Object> result = new HashMap<>();
@@ -371,10 +373,10 @@ public class CommandTools {
     // ══════════════════════════════════════════════════════════════════════════════
 
     private String createTerminal(String sessionId) throws Exception {
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CommandCapable commandNode = getCommandNode(sessionId);
         String processId = UUID.randomUUID().toString();
         // 首次 write 触发 puppet 端创建 shell 进程（异步）
-        javaPuppetNode.execCommand("write", "\n", processId);
+        commandNode.execCommand("write", "\n", processId);
 
         // 等待 shell 就绪：轮询 read 直到收到 prompt 输出，表明 stdin 已可用
         long waitDeadline = System.currentTimeMillis() + 5000; // 最多等 5 秒
@@ -397,19 +399,20 @@ public class CommandTools {
     }
 
     private Map<String, Object> writeToTerminal(String sessionId, String cmd, String processId) throws Exception {
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.execCommand("write", cmd + "\n", processId);
+        return getCommandNode(sessionId).execCommand("write", cmd + "\n", processId);
     }
 
     private String readFromTerminal(String sessionId, String processId) throws Exception {
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        Map<String, Object> results = javaPuppetNode.execCommand("read", "", processId);
+        Map<String, Object> results = getCommandNode(sessionId).execCommand("read", "", processId);
         return new String((byte[]) results.get("data"));
     }
 
     private Map<String, Object> stopTerminal(String sessionId, String processId) throws Exception {
-        JavaPuppetNode javaPuppetNode = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
-        return javaPuppetNode.execCommand("stop", "", processId);
+        return getCommandNode(sessionId).execCommand("stop", "", processId);
+    }
+
+    private CommandCapable getCommandNode(String sessionId) {
+        return PuppetNodeSessionUtils.requireCapability(sessionId, CommandCapable.class);
     }
 
     // ══════════════════════════════════════════════════════════════════════════════

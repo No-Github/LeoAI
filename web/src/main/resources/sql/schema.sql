@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     padding_strategy TEXT, -- 请求体 Padding 策略（JSON 格式）
     header_noise_strategy TEXT, -- Header 噪声注入策略（JSON 格式）
     tls_fingerprint_strategy TEXT, -- TLS 指纹伪装策略（JSON 格式）
-    type VARCHAR(20) DEFAULT 'java' -- 节点类型：java, php
+    type VARCHAR(20) DEFAULT 'java' -- 节点类型：java
 );
 
 

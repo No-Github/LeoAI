@@ -3,7 +3,9 @@ package org.leo.web.controller.puppetnode;
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.BasicInfoCapable;
+import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -113,14 +116,14 @@ public class PuppetNodeController {
             return ApiResponse.success(new HashMap<>());
         }
 
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(sessionId);
-        Map<String, Object> results = javaPuppetNode.getBasicInfo();
+        BasicInfoCapable node = ControllerUtil.requireCapability(sessionId, BasicInfoCapable.class);
+        Map<String, Object> results = node.getBasicInfo();
 
         if (session != null && results != null && results.containsKey("BasicInfo")) {
             Object basicInfoObj = results.get("BasicInfo");
             if (basicInfoObj instanceof Map) {
                 Map<String, Object> basicInfo = (Map<String, Object>) basicInfoObj;
-                String hostId = javaPuppetNode.getHostId();
+                String hostId = session.getCurrentHostId();
                 if (hostId != null) {
                     session.setBasicInfo(hostId, basicInfo);
                     PuppetNodeSessionWorkDirUtil.saveBasicInfo(sessionId, hostId, basicInfo);
@@ -136,8 +139,32 @@ public class PuppetNodeController {
     @RequestMapping(value = "/current-host", method = RequestMethod.POST)
     public Map<String, Object> getCurrentHost(@RequestBody SessionIdRequest body) {
         String sessionId = body != null ? body.sessionId() : null;
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(sessionId);
-        Puppet currentPuppet = javaPuppetNode.getPuppet();
+        AbstractPuppetNode node = ControllerUtil.getAbstractPuppetNode(sessionId);
+        Puppet currentPuppet = node.getPuppet();
         return ApiResponse.success(currentPuppet);
+    }
+
+    /**
+     * 获取当前会话支持的能力清单。
+     */
+    @RequestMapping(value = "/capabilities", method = RequestMethod.POST)
+    public Map<String, Object> capabilities(@RequestBody SessionIdRequest body) {
+        String sessionId = body != null ? body.sessionId() : null;
+        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+        AbstractPuppetNode node = session.getPuppetNode();
+        List<String> capabilities = PuppetNodeCapabilityRegistry.listSupported(node);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("sessionId", session.getSessionId());
+        result.put("cacheMode", session.isCacheMode());
+        result.put("capabilities", capabilities);
+        result.put("capabilityCount", capabilities.size());
+        if (node != null && node.getPuppet() != null) {
+            result.put("puppetId", node.getPuppet().getPuppetId());
+            result.put("puppetType", node.getPuppet().getType());
+        } else if (session.getPuppetId() != null) {
+            result.put("puppetId", session.getPuppetId());
+        }
+        return ApiResponse.success(result);
     }
 }

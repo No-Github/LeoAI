@@ -1,4 +1,6 @@
 package org.leo.web.dto.puppetnode;
 
-public record PuppetInitResponse(String sessionId, boolean cacheMode) {
+import java.util.List;
+
+public record PuppetInitResponse(String sessionId, boolean cacheMode, List<String> capabilities) {
 }

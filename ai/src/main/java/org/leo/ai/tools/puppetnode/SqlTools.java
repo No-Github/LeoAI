@@ -2,7 +2,8 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.service.audit.PuppetAuditService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -36,16 +37,17 @@ public class SqlTools {
     @Tool("执行 SQL 语句（允许写入和结构变更）。验证连接、枚举库表、查询或提取证据。⚠️ 只读查询优先使用 querySql。")
     public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
         String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
         try {
             Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
-            auditService.logSuccess(sessionId, node, "SQL_EXEC", "AI执行SQL", operationPath,
+            auditService.logSuccess(sessionId, auditNode, "SQL_EXEC", "AI执行SQL", operationPath,
                     auditParams, "AI执行SQL成功");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "SQL_EXEC", "AI执行SQL", operationPath,
+            auditService.logFailure(sessionId, auditNode, "SQL_EXEC", "AI执行SQL", operationPath,
                     auditParams, e.getMessage());
             throw e;
         }
@@ -58,16 +60,17 @@ public class SqlTools {
             throw new IllegalArgumentException(violation);
         }
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
         String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
         try {
             Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
-            auditService.logSuccess(sessionId, node, "SQL_QUERY", "AI查询SQL", operationPath,
+            auditService.logSuccess(sessionId, auditNode, "SQL_QUERY", "AI查询SQL", operationPath,
                     auditParams, "AI查询SQL成功");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "SQL_QUERY", "AI查询SQL", operationPath,
+            auditService.logFailure(sessionId, auditNode, "SQL_QUERY", "AI查询SQL", operationPath,
                     auditParams, e.getMessage());
             throw e;
         }

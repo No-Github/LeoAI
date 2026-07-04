@@ -3,7 +3,7 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ReverseTunnelCapable;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
@@ -36,7 +36,7 @@ public class ReverseTunnelTools {
             @P("【必填】C2 侧（或 C2 可达的）转发目标主机") String forwardHost,
             @P("【必填】转发目标端口") int forwardPort) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         return puppet.startReverseTunnel(remoteListenPort, bindAddr, forwardHost, forwardPort);
     }
 
@@ -44,21 +44,21 @@ public class ReverseTunnelTools {
     public Map<String, Object> stopReverseTunnel(
             @P("【必填】反向隧道 ID（startReverseTunnel 返回值）") String listenId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         return puppet.stopReverseTunnel(listenId);
     }
 
     @Tool("停止当前 puppet 上所有反向隧道。")
     public Map<String, Object> stopAllReverseTunnels() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         return puppet.stopAllReverseTunnels();
     }
 
     @Tool("列出当前 puppet 上所有反向隧道：listenId、puppet 监听端口/绑定地址、C2 侧目标、运行状态。")
     public Map<String, Object> listReverseTunnels() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         List<Map<String, Object>> rules = puppet.listReverseTunnels();
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -71,7 +71,7 @@ public class ReverseTunnelTools {
     public Map<String, Object> getReverseTunnelStatistics(
             @P("【必填】反向隧道 ID") String listenId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode puppet = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         Socks5ProxyStatistics.StatisticsSnapshot snapshot = puppet.getReverseTunnelStatistics(listenId);
         if (snapshot == null) {
             throw new IllegalStateException("反向隧道未启动或不存在: " + listenId);

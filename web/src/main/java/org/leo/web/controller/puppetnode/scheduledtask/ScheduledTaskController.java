@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.scheduledtask;
 
+import org.leo.core.puppet.capability.ScheduledTaskCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,14 +19,14 @@ public class ScheduledTaskController {
 
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取计划任务失败", node -> node.listScheduledTasks());
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "获取计划任务失败", node -> node.listScheduledTasks());
     }
 
     @RequestMapping(value = "/query", method = RequestMethod.POST)
     public HashMap<String, Object> query(@RequestBody HashMap<String, Object> params) {
         String taskName = ControllerUtil.getStr(params, "taskName");
         if (taskName == null) return ApiResponse.badRequest("taskName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "查询计划任务失败", node -> node.queryScheduledTask(taskName));
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "查询计划任务失败", node -> node.queryScheduledTask(taskName));
     }
 
     @RequestMapping(value = "/create", method = RequestMethod.POST)
@@ -35,7 +36,7 @@ public class ScheduledTaskController {
 
         String cronExpr = ControllerUtil.getStr(params, "cronExpression");
         if (cronExpr != null) {
-            return ControllerUtil.handlePuppetCall(params, "创建计划任务失败",
+            return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "创建计划任务失败",
                     node -> node.createScheduledTaskLinux(cronExpr, command));
         }
 
@@ -48,7 +49,7 @@ public class ScheduledTaskController {
         String startDate = ControllerUtil.getStr(params, "startDate");
         String runAs = ControllerUtil.getStr(params, "runAs");
         boolean force = !params.containsKey("force") || ControllerUtil.getBool(params, "force");
-        return ControllerUtil.handlePuppetCall(params, "创建计划任务失败",
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "创建计划任务失败",
                 node -> node.createScheduledTaskWindows(taskName, command, schedule, modifier, startTime, startDate, runAs, force));
     }
 
@@ -56,14 +57,14 @@ public class ScheduledTaskController {
     public HashMap<String, Object> delete(@RequestBody HashMap<String, Object> params) {
         String taskName = ControllerUtil.getStr(params, "taskName");
         if (taskName == null) return ApiResponse.badRequest("taskName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "删除计划任务失败", node -> node.deleteScheduledTask(taskName));
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "删除计划任务失败", node -> node.deleteScheduledTask(taskName));
     }
 
     @RequestMapping(value = "/run", method = RequestMethod.POST)
     public HashMap<String, Object> run(@RequestBody HashMap<String, Object> params) {
         String taskName = ControllerUtil.getStr(params, "taskName");
         if (taskName == null) return ApiResponse.badRequest("taskName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "运行计划任务失败", node -> node.runScheduledTask(taskName));
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "运行计划任务失败", node -> node.runScheduledTask(taskName));
     }
 
     @RequestMapping(value = "/toggle", method = RequestMethod.POST)
@@ -71,7 +72,7 @@ public class ScheduledTaskController {
         String taskName = ControllerUtil.getStr(params, "taskName");
         if (taskName == null) return ApiResponse.badRequest("taskName 参数必填");
         boolean enable = !params.containsKey("enable") || ControllerUtil.getBool(params, "enable");
-        return ControllerUtil.handlePuppetCall(params, "操作失败",
+        return ControllerUtil.handleCapabilityCall(params, ScheduledTaskCapable.class, "操作失败",
                 node -> enable ? node.enableScheduledTask(taskName) : node.disableScheduledTask(taskName));
     }
 }

@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.command;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.command.CommandExecRequest;
 import org.leo.web.exception.ApiException;
@@ -21,7 +22,7 @@ public class CommandController {
 
     @PostMapping("/exec-command")
     public Map<String, Object> execCommand(@RequestBody CommandExecRequest request) {
-        JavaPuppetNode javaNode = null;
+        AbstractPuppetNode auditNode = null;
         String cmd = request == null ? null : request.cmd();
         Map<String, Object> auditParams = auditParams(request);
         try {
@@ -33,16 +34,19 @@ public class CommandController {
             String processId = requireText(request.processId(), "processId");
             cmd = "write".equals(type) ? requireCommandPayload(request.cmd()) : normalizeCommand(request.cmd());
 
-            javaNode = (JavaPuppetNode) ControllerUtil.getAbstractPuppetNode(sessionId);
-            Map<String, Object> results = javaNode.execCommand(type, cmd, processId);
-            logCommandAuditSuccess(javaNode, type, cmd, processId, auditParams);
+            TerminalCapable commandNode = ControllerUtil.requireCapability(sessionId, TerminalCapable.class);
+            if (commandNode instanceof AbstractPuppetNode node) {
+                auditNode = node;
+            }
+            Map<String, Object> results = commandNode.execCommand(type, cmd, processId);
+            logCommandAuditSuccess(auditNode, type, cmd, processId, auditParams);
             return ApiResponse.success(results != null ? results : Collections.emptyMap());
         } catch (ApiException e) {
-            logCommandAuditFailure(javaNode, request == null ? null : request.type(), cmd,
+            logCommandAuditFailure(auditNode, request == null ? null : request.type(), cmd,
                     request == null ? null : request.processId(), auditParams, e.getMessage());
             throw e;
         } catch (Exception e) {
-            logCommandAuditFailure(javaNode, request == null ? null : request.type(), cmd,
+            logCommandAuditFailure(auditNode, request == null ? null : request.type(), cmd,
                     request == null ? null : request.processId(), auditParams, e.getMessage());
             throw ApiException.serverError("执行命令失败: " + e.getMessage());
         }
@@ -86,7 +90,7 @@ public class CommandController {
         return params;
     }
 
-    private void logCommandAuditSuccess(JavaPuppetNode node,
+    private void logCommandAuditSuccess(AbstractPuppetNode node,
                                         String type,
                                         String cmd,
                                         String processId,
@@ -106,7 +110,7 @@ public class CommandController {
                 ApiResponse.CODE_SUCCESS, "执行命令成功", AuditLogUtil.getClientIp());
     }
 
-    private void logCommandAuditFailure(JavaPuppetNode node,
+    private void logCommandAuditFailure(AbstractPuppetNode node,
                                         String type,
                                         String cmd,
                                         String processId,

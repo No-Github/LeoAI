@@ -1,7 +1,8 @@
 package org.leo.web.controller.puppetnode.plugin;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.JavaPluginCapable;
 import org.leo.service.puppetnode.plugin.JavaPluginService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
@@ -30,14 +31,15 @@ public class JavaPluginController {
      */
     @RequestMapping(value = "/invoke", method = RequestMethod.POST)
     public HashMap<String, Object> invokePlugin(@RequestBody HashMap<String, Object> params) throws Exception {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String pluginId = null;
         try {
 
             pluginId = ControllerUtil.getRequiredStringParam(params, PARAM_PLUGIN_ID);
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            JavaPluginCapable pluginNode = ControllerUtil.requireCapability(params, JavaPluginCapable.class);
             String pluginParamStr = ControllerUtil.getOptionalStringParam(params, PARAM_PLUGIN_PARAM);
-            Map<String, Object> results = javaPluginService.invokePlugin(javaPuppetNode, pluginId, pluginParamStr);
+            Map<String, Object> results = javaPluginService.invokePlugin(pluginNode, pluginId, pluginParamStr);
 
             AuditLogUtil.logSuccess(javaPuppetNode, "PLUGIN_INVOKE", "调用Java插件", pluginId, params,
                     ApiResponse.CODE_SUCCESS, "调用插件成功", AuditLogUtil.getClientIp());

@@ -1,7 +1,8 @@
 package org.leo.web.service;
 
 import org.leo.core.entity.AsyncShellTask;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.CommandCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,7 +51,7 @@ public class AsyncShellService {
      * <p>创建 {@link AsyncShellTask}，加入 session 任务列表后立即返回，
      * 实际执行在独立线程池中完成。
      *
-     * @param session 目标会话（必须包含有效的 JavaPuppetNode）
+     * @param session 目标会话（必须包含支持命令执行的 PuppetNode）
      * @param command 要执行的 Shell 命令
      * @return 新创建的任务（status=PENDING）
      */
@@ -89,15 +90,15 @@ public class AsyncShellService {
 
     private void executeTask(PuppetNodeSession session, AsyncShellTask task) {
         task.setStatus(AsyncShellTask.TaskStatus.RUNNING);
-        JavaPuppetNode node = session.getJavaPuppetNode();
-        if (node == null) {
+        AbstractPuppetNode node = session.getPuppetNode();
+        if (!(node instanceof CommandCapable commandNode)) {
             task.setStatus(AsyncShellTask.TaskStatus.FAILED);
-            task.setOutput("节点未连接");
+            task.setOutput("当前 Puppet 类型不支持命令执行");
             task.setEndTime(System.currentTimeMillis());
             return;
         }
         try {
-            Map<String, Object> result = node.execSimpleCommand(task.getCommand());
+            Map<String, Object> result = commandNode.execSimpleCommand(task.getCommand());
             String output = extractOutput(result);
             if (output.length() > MAX_OUTPUT_LEN) {
                 output = output.substring(0, MAX_OUTPUT_LEN)

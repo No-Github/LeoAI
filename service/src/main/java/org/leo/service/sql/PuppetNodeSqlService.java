@@ -1,6 +1,6 @@
 package org.leo.service.sql;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.service.sql.dialect.AbstractSqlDialect;
 import org.leo.service.sql.dialect.SqlDialectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,7 +18,7 @@ public class PuppetNodeSqlService {
         this.sqlDialectFactory = sqlDialectFactory;
     }
 
-    public Map<String, Object> testConnection(JavaPuppetNode puppetNode, Map<String, Object> connection) throws Exception {
+    public Map<String, Object> testConnection(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         String testSql = dialect.buildTestSql();
         Map<String, Object> raw = executeRaw(puppetNode, connection, testSql);
@@ -45,7 +45,7 @@ public class PuppetNodeSqlService {
         return sqlDialectFactory.require(type).getDataTypes();
     }
 
-    public Map<String, Object> getDatabases(JavaPuppetNode puppetNode, Map<String, Object> connection) throws Exception {
+    public Map<String, Object> getDatabases(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildDatabasesSql());
         List<Map<String, Object>> databases = new ArrayList<Map<String, Object>>();
@@ -63,7 +63,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> getTables(JavaPuppetNode puppetNode, Map<String, Object> connection, String database) throws Exception {
+    public Map<String, Object> getTables(SqlCapable puppetNode, Map<String, Object> connection, String database) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildTablesSql(database));
         List<Map<String, Object>> tables = new ArrayList<Map<String, Object>>();
@@ -84,7 +84,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> getTableColumns(JavaPuppetNode puppetNode, Map<String, Object> connection, String database, String table) throws Exception {
+    public Map<String, Object> getTableColumns(SqlCapable puppetNode, Map<String, Object> connection, String database, String table) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildTableColumnsSql(database, table));
         List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
@@ -110,7 +110,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> queryTable(JavaPuppetNode puppetNode,
+    public Map<String, Object> queryTable(SqlCapable puppetNode,
                                           Map<String, Object> connection,
                                           String database,
                                           String table,
@@ -135,12 +135,12 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> executeSql(JavaPuppetNode puppetNode, Map<String, Object> connection, String sql) throws Exception {
+    public Map<String, Object> executeSql(SqlCapable puppetNode, Map<String, Object> connection, String sql) throws Exception {
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         return normalizeQueryResult(raw, detectStatementType(sql));
     }
 
-    public Map<String, Object> createTable(JavaPuppetNode puppetNode,
+    public Map<String, Object> createTable(SqlCapable puppetNode,
                                            Map<String, Object> connection,
                                            String database,
                                            String table,
@@ -156,7 +156,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> createDatabase(JavaPuppetNode puppetNode, Map<String, Object> connection, String database) throws Exception {
+    public Map<String, Object> createDatabase(SqlCapable puppetNode, Map<String, Object> connection, String database) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         String sql = dialect.buildCreateDatabaseSql(database);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
@@ -167,7 +167,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> insertRow(JavaPuppetNode puppetNode,
+    public Map<String, Object> insertRow(SqlCapable puppetNode,
                                          Map<String, Object> connection,
                                          String database,
                                          String table,
@@ -183,7 +183,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> updateRows(JavaPuppetNode puppetNode,
+    public Map<String, Object> updateRows(SqlCapable puppetNode,
                                           Map<String, Object> connection,
                                           String database,
                                           String table,
@@ -200,7 +200,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    public Map<String, Object> deleteRows(JavaPuppetNode puppetNode,
+    public Map<String, Object> deleteRows(SqlCapable puppetNode,
                                           Map<String, Object> connection,
                                           String database,
                                           String table,
@@ -216,7 +216,7 @@ public class PuppetNodeSqlService {
         return data;
     }
 
-    private Long queryTableCount(JavaPuppetNode puppetNode,
+    private Long queryTableCount(SqlCapable puppetNode,
                                  Map<String, Object> connection,
                                  AbstractSqlDialect dialect,
                                  String database,
@@ -230,7 +230,7 @@ public class PuppetNodeSqlService {
         }
     }
 
-    private Map<String, Object> executeRaw(JavaPuppetNode puppetNode, Map<String, Object> connection, String sql) throws Exception {
+    private Map<String, Object> executeRaw(SqlCapable puppetNode, Map<String, Object> connection, String sql) throws Exception {
         Map<String, Object> result = puppetNode.execSql(
                 stringValue(connection.get("driver")),
                 stringValue(connection.get("url")),

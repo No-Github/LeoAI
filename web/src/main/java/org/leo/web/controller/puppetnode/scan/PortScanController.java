@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.scan;
 
 
+import org.leo.core.puppet.capability.ScanCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -26,7 +27,7 @@ public class PortScanController {
             }
             int scanTimeout = (int) params.get("scanTimeout");
             int threadsNum = (int) params.get("threadsNum");
-            return ControllerUtil.handlePuppetCall(params, "启动端口扫描失败",
+            return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "启动端口扫描失败",
                     node -> node.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -45,7 +46,7 @@ public class PortScanController {
     public HashMap<String, Object> queryResult(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "查询端口扫描结果失败", node -> node.queryScanPortResult(taskId));
+            return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "查询端口扫描结果失败", node -> node.queryScanPortResult(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -63,7 +64,7 @@ public class PortScanController {
     public HashMap<String, Object> pauseScan(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "暂停端口扫描失败", node -> node.pauseScanPort(taskId));
+            return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "暂停端口扫描失败", node -> node.pauseScanPort(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -81,7 +82,7 @@ public class PortScanController {
     public HashMap<String, Object> resumeScan(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "继续端口扫描失败", node -> node.resumeScanPort(taskId));
+            return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "继续端口扫描失败", node -> node.resumeScanPort(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
@@ -99,7 +100,7 @@ public class PortScanController {
     public HashMap<String, Object> stopScan(@RequestBody HashMap<String, Object> params) {
         try {
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            return ControllerUtil.handlePuppetCall(params, "终止端口扫描失败", node -> node.stopScanPort(taskId));
+            return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "终止端口扫描失败", node -> node.stopScanPort(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }

@@ -1,7 +1,8 @@
 package org.leo.web.controller.puppetnode.scan;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ScanCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
@@ -19,10 +20,11 @@ import java.util.Map;
 public class HostIsReachableController {
     @RequestMapping(value = "/scan", method = RequestMethod.POST)
     public HashMap<String, Object> scanReachableHost(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode auditNode = null;
         String scanHostsStr = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            auditNode = ControllerUtil.getAbstractPuppetNode(params);
+            ScanCapable scanNode = ControllerUtil.requireCapability(params, ScanCapable.class);
 
             // 获取必需参数
             ArrayList<String> scanHostsList = (ArrayList<String>) params.get("scanHosts");
@@ -36,9 +38,9 @@ public class HostIsReachableController {
             Object timeoutObj = params.get("scanTimeout");
             int scanTimeout = (timeoutObj instanceof Integer) ? (Integer) timeoutObj : 3000;
             // 调用组件
-            Map<String, Object> results = javaPuppetNode.scanReachableHost(scanHostsList,scanTimeout);
+            Map<String, Object> results = scanNode.scanReachableHost(scanHostsList, scanTimeout);
             if (results == null) {
-                AuditLogUtil.logFailure(javaPuppetNode, "HOST_REACHABLE_SCAN", "主机可达性检测", scanHostsStr, params,
+                AuditLogUtil.logFailure(auditNode, "HOST_REACHABLE_SCAN", "主机可达性检测", scanHostsStr, params,
                         "组件调用返回结果为空", AuditLogUtil.getClientIp());
                 return ApiResponse.error("主机可达性检测失败: 组件调用返回结果为空");
             }

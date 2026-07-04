@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.NetworkShareCapable;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,25 +18,25 @@ public class NetworkShareController {
 
     @RequestMapping(value = "/list-shares", method = RequestMethod.POST)
     public HashMap<String, Object> listShares(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取网络共享列表失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkShareCapable.class, "获取网络共享列表失败",
                 node -> node.listNetworkShares());
     }
 
     @RequestMapping(value = "/list-mounts", method = RequestMethod.POST)
     public HashMap<String, Object> listMounts(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取挂载列表失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkShareCapable.class, "获取挂载列表失败",
                 node -> node.listNetworkMounts());
     }
 
     @RequestMapping(value = "/query-share", method = RequestMethod.POST)
     public HashMap<String, Object> queryShare(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "查询共享详情失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkShareCapable.class, "查询共享详情失败",
                 node -> node.queryNetworkShare(ControllerUtil.getStr(params, "shareName")));
     }
 
     @RequestMapping(value = "/connect", method = RequestMethod.POST)
     public HashMap<String, Object> connect(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "连接共享失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkShareCapable.class, "连接共享失败",
                 node -> node.connectNetworkShare(
                         ControllerUtil.getStr(params, "remotePath"),
                         ControllerUtil.getStr(params, "localDrive"),
@@ -46,7 +47,7 @@ public class NetworkShareController {
 
     @RequestMapping(value = "/disconnect", method = RequestMethod.POST)
     public HashMap<String, Object> disconnect(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "断开共享失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkShareCapable.class, "断开共享失败",
                 node -> node.disconnectNetworkShare(ControllerUtil.getStr(params, "target")));
     }
 }

@@ -1,6 +1,6 @@
 package org.leo.service.sql;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +40,7 @@ public class SqlExportService {
         this.puppetNodeSqlService = puppetNodeSqlService;
     }
 
-    public Map<String, Object> startTableExport(JavaPuppetNode puppetNode,
+    public Map<String, Object> startTableExport(SqlCapable puppetNode,
                                                 String userId,
                                                 String sessionId,
                                                 Map<String, Object> connection,
@@ -75,7 +75,7 @@ public class SqlExportService {
         return publicTask(task);
     }
 
-    public Map<String, Object> startDatabaseExport(JavaPuppetNode puppetNode,
+    public Map<String, Object> startDatabaseExport(SqlCapable puppetNode,
                                                    String userId,
                                                    String sessionId,
                                                    Map<String, Object> connection,
@@ -177,7 +177,7 @@ public class SqlExportService {
         return publicTask(task);
     }
 
-    public Map<String, Object> resume(JavaPuppetNode puppetNode,
+    public Map<String, Object> resume(SqlCapable puppetNode,
                                       String userId,
                                       String sessionId,
                                       String taskId,
@@ -247,7 +247,7 @@ public class SqlExportService {
     }
 
     private void scheduleTask(final Map<String, Object> task,
-                              final JavaPuppetNode puppetNode,
+                              final SqlCapable puppetNode,
                               final Map<String, Object> connection) {
         final String taskId = String.valueOf(task.get("taskId"));
         final TaskControl newControl = new TaskControl();
@@ -286,7 +286,7 @@ public class SqlExportService {
     }
 
     private void runTableExport(String taskId,
-                                JavaPuppetNode puppetNode,
+                                SqlCapable puppetNode,
                                 Map<String, Object> connection,
                                 String database,
                                 String table,
@@ -332,7 +332,7 @@ public class SqlExportService {
     }
 
     private void runDatabaseExport(String taskId,
-                                   JavaPuppetNode puppetNode,
+                                   SqlCapable puppetNode,
                                    Map<String, Object> connection,
                                    String database,
                                    List<String> selectedTables,
@@ -424,7 +424,7 @@ public class SqlExportService {
     }
 
     private long exportTableDataAsCsv(BufferedWriter writer,
-                                      JavaPuppetNode puppetNode,
+                                      SqlCapable puppetNode,
                                       Map<String, Object> connection,
                                       String database,
                                       String table,
@@ -492,7 +492,7 @@ public class SqlExportService {
         return false;
     }
 
-    private List<String> resolveExportTables(JavaPuppetNode puppetNode,
+    private List<String> resolveExportTables(SqlCapable puppetNode,
                                              Map<String, Object> connection,
                                              String database,
                                              List<String> selectedTables) throws Exception {

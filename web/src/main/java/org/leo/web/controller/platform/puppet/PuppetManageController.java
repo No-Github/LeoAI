@@ -1,8 +1,7 @@
 package org.leo.web.controller.platform.puppet;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.core.puppet.impl.JavaPuppetNode;
-import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.PuppetJdbc;
 import org.leo.core.entity.User;
@@ -368,14 +367,14 @@ public class PuppetManageController {
             }
             
             // 通过sessionId获取puppetId
-            PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
-            if (session.getJavaPuppetNode() == null) {
+            AbstractPuppetNode puppetNode = ControllerUtil.getAbstractPuppetNode(sessionId);
+            if (puppetNode == null) {
                 return ApiResponse.badRequest("会话中不存在Puppet实体，sessionId: " + sessionId);
             }
-            if (session.getJavaPuppetNode().getPuppet() == null) {
+            if (puppetNode.getPuppet() == null) {
                 return ApiResponse.badRequest("Puppet实体中不存在Puppet信息，sessionId: " + sessionId);
             }
-            String puppetId = session.getJavaPuppetNode().getPuppet().getPuppetId();
+            String puppetId = puppetNode.getPuppet().getPuppetId();
             if (puppetId == null) {
                 return ApiResponse.badRequest("无法从会话中获取Puppet ID，sessionId: " + sessionId);
             }
@@ -653,13 +652,13 @@ public class PuppetManageController {
             }
 
             // 通过sessionId获取PuppetEntity
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            AbstractPuppetNode puppetNode = ControllerUtil.getAbstractPuppetNode(params);
             
             // 获取puppetId
-            if (javaPuppetNode.getPuppet() == null) {
+            if (puppetNode.getPuppet() == null) {
                 return ApiResponse.badRequest("Puppet实体中不存在Puppet信息");
             }
-            String puppetId = javaPuppetNode.getPuppet().getPuppetId();
+            String puppetId = puppetNode.getPuppet().getPuppetId();
             if (puppetId == null || puppetId.isBlank()) {
                 return ApiResponse.badRequest("无法从会话中获取Puppet ID");
             }

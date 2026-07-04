@@ -1,7 +1,7 @@
 package org.leo.web.controller.puppetnode.catalina;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.CatalinaManageCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
@@ -26,8 +26,8 @@ public class CatalinaManageController {
         try {
             String catalinaName = getCatalinaName(sessionId);
             String webFramework = getWebFrameworkName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-            Map<String, Object> results = javaPuppetNode.getCatalinaInfo(catalinaName, webFramework);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
+            Map<String, Object> results = catalinaNode.getCatalinaInfo(catalinaName, webFramework);
             if (sessionId != null && !sessionId.isBlank() && results != null) {
                 try {
                     PuppetNodeSessionWorkDirUtil.saveCatalinaInfo(sessionId, results);
@@ -77,10 +77,10 @@ public class CatalinaManageController {
 
         try {
             String catalinaName = getCatalinaName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String contextName = ControllerUtil.getRequiredStringParam(params, "contextName");
             String filterName = ControllerUtil.getRequiredStringParam(params, "filterName");
-            Map<String, Object> results = javaPuppetNode.unloadCatalinaFilter(catalinaName, contextName, filterName);
+            Map<String, Object> results = catalinaNode.unloadCatalinaFilter(catalinaName, contextName, filterName);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -95,10 +95,10 @@ public class CatalinaManageController {
 
         try {
             String catalinaName = getCatalinaName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String contextName = ControllerUtil.getRequiredStringParam(params, "contextName");
             String servletPattern = ControllerUtil.getRequiredStringParam(params, "servletPattern");
-            Map<String, Object> results = javaPuppetNode.unloadCatalinaServlet(catalinaName, contextName, servletPattern);
+            Map<String, Object> results = catalinaNode.unloadCatalinaServlet(catalinaName, contextName, servletPattern);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -113,9 +113,9 @@ public class CatalinaManageController {
 
         try {
             String catalinaName = getCatalinaName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String valveId = ControllerUtil.getRequiredStringParam(params, "valveId");
-            Map<String, Object> results = javaPuppetNode.unloadCatalinaValve(catalinaName, valveId);
+            Map<String, Object> results = catalinaNode.unloadCatalinaValve(catalinaName, valveId);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -130,9 +130,9 @@ public class CatalinaManageController {
 
         try {
             String catalinaName = getCatalinaName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String listenerId = ControllerUtil.getRequiredStringParam(params, "listenerId");
-            Map<String, Object> results = javaPuppetNode.unloadCatalinaListener(catalinaName, listenerId);
+            Map<String, Object> results = catalinaNode.unloadCatalinaListener(catalinaName, listenerId);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -147,9 +147,9 @@ public class CatalinaManageController {
 
         try {
             String webFramework = getWebFrameworkName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String mappingInfo = ControllerUtil.getRequiredStringParam(params, "mappingInfo");
-            Map<String, Object> results = javaPuppetNode.unloadSpringController(webFramework, mappingInfo);
+            Map<String, Object> results = catalinaNode.unloadSpringController(webFramework, mappingInfo);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -164,9 +164,9 @@ public class CatalinaManageController {
 
         try {
             String webFramework = getWebFrameworkName(sessionId);
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            CatalinaManageCapable catalinaNode = ControllerUtil.requireCapability(params, CatalinaManageCapable.class);
             String interceptorId = ControllerUtil.getRequiredStringParam(params, "interceptorId");
-            Map<String, Object> results = javaPuppetNode.unloadSpringInterceptor(webFramework, interceptorId);
+            Map<String, Object> results = catalinaNode.unloadSpringInterceptor(webFramework, interceptorId);
             return ApiResponse.success(results);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());

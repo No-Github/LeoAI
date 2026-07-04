@@ -2,7 +2,8 @@ package org.leo.web.controller.puppetnode.sql;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.sql.PuppetNodeSqlService;
 import org.leo.service.sql.SqlExportService;
@@ -72,7 +73,7 @@ public class PuppetNodeSQLController {
     public Map<String, Object> testConnection(@RequestBody MetadataRequest request) {
         return sqlCall("连接失败", () -> ApiResponse.success(
                 "连接成功",
-                puppetNodeSqlService.testConnection(puppetNode(request), request.connectionOptions())));
+                puppetNodeSqlService.testConnection(sqlNode(request), request.connectionOptions())));
     }
 
     @GetMapping("/dialects")
@@ -90,7 +91,7 @@ public class PuppetNodeSQLController {
     public Map<String, Object> getDatabases(@RequestBody MetadataRequest request) {
         return sqlCall("获取数据库列表失败", () -> ApiResponse.success(
                 "ok",
-                puppetNodeSqlService.getDatabases(puppetNode(request), request.connectionOptions())));
+                puppetNodeSqlService.getDatabases(sqlNode(request), request.connectionOptions())));
     }
 
     @PostMapping("/metadata/tables")
@@ -98,7 +99,7 @@ public class PuppetNodeSQLController {
         return sqlCall("获取表列表失败", () -> ApiResponse.success(
                 "ok",
                 puppetNodeSqlService.getTables(
-                        puppetNode(request),
+                        sqlNode(request),
                         request.connectionOptions(),
                         request.database())));
     }
@@ -108,7 +109,7 @@ public class PuppetNodeSQLController {
         return sqlCall("获取表字段失败", () -> ApiResponse.success(
                 "ok",
                 puppetNodeSqlService.getTableColumns(
-                        puppetNode(request),
+                        sqlNode(request),
                         request.connectionOptions(),
                         request.database(),
                         request.table())));
@@ -330,37 +331,39 @@ public class PuppetNodeSQLController {
                                                String operationName,
                                                String operationPath,
                                                SqlNodeAction action) {
-        JavaPuppetNode node = null;
+        SqlCapable node = null;
+        AbstractPuppetNode auditNode = null;
         Map<String, Object> auditParams = auditParams(request);
         try {
-            node = puppetNode(request);
+            node = sqlNode(request);
+            auditNode = ControllerUtil.getAbstractPuppetNode(request.sessionId());
             Map<String, Object> result = action.execute(node);
-            AuditLogUtil.logSuccess(node, operationType, operationName, operationPath, auditParams,
+            AuditLogUtil.logSuccess(auditNode, operationType, operationName, operationPath, auditParams,
                     ApiResponse.CODE_SUCCESS, "操作成功", AuditLogUtil.getClientIp());
             return result;
         } catch (ApiException e) {
-            if (node != null) {
-                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+            if (auditNode != null) {
+                AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,
                         e.getMessage(), AuditLogUtil.getClientIp());
             }
             throw e;
         } catch (IllegalArgumentException e) {
-            if (node != null) {
-                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+            if (auditNode != null) {
+                AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,
                         e.getMessage(), AuditLogUtil.getClientIp());
             }
             throw ApiException.badRequest(e.getMessage());
         } catch (Exception e) {
-            if (node != null) {
-                AuditLogUtil.logFailure(node, operationType, operationName, operationPath, auditParams,
+            if (auditNode != null) {
+                AuditLogUtil.logFailure(auditNode, operationType, operationName, operationPath, auditParams,
                         e.getMessage(), AuditLogUtil.getClientIp());
             }
             throw ApiException.serverError(failureMessage + ": " + e.getMessage());
         }
     }
 
-    private JavaPuppetNode puppetNode(ConnectionPayload request) {
-        return ControllerUtil.getPuppetNode(request.sessionId());
+    private SqlCapable sqlNode(ConnectionPayload request) {
+        return ControllerUtil.requireCapability(request.sessionId(), SqlCapable.class);
     }
 
     private String requireText(String value, String name) {
@@ -533,6 +536,6 @@ public class PuppetNodeSQLController {
 
     @FunctionalInterface
     private interface SqlNodeAction {
-        Map<String, Object> execute(JavaPuppetNode node) throws Exception;
+        Map<String, Object> execute(SqlCapable node) throws Exception;
     }
 }

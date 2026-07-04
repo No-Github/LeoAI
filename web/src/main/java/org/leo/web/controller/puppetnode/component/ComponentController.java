@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.component;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ComponentManageCapable;
 import org.leo.core.util.ApiResponse;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -23,8 +24,8 @@ public class ComponentController {
     @RequestMapping(value = "/get-loaded-components", method = RequestMethod.POST)
     public HashMap<String, Object> getLoadedComponents(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-            Set<String> loaded = javaPuppetNode.getLoadedComponents();
+            ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
+            Set<String> loaded = componentNode.getLoadedComponents();
             List<String> loadedList = loaded == null ? new ArrayList<>() : new ArrayList<>(loaded);
             Collections.sort(loadedList);
 
@@ -68,9 +69,9 @@ public class ComponentController {
     @RequestMapping(value = "/reload-component", method = RequestMethod.POST)
     public HashMap<String, Object> reloadComponent(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             String componentName = getComponentNameFromParams(params);
-            HashMap<String, Object> results = (HashMap<String, Object>) javaPuppetNode.loadComponent(componentName);
+            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.loadComponent(componentName);
             return ApiResponse.success(results != null ? results : new HashMap());
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -85,10 +86,10 @@ public class ComponentController {
     @RequestMapping(value = "/load-component", method = RequestMethod.POST)
     public HashMap<String, Object> loadComponent(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             HashMap<String, Object> componentParams = getComponentParams(params);
             String componentName = getComponentName(componentParams);
-            HashMap<String, Object> results = (HashMap<String, Object>) javaPuppetNode.loadComponent(componentName);
+            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.loadComponent(componentName);
             return ApiResponse.success(results != null ? results : new HashMap());
         } catch (Exception e) {
             return ApiResponse.error("加载组件失败: " + e.getMessage());
@@ -100,13 +101,14 @@ public class ComponentController {
      */
     @RequestMapping(value = "/invoke-component", method = RequestMethod.POST)
     public HashMap<String, Object> invokeComponent(@RequestBody HashMap<String, Object> params) throws Exception {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String componentName = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             HashMap<String, Object> componentParams = getComponentParams(params);
             componentName = getComponentName(componentParams);
-            HashMap<String, Object> results = (HashMap<String, Object>) javaPuppetNode.invokeComponent(componentName, componentParams);
+            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.invokeComponent(componentName, componentParams);
             AuditLogUtil.logSuccess(javaPuppetNode, "COMPONENT_INVOKE", "调用组件", componentName, params,
                     ApiResponse.CODE_SUCCESS, "调用组件成功", AuditLogUtil.getClientIp());
             return ApiResponse.success(results != null ? results : new HashMap());

@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.CredentialHarvestCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
@@ -38,7 +38,7 @@ public class CredentialHarvestTools {
     public Map<String, Object> harvestAll(
             @P("过滤关键字（可选，用于缩小搜索范围）") String filter) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CredentialHarvestCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CredentialHarvestCapable.class);
         String cacheKey = CACHE_KEY_ALL + (filter != null && !filter.isBlank() ? ":" + filter : "");
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cached instanceof Map) {

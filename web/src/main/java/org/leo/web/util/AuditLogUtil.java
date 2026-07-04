@@ -4,7 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.service.audit.AuditLogService;
 import org.leo.service.audit.AuditPolicyService;
 import org.leo.core.util.json.JsonUtil;
@@ -82,7 +82,7 @@ public class AuditLogUtil {
     /**
      * 记录审计日志
      * 
-     * @param javaPuppetNode Puppet实体（包含用户和主机信息）
+     * @param puppetNode Puppet实体（包含用户和主机信息）
      * @param operationType 操作类型
      * @param operationName 操作名称
      * @param operationPath 操作路径
@@ -93,7 +93,7 @@ public class AuditLogUtil {
      * @param errorMessage 错误信息
      * @param clientIp 客户端IP
      */
-    public static void logOperation(JavaPuppetNode javaPuppetNode, 
+    public static void logOperation(AbstractPuppetNode puppetNode,
                                     String operationType,
                                     String operationName,
                                     String operationPath,
@@ -111,15 +111,15 @@ public class AuditLogUtil {
             AuditLog auditLog = new AuditLog();
             
             // 设置用户信息
-            if (javaPuppetNode != null && javaPuppetNode.getUser() != null) {
-                User user = javaPuppetNode.getUser();
+            if (puppetNode != null && puppetNode.getUser() != null) {
+                User user = puppetNode.getUser();
                 auditLog.setUserId(user.getUserId());
                 auditLog.setUserName(user.getUserName());
             }
             
             // 设置主机信息
-            if (javaPuppetNode != null && javaPuppetNode.getPuppet() != null) {
-                Puppet puppet = javaPuppetNode.getPuppet();
+            if (puppetNode != null && puppetNode.getPuppet() != null) {
+                Puppet puppet = puppetNode.getPuppet();
                 auditLog.setPuppetId(puppet.getPuppetId());
                 auditLog.setPuppetName(puppet.getPuppetName());
             }
@@ -179,7 +179,7 @@ public class AuditLogUtil {
     /**
      * 记录成功操作的审计日志
      */
-    public static void logSuccess(JavaPuppetNode javaPuppetNode,
+    public static void logSuccess(AbstractPuppetNode puppetNode,
                                   String operationType,
                                   String operationName,
                                   String operationPath,
@@ -187,35 +187,35 @@ public class AuditLogUtil {
                                   Integer responseCode,
                                   String responseMessage,
                                   String clientIp) {
-        logOperation(javaPuppetNode, operationType, operationName, operationPath, 
+        logOperation(puppetNode, operationType, operationName, operationPath,
                     requestParams, responseCode, responseMessage, "SUCCESS", null, clientIp);
     }
     
     /**
      * 记录失败操作的审计日志
      */
-    public static void logFailure(JavaPuppetNode javaPuppetNode,
+    public static void logFailure(AbstractPuppetNode puppetNode,
                                   String operationType,
                                   String operationName,
                                   String operationPath,
                                   Map<String, Object> requestParams,
                                   String errorMessage,
                                   String clientIp) {
-        logOperation(javaPuppetNode, operationType, operationName, operationPath, 
+        logOperation(puppetNode, operationType, operationName, operationPath,
                     requestParams, null, null, "FAILED", errorMessage, clientIp);
     }
     
     /**
      * 记录错误操作的审计日志
      */
-    public static void logError(JavaPuppetNode javaPuppetNode,
+    public static void logError(AbstractPuppetNode puppetNode,
                                String operationType,
                                String operationName,
                                String operationPath,
                                Map<String, Object> requestParams,
                                String errorMessage,
                                String clientIp) {
-        logOperation(javaPuppetNode, operationType, operationName, operationPath, 
+        logOperation(puppetNode, operationType, operationName, operationPath,
                     requestParams, null, null, "ERROR", errorMessage, clientIp);
     }
 

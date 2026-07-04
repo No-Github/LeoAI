@@ -2,7 +2,8 @@ package org.leo.web.controller.puppetnode.file;
 
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.DownloadEngineService;
 import org.leo.web.util.AuditLogUtil;
 import org.slf4j.Logger;
@@ -51,13 +52,14 @@ public class DownloadEngineController {
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
 
             String filePath = ControllerUtil.getRequiredStringParam(params, "filePath");
-            JavaPuppetNode puppetNode = ControllerUtil.getPuppetNode(params);
+            FileCapable fileNode = ControllerUtil.requireCapability(params, FileCapable.class);
+            AbstractPuppetNode auditNode = ControllerUtil.getAbstractPuppetNode(sessionId);
 
             int threads = params.get("threads") == null ? 4 : ((Number) params.get("threads")).intValue();
             int chunkSize = params.get("chunkSize") == null ? (1024 * 1024) : ((Number) params.get("chunkSize")).intValue();
 
-            Map<String, Object> data = downloadEngineService.startOrResume(puppetNode, userId, sessionId, filePath, threads, chunkSize);
-            AuditLogUtil.logSuccess(puppetNode, "FILE_DOWNLOAD", "下载文件", filePath, params,
+            Map<String, Object> data = downloadEngineService.startOrResume(fileNode, userId, sessionId, filePath, threads, chunkSize);
+            AuditLogUtil.logSuccess(auditNode, "FILE_DOWNLOAD", "下载文件", filePath, params,
                     ApiResponse.CODE_SUCCESS, "开始下载文件", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {
@@ -121,10 +123,11 @@ public class DownloadEngineController {
             }
             String userId = user.getUserId();
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            JavaPuppetNode puppetNode = ControllerUtil.getPuppetNode(params);
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
-            Map<String, Object> data = downloadEngineService.resume(puppetNode, userId, sessionId, taskId);
-            AuditLogUtil.logSuccess(puppetNode, "FILE_DOWNLOAD_RESUME", "恢复下载任务", taskId, params,
+            FileCapable fileNode = ControllerUtil.requireCapability(sessionId, FileCapable.class);
+            AbstractPuppetNode auditNode = ControllerUtil.getAbstractPuppetNode(sessionId);
+            Map<String, Object> data = downloadEngineService.resume(fileNode, userId, sessionId, taskId);
+            AuditLogUtil.logSuccess(auditNode, "FILE_DOWNLOAD_RESUME", "恢复下载任务", taskId, params,
                     ApiResponse.CODE_SUCCESS, "恢复下载任务", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {

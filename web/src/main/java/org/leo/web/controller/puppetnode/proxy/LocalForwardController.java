@@ -1,7 +1,7 @@
 package org.leo.web.controller.puppetnode.proxy;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.LocalForwardCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,7 +33,7 @@ public class LocalForwardController {
                 return ApiResponse.badRequest("localPort、targetHost、targetPort 均为必填项");
             }
 
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
             Map<String, Object> result = node.startLocalForward(
                     localPort.intValue(), targetHost.trim(), targetPort.intValue());
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
@@ -55,7 +55,7 @@ public class LocalForwardController {
             if (localPort == null) {
                 return ApiResponse.badRequest("localPort 为必填项");
             }
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
             Map<String, Object> result = node.stopLocalForward(localPort.intValue());
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -71,7 +71,7 @@ public class LocalForwardController {
     @RequestMapping(value = "/stop-all", method = RequestMethod.POST)
     public HashMap<String, Object> stopAll(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
             Map<String, Object> result = node.stopAllLocalForwards();
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -87,7 +87,7 @@ public class LocalForwardController {
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
             List<Map<String, Object>> rules = node.listLocalForwards();
             return ApiResponse.success(rules != null ? rules : new ArrayList<Map<String, Object>>());
         } catch (IllegalArgumentException e) {
@@ -108,7 +108,7 @@ public class LocalForwardController {
             if (localPort == null) {
                 return ApiResponse.badRequest("localPort 为必填项");
             }
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            LocalForwardCapable node = ControllerUtil.requireCapability(params, LocalForwardCapable.class);
             Socks5ProxyStatistics.StatisticsSnapshot snapshot =
                     node.getLocalForwardStatistics(localPort.intValue());
             if (snapshot == null) {

@@ -1,7 +1,8 @@
 package org.leo.web.controller.puppetnode.file;
 
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.UploadEngineService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
@@ -53,7 +54,8 @@ public class UploadEngineController {
             String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
             String vfsPath = ControllerUtil.getRequiredStringParam(params, "vfsPath");
             String filePath = ControllerUtil.getRequiredStringParam(params, "filePath");
-            JavaPuppetNode puppetNode = ControllerUtil.getPuppetNode(params);
+            FileCapable fileNode = ControllerUtil.requireCapability(params, FileCapable.class);
+            AbstractPuppetNode auditNode = ControllerUtil.getAbstractPuppetNode(sessionId);
             Path sourceFile = uploadEngineService.resolveVfsFilePath(vfsPath);
             uploadEngineService.validateReadPermission(userId, user.getPrivilege(), sourceFile);
             if (!Files.exists(sourceFile) || !Files.isRegularFile(sourceFile)) {
@@ -62,7 +64,7 @@ public class UploadEngineController {
 
             int resolvedChunkSize = params.get("chunkSize") == null ? (1024 * 1024) : ((Number) params.get("chunkSize")).intValue();
             Map<String, Object> data = uploadEngineService.start(
-                    puppetNode,
+                    fileNode,
                     userId,
                     sessionId,
                     filePath,
@@ -70,7 +72,7 @@ public class UploadEngineController {
                     sourceFile.getFileName().toString(),
                     resolvedChunkSize
             );
-            AuditLogUtil.logSuccess(puppetNode, "FILE_UPLOAD", "上传文件", vfsPath + " -> " + filePath, params,
+            AuditLogUtil.logSuccess(auditNode, "FILE_UPLOAD", "上传文件", vfsPath + " -> " + filePath, params,
                     ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp(request));
             return ApiResponse.success(data);
         } catch (Exception e) {

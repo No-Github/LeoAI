@@ -1,9 +1,8 @@
 package org.leo.web.controller.puppetnode.proxy;
 
 
-import org.leo.core.engine.socks5.Socks5ProxyServer;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.Socks5ProxyCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,8 +31,8 @@ public class Socks5ProxyController {
                 return ApiResponse.badRequest(MSG_PORT_INVALID);
             }
 
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-            Map<String, Object> result = javaPuppetNode.startSocks5Proxy(port.intValue());
+            Socks5ProxyCapable socks5ProxyNode = ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
+            Map<String, Object> result = socks5ProxyNode.startSocks5Proxy(port.intValue());
 
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -50,8 +49,8 @@ public class Socks5ProxyController {
     @RequestMapping(value = "/stop", method = RequestMethod.POST)
     public HashMap<String, Object> stop(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-            Map<String, Object> result = javaPuppetNode.stopSocks5Proxy();
+            Socks5ProxyCapable socks5ProxyNode = ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
+            Map<String, Object> result = socks5ProxyNode.stopSocks5Proxy();
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
@@ -66,9 +65,8 @@ public class Socks5ProxyController {
     @RequestMapping(value = "/statistics", method = RequestMethod.POST)
     public HashMap<String, Object> getStatistics(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-
-            Socks5ProxyStatistics.StatisticsSnapshot snapshot = javaPuppetNode.getSocks5ProxyStatistics();
+            Socks5ProxyCapable socks5ProxyNode = ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
+            Socks5ProxyStatistics.StatisticsSnapshot snapshot = socks5ProxyNode.getSocks5ProxyStatistics();
             if (snapshot == null) {
                 return ApiResponse.error("SOCKS5代理未启动");
             }
@@ -117,17 +115,8 @@ public class Socks5ProxyController {
     @RequestMapping(value = "/status", method = RequestMethod.POST)
     public HashMap<String, Object> getStatus(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-            Socks5ProxyServer proxyServer = javaPuppetNode.getSocks5ProxyServer();
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            if (proxyServer == null) {
-                data.put("enabled", false);
-                data.put("port", null);
-            } else {
-                data.put("enabled", proxyServer.isRunning());
-                data.put("port", proxyServer.getListenPort());
-            }
-
+            Socks5ProxyCapable socks5ProxyNode = ControllerUtil.requireCapability(params, Socks5ProxyCapable.class);
+            Map<String, Object> data = socks5ProxyNode.getSocks5ProxyStatus();
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());

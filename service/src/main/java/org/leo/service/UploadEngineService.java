@@ -1,7 +1,9 @@
 package org.leo.service;
 
 import org.leo.core.config.LeoConfig;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.entity.Puppet;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -74,15 +76,15 @@ public class UploadEngineService {
         throw new IllegalArgumentException("无权访问该VFS路径");
     }
 
-    public Map<String, Object> start(JavaPuppetNode puppetNode,
+    public Map<String, Object> start(FileCapable fileNode,
                                      String userId,
                                      String sessionId,
                                      String filePath,
                                      File localFile,
                                      String originalFilename,
                                      int chunkSize) {
-        if (puppetNode == null) {
-            throw new IllegalArgumentException("puppetNode不能为空");
+        if (fileNode == null) {
+            throw new IllegalArgumentException("fileNode不能为空");
         }
         if (isBlank(userId)) {
             throw new IllegalArgumentException("缺少必要参数: userId");
@@ -98,7 +100,7 @@ public class UploadEngineService {
         }
 
         int resolvedChunkSize = clampInt(chunkSize, DEFAULT_CHUNK_SIZE, 1, MAX_CHUNK_SIZE);
-        String taskId = computeTaskId(puppetNode.getHostId(), sessionId, filePath, localFile, originalFilename);
+        String taskId = computeTaskId(resolveNodeScopeKey(fileNode, sessionId), sessionId, filePath, localFile, originalFilename);
         UploadTask task = new UploadTask(taskId, userId, sessionId, filePath, localFile, originalFilename, resolvedChunkSize);
         UploadTask previous = tasksById.put(taskId, task);
         if (previous != null) {
@@ -107,7 +109,7 @@ public class UploadEngineService {
         executorService.submit(new Runnable() {
             @Override
             public void run() {
-                task.runUpload(puppetNode);
+                task.runUpload(fileNode);
             }
         });
         return task.snapshot();
@@ -278,12 +280,12 @@ public class UploadEngineService {
             this.totalBytes = Math.max(localFile.length(), 0L);
         }
 
-        private void runUpload(JavaPuppetNode puppetNode) {
+        private void runUpload(FileCapable fileNode) {
             state = "RUNNING";
             updatedAt = System.currentTimeMillis();
             InputStream inputStream = null;
             try {
-                tryDeleteRemoteFile(puppetNode, filePath);
+                tryDeleteRemoteFile(fileNode, filePath);
                 inputStream = new FileInputStream(localFile);
                 byte[] buffer = new byte[chunkSize];
                 long offset = 0L;
@@ -299,7 +301,7 @@ public class UploadEngineService {
                         chunk = new byte[read];
                         System.arraycopy(buffer, 0, chunk, 0, read);
                     }
-                    Map<String, Object> result = puppetNode.fileUploadChunk(filePath, offset, chunk);
+                    Map<String, Object> result = fileNode.fileUploadChunk(filePath, offset, chunk);
                     ensureSuccess(result);
                     offset += read;
                     uploadedBytes.set(offset);
@@ -361,11 +363,21 @@ public class UploadEngineService {
             }
         }
 
-        private void tryDeleteRemoteFile(JavaPuppetNode puppetNode, String targetPath) {
+        private void tryDeleteRemoteFile(FileCapable fileNode, String targetPath) {
             try {
-                puppetNode.deleteFile(targetPath);
+                fileNode.deleteFile(targetPath);
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private static String resolveNodeScopeKey(FileCapable fileNode, String sessionId) {
+        if (fileNode instanceof AbstractPuppetNode node) {
+            Puppet puppet = node.getPuppet();
+            if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
+                return puppet.getPuppetId();
+            }
+        }
+        return sessionId;
     }
 }

@@ -1,6 +1,7 @@
 package org.leo.web.controller.puppetnode.script;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.web.util.AuditLogUtil;
@@ -32,9 +33,10 @@ public class ExecClassController {
 
     @RequestMapping(value = "/exec-class", method = RequestMethod.POST)
     public HashMap<String, Object> execClass(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode node = null;
+        AbstractPuppetNode node = null;
         try {
-            node = ControllerUtil.getPuppetNode(params);
+            node = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             String bytecodeBase64 = ControllerUtil.getRequiredStringParam(params, PARAM_BYTECODE_BASE64);
             String pluginParamJson = ControllerUtil.getOptionalStringParam(params, PARAM_PLUGIN_PARAM);
 
@@ -49,7 +51,7 @@ public class ExecClassController {
             payload.put(PAYLOAD_PLUGIN_PARAM, parsePluginParam(pluginParamJson));
             payload.put(PAYLOAD_PLUGIN_BYTECODE, bytecode);
 
-            Map<String, Object> result = node.invokeComponent(COMPONENT_PLUGIN, payload);
+            Map<String, Object> result = componentNode.invokeComponent(COMPONENT_PLUGIN, payload);
             AuditLogUtil.logSuccess(node, "EXEC_CLASS", "临时执行字节码", null, params,
                     ApiResponse.CODE_SUCCESS, "字节码执行成功", AuditLogUtil.getClientIp());
             return ApiResponse.success(result != null ? result : new HashMap<>());

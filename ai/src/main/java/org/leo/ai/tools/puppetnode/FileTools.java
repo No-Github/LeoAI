@@ -4,7 +4,9 @@ import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.CommandCapable;
+import org.leo.core.puppet.capability.FileCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.service.DownloadEngineService;
 import org.leo.service.UploadEngineService;
@@ -62,7 +64,8 @@ public class FileTools {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("当前会话缺少用户信息，无法启动下载任务");
         }
-        JavaPuppetNode javaPuppetNode = session.getJavaPuppetNode();
+        FileCapable fileNode = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         int resolvedThreads = threads == null ? 4 : threads;
         int resolvedChunkSize = chunkSize == null ? (1024 * 1024) : chunkSize;
         Map<String, Object> auditParams = fileAuditParams(sessionId, filePath, null, null);
@@ -70,18 +73,18 @@ public class FileTools {
         auditParams.put("chunkSize", resolvedChunkSize);
         try {
             Map<String, Object> result = downloadEngineService.startOrResume(
-                    javaPuppetNode,
+                    fileNode,
                     userId,
                     sessionId,
                     filePath,
                     resolvedThreads,
                     resolvedChunkSize
             );
-            auditService.logSuccess(sessionId, javaPuppetNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
+            auditService.logSuccess(sessionId, auditNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
                     auditParams, "AI下载任务已启动");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, javaPuppetNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
+            auditService.logFailure(sessionId, auditNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
                     auditParams, e.getMessage());
             throw e;
         }
@@ -95,7 +98,8 @@ public class FileTools {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("当前会话缺少用户信息，无法启动上传任务");
         }
-        JavaPuppetNode javaPuppetNode = session.getJavaPuppetNode();
+        FileCapable fileNode = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         User user = userService.getUserById(userId);
         String privilege = user == null ? null : user.getPrivilege();
         Path sourceFile = uploadEngineService.resolveVfsFilePath(vfsPath);
@@ -108,7 +112,7 @@ public class FileTools {
         auditParams.put("chunkSize", resolvedChunkSize);
         try {
             Map<String, Object> result = uploadEngineService.start(
-                    javaPuppetNode,
+                    fileNode,
                     userId,
                     sessionId,
                     filePath,
@@ -116,11 +120,11 @@ public class FileTools {
                     sourceFile.getFileName().toString(),
                     resolvedChunkSize
             );
-            auditService.logSuccess(sessionId, javaPuppetNode, "FILE_UPLOAD", "AI上传文件",
+            auditService.logSuccess(sessionId, auditNode, "FILE_UPLOAD", "AI上传文件",
                     vfsPath + " -> " + filePath, auditParams, "AI上传任务已启动");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, javaPuppetNode, "FILE_UPLOAD", "AI上传文件",
+            auditService.logFailure(sessionId, auditNode, "FILE_UPLOAD", "AI上传文件",
                     vfsPath + " -> " + filePath, auditParams, e.getMessage());
             throw e;
         }
@@ -142,15 +146,16 @@ public class FileTools {
             return (Map<String, Object>) cachedMap;
         }
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        FileCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = fileAuditParams(sessionId, path, null, readSize);
         Map<String, Object> chunk;
         try {
             chunk = node.fileDownloadChunk(path, readSize, 0);
-            auditService.logSuccess(sessionId, node, "FILE_READ", "AI读取文件", path, auditParams,
+            auditService.logSuccess(sessionId, auditNode, "FILE_READ", "AI读取文件", path, auditParams,
                     "AI读取文件成功");
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "FILE_READ", "AI读取文件", path, auditParams, e.getMessage());
+            auditService.logFailure(sessionId, auditNode, "FILE_READ", "AI读取文件", path, auditParams, e.getMessage());
             throw e;
         }
         HashMap<String, Object> result = new HashMap<>();
@@ -201,10 +206,11 @@ public class FileTools {
         }
         int limit = maxResults > 0 ? Math.min(maxResults, 500) : 200;
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CommandCapable commandNode = PuppetNodeSessionUtils.requireCapability(sessionId, CommandCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
 
         // 检测 OS 并构建命令
-        boolean isWin = isWindowsPuppet(sessionId, node);
+        boolean isWin = isWindowsPuppet(sessionId, commandNode);
         String cmd = buildSearchCommand(directory, pattern, fileGlob, limit, isWin);
 
         Map<String, Object> auditParams = fileAuditParams(sessionId, directory, null, null);
@@ -212,7 +218,7 @@ public class FileTools {
         auditParams.put("fileGlob", fileGlob);
         auditParams.put("limit", limit);
         try {
-            Map<String, Object> raw = node.execSimpleCommand(cmd, 30);
+            Map<String, Object> raw = commandNode.execSimpleCommand(cmd, 30);
             String output = extractCommandOutput(raw);
 
             List<Map<String, Object>> matches = parseSearchResults(output, limit);
@@ -227,11 +233,11 @@ public class FileTools {
             if (output.length() > 12000) {
                 result.put("rawOutputTruncated", true);
             }
-            auditService.logSuccess(sessionId, node, "FILE_SEARCH", "AI搜索文件内容", directory,
+            auditService.logSuccess(sessionId, auditNode, "FILE_SEARCH", "AI搜索文件内容", directory,
                     auditParams, "AI搜索文件内容成功");
             return result;
         } catch (Exception e) {
-            auditService.logFailure(sessionId, node, "FILE_SEARCH", "AI搜索文件内容", directory,
+            auditService.logFailure(sessionId, auditNode, "FILE_SEARCH", "AI搜索文件内容", directory,
                     auditParams, e.getMessage());
             throw e;
         }
@@ -243,7 +249,7 @@ public class FileTools {
      * 从 puppet 侧下载文件分块数据（内部实现，不对 AI 暴露）。
      */
     Map<String, Object> fileDownloadChunk(String sessionId, String path, long size, long offset) throws Exception {
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        FileCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
         return node.fileDownloadChunk(path, size, offset);
     }
 
@@ -349,7 +355,7 @@ public class FileTools {
     }
 
     /** 简单的 Windows puppet 检测（首次探测后缓存）。 */
-    private boolean isWindowsPuppet(String sessionId, JavaPuppetNode node) {
+    private boolean isWindowsPuppet(String sessionId, CommandCapable commandNode) {
         String cacheKey = "os-platform";
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cached instanceof String platform) {
@@ -357,7 +363,7 @@ public class FileTools {
         }
         // 惰性探测一次
         try {
-            Map<String, Object> probe = node.execSimpleCommand("uname -s 2>/dev/null || echo Windows");
+            Map<String, Object> probe = commandNode.execSimpleCommand("uname -s 2>/dev/null || echo Windows");
             String out = extractCommandOutput(probe).trim().toLowerCase();
             boolean isWin = out.isEmpty() || out.contains("windows");
             PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, isWin ? "windows" : "unix");

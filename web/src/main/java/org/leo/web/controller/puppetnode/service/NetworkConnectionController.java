@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.NetworkConnectionCapable;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,12 +26,12 @@ public class NetworkConnectionController {
         String remoteIp = ControllerUtil.getStr(params, "remoteIp");
         boolean listeningOnly = ControllerUtil.getBool(params, "listeningOnly");
         int maxEntries = ControllerUtil.getInt(params, "maxEntries", 2000);
-        return ControllerUtil.handlePuppetCall(params, "获取网络连接失败",
+        return ControllerUtil.handleCapabilityCall(params, NetworkConnectionCapable.class, "获取网络连接失败",
                 node -> node.listNetworkConnections(state, protocol, port, pid, process, remoteIp, listeningOnly, maxEntries));
     }
 
     @RequestMapping(value = "/summary", method = RequestMethod.POST)
     public HashMap<String, Object> summary(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取网络连接统计失败", node -> node.networkConnectionSummary());
+        return ControllerUtil.handleCapabilityCall(params, NetworkConnectionCapable.class, "获取网络连接统计失败", node -> node.networkConnectionSummary());
     }
 }

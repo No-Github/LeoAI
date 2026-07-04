@@ -1,6 +1,6 @@
 package org.leo.web.controller.puppetnode.file;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -65,12 +65,12 @@ public class FileEnhanceController {
 
     private HashMap<String, Object> invoke(HashMap<String, Object> params, int action) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             HashMap<String, Object> componentParams = new HashMap<String, Object>(params);
             componentParams.put("classname", COMPONENT);
             componentParams.put("action", action);
             HashMap<String, Object> result =
-                    (HashMap<String, Object>) node.invokeComponent(COMPONENT, componentParams);
+                    (HashMap<String, Object>) componentNode.invokeComponent(COMPONENT, componentParams);
             if (result == null) return ApiResponse.error("组件未返回结果");
             Object codeObj = result.get("code");
             int code = codeObj instanceof Number ? ((Number) codeObj).intValue() : -1;

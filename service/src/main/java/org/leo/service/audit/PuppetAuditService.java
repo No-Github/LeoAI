@@ -3,7 +3,7 @@ package org.leo.service.audit;
 import org.leo.core.entity.AuditLog;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.json.JsonUtil;
@@ -34,7 +34,7 @@ public class PuppetAuditService {
     }
 
     public void logSuccess(String sessionId,
-                           JavaPuppetNode node,
+                           AbstractPuppetNode node,
                            String operationType,
                            String operationName,
                            String operationPath,
@@ -45,7 +45,7 @@ public class PuppetAuditService {
     }
 
     public void logFailure(String sessionId,
-                           JavaPuppetNode node,
+                           AbstractPuppetNode node,
                            String operationType,
                            String operationName,
                            String operationPath,
@@ -56,7 +56,7 @@ public class PuppetAuditService {
     }
 
     public void logOperation(String sessionId,
-                             JavaPuppetNode node,
+                             AbstractPuppetNode node,
                              String operationType,
                              String operationName,
                              String operationPath,
@@ -96,7 +96,7 @@ public class PuppetAuditService {
         }
     }
 
-    private void fillUser(AuditLog auditLog, String sessionId, JavaPuppetNode node) {
+    private void fillUser(AuditLog auditLog, String sessionId, AbstractPuppetNode node) {
         User user = node == null ? null : node.getUser();
         if (user == null && sessionId != null && !sessionId.isBlank()) {
             PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
@@ -110,7 +110,7 @@ public class PuppetAuditService {
         }
     }
 
-    private void fillPuppet(AuditLog auditLog, JavaPuppetNode node) {
+    private void fillPuppet(AuditLog auditLog, AbstractPuppetNode node) {
         Puppet puppet = node == null ? null : node.getPuppet();
         if (puppet != null) {
             auditLog.setPuppetId(puppet.getPuppetId());

@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.process;
 
+import org.leo.core.puppet.capability.ProcessCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,7 +21,7 @@ public class ProcessController {
     /** 列举所有进程 */
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取进程列表失败",
+        return ControllerUtil.handleCapabilityCall(params, ProcessCapable.class, "获取进程列表失败",
                 node -> node.listProcesses());
     }
 
@@ -29,7 +30,7 @@ public class ProcessController {
      */
     @RequestMapping(value = "/find", method = RequestMethod.POST)
     public HashMap<String, Object> find(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "查找进程失败", node -> node.findProcesses(
+        return ControllerUtil.handleCapabilityCall(params, ProcessCapable.class, "查找进程失败", node -> node.findProcesses(
                 ControllerUtil.getStr(params, "name"),
                 ControllerUtil.getInt(params, "pid", -1),
                 ControllerUtil.getInt(params, "port", -1)));
@@ -41,7 +42,7 @@ public class ProcessController {
         int pid = ControllerUtil.getInt(params, "pid", -1);
         if (pid <= 0) return ApiResponse.badRequest("pid 参数必填且大于 0");
         boolean force = ControllerUtil.getBool(params, "force");
-        return ControllerUtil.handlePuppetCall(params, "终止进程失败",
+        return ControllerUtil.handleCapabilityCall(params, ProcessCapable.class, "终止进程失败",
                 node -> node.killProcess(pid, force));
     }
 }

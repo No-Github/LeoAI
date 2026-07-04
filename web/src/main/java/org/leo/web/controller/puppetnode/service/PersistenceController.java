@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.PersistenceCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,7 +19,7 @@ public class PersistenceController {
 
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取持久化条目失败", node -> node.listPersistence());
+        return ControllerUtil.handleCapabilityCall(params, PersistenceCapable.class, "获取持久化条目失败", node -> node.listPersistence());
     }
 
     @RequestMapping(value = "/query", method = RequestMethod.POST)
@@ -27,7 +28,7 @@ public class PersistenceController {
         String type = ControllerUtil.getStr(params, "type");
         String path = ControllerUtil.getStr(params, "path");
         if (name == null && path == null) return ApiResponse.badRequest("name 或 path 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "查询持久化条目失败",
+        return ControllerUtil.handleCapabilityCall(params, PersistenceCapable.class, "查询持久化条目失败",
                 node -> node.queryPersistence(name, type, path));
     }
 }

@@ -1,7 +1,7 @@
 package org.leo.web.controller.puppetnode.proxy;
 
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.HttpProxyCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,7 +30,7 @@ public class HttpProxyController {
             if (port == null) {
                 return ApiResponse.badRequest(MSG_PORT_INVALID);
             }
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            HttpProxyCapable node = ControllerUtil.requireCapability(params, HttpProxyCapable.class);
             Map<String, Object> result = node.startHttpProxy(port.intValue());
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -46,7 +46,7 @@ public class HttpProxyController {
     @RequestMapping(value = "/stop", method = RequestMethod.POST)
     public HashMap<String, Object> stop(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            HttpProxyCapable node = ControllerUtil.requireCapability(params, HttpProxyCapable.class);
             Map<String, Object> result = node.stopHttpProxy();
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -62,7 +62,7 @@ public class HttpProxyController {
     @RequestMapping(value = "/status", method = RequestMethod.POST)
     public HashMap<String, Object> getStatus(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            HttpProxyCapable node = ControllerUtil.requireCapability(params, HttpProxyCapable.class);
             Map<String, Object> result = node.getHttpProxyStatus();
             return ApiResponse.success(result != null ? result : new HashMap<String, Object>());
         } catch (IllegalArgumentException e) {
@@ -78,7 +78,7 @@ public class HttpProxyController {
     @RequestMapping(value = "/statistics", method = RequestMethod.POST)
     public HashMap<String, Object> getStatistics(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+            HttpProxyCapable node = ControllerUtil.requireCapability(params, HttpProxyCapable.class);
             Socks5ProxyStatistics.StatisticsSnapshot snapshot = node.getHttpProxyStatistics();
             if (snapshot == null) {
                 return ApiResponse.error("HTTP代理未启动");

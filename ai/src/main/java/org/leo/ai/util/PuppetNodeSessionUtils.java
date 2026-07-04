@@ -24,6 +24,22 @@ public class PuppetNodeSessionUtils {
         return getSession(sessionId).getPuppetNode();
     }
 
+    public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {
+        if (capabilityType == null) {
+            throw new IllegalArgumentException("capabilityType不能为空");
+        }
+        AbstractPuppetNode node = getPuppetNode(sessionId);
+        if (node == null) {
+            throw new IllegalArgumentException("Puppet实体不存在: " + sessionId);
+        }
+        if (capabilityType.isInstance(node)) {
+            return capabilityType.cast(node);
+        }
+        String nodeType = node.getPuppet() != null ? node.getPuppet().getType() : node.getClass().getSimpleName();
+        throw new IllegalArgumentException("当前 Puppet 类型不支持能力: "
+                + capabilityType.getSimpleName() + " (type=" + nodeType + ")");
+    }
+
     public static Object getAiContextValue(String sessionId, String key) {
         return getSession(sessionId).getAiContextValue(key);
     }

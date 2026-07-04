@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.CatalinaManageCapable;
 import org.leo.core.session.PuppetNodeSession;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
@@ -22,7 +22,7 @@ public class CatalinaTools {
     @Tool("获取当前会话对应应用容器和 Spring Web 框架的管理信息。适用于查看 Tomcat、WebLogic、Filter、Servlet、Valve、Listener、Controller、Interceptor 等挂载情况。")
     public Map<String, Object> getCatalinaInfo() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CatalinaManageCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CatalinaManageCapable.class);
         return node.getCatalinaInfo(getCatalinaName(sessionId), getWebFrameworkName(sessionId));
     }
 
@@ -40,7 +40,7 @@ public class CatalinaTools {
             @P("容器上下文名称。valve/listener/controller/interceptor 时可为空") String contextName,
             @P("组件标识，含义因类型而异（见工具描述）") String identifier) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        CatalinaManageCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CatalinaManageCapable.class);
         String catalinaName = getCatalinaName(sessionId);
         String webFramework = getWebFrameworkName(sessionId);
 

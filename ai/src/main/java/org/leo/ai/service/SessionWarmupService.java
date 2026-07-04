@@ -2,7 +2,10 @@ package org.leo.ai.service;
 
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.BasicInfoCapable;
+import org.leo.core.puppet.capability.CommandCapable;
+import org.leo.core.puppet.capability.DiskCapable;
+import org.leo.core.puppet.capability.NetworkInfoCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -73,7 +76,7 @@ public class SessionWarmupService {
         // 1. basicInfo — 最关键，包含 OS 类型、主机名、用户等
         Object cachedBasicInfo = PuppetNodeSessionUtils.getAiContextValue(sessionId, BASIC_INFO_CACHE_KEY);
         if (cachedBasicInfo == null) {
-            JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+            BasicInfoCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BasicInfoCapable.class);
             Map<String, Object> basicInfo = node.getBasicInfo();
             if (basicInfo != null) {
                 PuppetNodeSessionUtils.putAiContextValue(sessionId, BASIC_INFO_CACHE_KEY, basicInfo);
@@ -93,7 +96,7 @@ public class SessionWarmupService {
         if (cachedEnv == null) {
             String platform = (String) PuppetNodeSessionUtils.getAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY);
             String cmd = "windows".equals(platform) ? "set" : "env";
-            JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+            CommandCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CommandCapable.class);
             Map<String, Object> envResult = node.execSimpleCommand(cmd);
             if (envResult != null && !envResult.containsKey("error") && !envResult.containsKey("exception")) {
                 // 预热阶段即压缩环境变量（Java classpath 可达数千字符），后续缓存命中直接使用压缩版本
@@ -106,7 +109,7 @@ public class SessionWarmupService {
         Object cachedNetwork = PuppetNodeSessionUtils.getAiContextValue(sessionId, NETWORK_INFO_CACHE_KEY);
         if (cachedNetwork == null) {
             try {
-                JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+                NetworkInfoCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, NetworkInfoCapable.class);
                 Map<String, Object> networkInfo = node.collectNetworkInfo();
                 if (networkInfo != null && !networkInfo.containsKey("error")) {
                     PuppetNodeSessionUtils.putAiContextValue(sessionId, NETWORK_INFO_CACHE_KEY, networkInfo);
@@ -120,7 +123,7 @@ public class SessionWarmupService {
         Object cachedDisk = PuppetNodeSessionUtils.getAiContextValue(sessionId, MOUNT_DISK_CACHE_KEY);
         if (cachedDisk == null) {
             try {
-                JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+                DiskCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, DiskCapable.class);
                 Map<String, Object> diskInfo = node.listMountDisks();
                 if (diskInfo != null && !diskInfo.containsKey("error")) {
                     PuppetNodeSessionUtils.putAiContextValue(sessionId, MOUNT_DISK_CACHE_KEY, diskInfo);

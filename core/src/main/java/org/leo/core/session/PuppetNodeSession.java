@@ -7,6 +7,8 @@ import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AsyncShellTask;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.HostScopedCapable;
+import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
 import org.leo.core.puppet.impl.JavaPuppetNode;
 import org.leo.core.util.BoundedTtlCache;
 
@@ -292,13 +294,19 @@ public class PuppetNodeSession {
     public AbstractPuppetNode getPuppetNode()                        { return puppetNode; }
     public void               setPuppetNode(AbstractPuppetNode node) { this.puppetNode = node; }
 
+    public List<String> getCapabilities() {
+        return PuppetNodeCapabilityRegistry.listSupported(puppetNode);
+    }
+
     // ── HostId 管理 ───────────────────────────────────────────────────────────
 
     public String getCurrentHostId() { return currentHostId; }
 
     public void setCurrentHostId(String currentHostId) {
         this.currentHostId = currentHostId;
-        if (puppetNode instanceof JavaPuppetNode) ((JavaPuppetNode) puppetNode).setHostId(currentHostId);
+        if (puppetNode instanceof HostScopedCapable hostScopedNode) {
+            hostScopedNode.setHostId(currentHostId);
+        }
         if (currentHostId != null && !currentHostId.isBlank()) addHostId(currentHostId);
     }
 

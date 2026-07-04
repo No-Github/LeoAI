@@ -1,6 +1,8 @@
 package org.leo.service;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.entity.Puppet;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.downloadengine.DownloadStore;
 import org.leo.service.downloadengine.DownloadTask;
 import org.springframework.stereotype.Component;
@@ -29,7 +31,7 @@ public class DownloadEngineService {
 
     private final ConcurrentHashMap<String, DownloadTask> tasksById = new ConcurrentHashMap<>();
 
-    public Map<String, Object> startOrResume(JavaPuppetNode puppetNode,
+    public Map<String, Object> startOrResume(FileCapable fileNode,
                                              String userId,
                                              String sessionId,
                                              String filePath,
@@ -44,25 +46,25 @@ public class DownloadEngineService {
         if (filePath == null || filePath.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: filePath");
         }
-        if (puppetNode == null) {
-            throw new IllegalArgumentException("puppetNode不能为空");
+        if (fileNode == null) {
+            throw new IllegalArgumentException("fileNode不能为空");
         }
 
         int t = clampInt(threads, DEFAULT_THREADS, 1, MAX_THREADS);
         int cs = clampInt(chunkSize, DEFAULT_CHUNK_SIZE, 1, MAX_CHUNK_SIZE);
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> probe = puppetNode.fileDownloadChunk(filePath, 1L, 0L);
+        Map<String, Object> probe = fileNode.fileDownloadChunk(filePath, 1L, 0L);
         long expectedLength = toLong(probe.get("length"));
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> md5Res = puppetNode.getFileMD5(filePath);
+        Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
         String expectedMd5 = extractMd5(md5Res);
         if (expectedMd5 == null || expectedMd5.isBlank()) {
             throw new IllegalStateException("获取远端文件MD5失败");
         }
 
-        String taskId = computeTaskId(puppetNode.getHostId(), filePath, expectedLength, expectedMd5);
+        String taskId = computeTaskId(resolveNodeScopeKey(fileNode, sessionId), filePath, expectedLength, expectedMd5);
 
         DownloadTask existing = tasksById.get(taskId);
         if (existing != null) {
@@ -72,7 +74,7 @@ public class DownloadEngineService {
 
         DownloadStore store = new DownloadStore(userId, taskId);
         DownloadTask task = DownloadTask.createNewOrLoad(
-                puppetNode,
+                fileNode,
                 sessionId,
                 taskId,
                 filePath,
@@ -91,7 +93,7 @@ public class DownloadEngineService {
         return task.snapshot();
     }
 
-    public Map<String, Object> resume(JavaPuppetNode puppetNode, String userId, String sessionId, String taskId) throws Exception {
+    public Map<String, Object> resume(FileCapable fileNode, String userId, String sessionId, String taskId) throws Exception {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: userId");
         }
@@ -101,8 +103,8 @@ public class DownloadEngineService {
         if (taskId == null || taskId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: taskId");
         }
-        if (puppetNode == null) {
-            throw new IllegalArgumentException("puppetNode不能为空");
+        if (fileNode == null) {
+            throw new IllegalArgumentException("fileNode不能为空");
         }
 
         DownloadTask t = tasksById.get(taskId);
@@ -115,7 +117,7 @@ public class DownloadEngineService {
         if (!store.getTaskDir().exists()) {
             throw new IllegalArgumentException("任务不存在: " + taskId);
         }
-        DownloadTask task = DownloadTask.loadFromDisk(puppetNode, sessionId, taskId, store);
+        DownloadTask task = DownloadTask.loadFromDisk(fileNode, sessionId, taskId, store);
         DownloadTask prev = tasksById.putIfAbsent(taskId, task);
         if (prev != null) {
             prev.ensureStarted();
@@ -297,12 +299,21 @@ public class DownloadEngineService {
         return md5 == null ? null : String.valueOf(md5);
     }
 
-    private static String computeTaskId(String hostId, String filePath, long len, String md5) throws Exception {
-        String input = String.valueOf(hostId) + "|" + filePath + "|" + len + "|" + md5;
+    private static String computeTaskId(String nodeScopeKey, String filePath, long len, String md5) throws Exception {
+        String input = String.valueOf(nodeScopeKey) + "|" + filePath + "|" + len + "|" + md5;
         MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
         byte[] digest = sha256.digest(input.getBytes(StandardCharsets.UTF_8));
         String b64 = Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
         return b64.substring(0, 16);
     }
-}
 
+    private static String resolveNodeScopeKey(FileCapable fileNode, String sessionId) {
+        if (fileNode instanceof AbstractPuppetNode node) {
+            Puppet puppet = node.getPuppet();
+            if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
+                return puppet.getPuppetId();
+            }
+        }
+        return sessionId;
+    }
+}

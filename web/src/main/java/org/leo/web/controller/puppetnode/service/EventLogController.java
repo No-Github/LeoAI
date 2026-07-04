@@ -1,6 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.EventLogCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,13 +35,13 @@ public class EventLogController {
 
     @RequestMapping(value = "/list-sources", method = RequestMethod.POST)
     public HashMap<String, Object> listSources(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取日志源列表失败",
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "获取日志源列表失败",
                 node -> node.listEventLogSources());
     }
 
     @RequestMapping(value = "/query", method = RequestMethod.POST)
     public HashMap<String, Object> query(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "查询日志失败", node -> node.queryEventLog(
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "查询日志失败", node -> node.queryEventLog(
                 ControllerUtil.getStr(params, "source"),
                 ControllerUtil.getInt(params, "maxEntries", 50),
                 ControllerUtil.getStr(params, "keyword"),
@@ -64,7 +64,7 @@ public class EventLogController {
         if (ControllerUtil.getStr(params, "source") == null) {
             return ApiResponse.badRequest("source 参数必填(应用日志文件路径)");
         }
-        return ControllerUtil.handlePuppetCall(params, "聚合日志失败", node -> node.aggregateEventLog(
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "聚合日志失败", node -> node.aggregateEventLog(
                 ControllerUtil.getStr(params, "source"),
                 ControllerUtil.getStr(params, "format"),
                 ControllerUtil.getStr(params, "groupBy"),
@@ -84,14 +84,14 @@ public class EventLogController {
         if (ControllerUtil.getStr(params, "source") == null) {
             return ApiResponse.badRequest("source 参数必填(文件路径)");
         }
-        return ControllerUtil.handlePuppetCall(params, "获取元数据失败", node -> node.metaEventLog(
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "获取元数据失败", node -> node.metaEventLog(
                 ControllerUtil.getStr(params, "source"),
                 ControllerUtil.getStr(params, "format")));
     }
 
     @RequestMapping(value = "/stats", method = RequestMethod.POST)
     public HashMap<String, Object> stats(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "获取日志统计失败",
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "获取日志统计失败",
                 node -> node.getEventLogStats(ControllerUtil.getStr(params, "source")));
     }
 
@@ -100,7 +100,7 @@ public class EventLogController {
         if (ControllerUtil.getStr(params, "source") == null) {
             return ApiResponse.badRequest("source 参数必填");
         }
-        return ControllerUtil.handlePuppetCall(params, "清除日志失败",
+        return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "清除日志失败",
                 node -> node.clearEventLog(ControllerUtil.getStr(params, "source")));
     }
 
@@ -123,11 +123,9 @@ public class EventLogController {
         }
         long period = (intervalMs == null || intervalMs.longValue() < 500L) ? 1500L : intervalMs.longValue();
 
-        final HashMap<String, Object> baseParams = new HashMap<>();
-        baseParams.put("sessionId", sessionId);
-        final JavaPuppetNode node;
+        final EventLogCapable node;
         try {
-            node = ControllerUtil.getPuppetNode(baseParams);
+            node = ControllerUtil.requireCapability(sessionId, EventLogCapable.class);
         } catch (Exception e) {
             try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); } catch (Exception ignored) {}
             emitter.complete();

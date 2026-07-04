@@ -1,7 +1,7 @@
 package org.leo.web.controller.puppetnode.bytecode;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ResourceCapable;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.ControllerUtil;
@@ -29,10 +29,10 @@ public class ClassBytecodeController {
     public HashMap<String, Object> getClassBytecode(@RequestBody HashMap<String, Object> params) {
 
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            ResourceCapable node = ControllerUtil.requireCapability(params, ResourceCapable.class);
             String className = (String) params.get("className");
 
-            Map<String, Object> componentResult = javaPuppetNode.getClassBytecode(className);
+            Map<String, Object> componentResult = node.getClassBytecode(className);
             if (componentResult == null || componentResult.get("code") == null) {
                 throw new RuntimeException("类字节码组件返回结果异常");
             }

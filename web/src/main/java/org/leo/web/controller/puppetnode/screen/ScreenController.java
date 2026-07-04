@@ -1,7 +1,8 @@
 package org.leo.web.controller.puppetnode.screen;
 
 
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
@@ -40,10 +41,11 @@ public class ScreenController {
      */
     @RequestMapping(value = "/start", method = RequestMethod.POST)
     public HashMap<String, Object> startScreenshot(@RequestBody HashMap<String, Object> params) {
-        JavaPuppetNode javaPuppetNode = null;
+        AbstractPuppetNode javaPuppetNode = null;
         String sessionId = null;
         try {
-            javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             sessionId = ControllerUtil.getRequiredStringParam(params, PARAM_SESSION_ID);
 
             // 准备截图参数
@@ -66,7 +68,7 @@ public class ScreenController {
             }
 
             // 执行截图
-            HashMap<String, Object> screenshotResult = (HashMap<String, Object>) javaPuppetNode.invokeComponent(
+            HashMap<String, Object> screenshotResult = (HashMap<String, Object>) componentNode.invokeComponent(
                     "ScreenComponent",
                     screenshotParams
             );
@@ -127,11 +129,11 @@ public class ScreenController {
     @RequestMapping(value = "/check-environment", method = RequestMethod.POST)
     public HashMap<String, Object> checkEnvironment(@RequestBody HashMap<String, Object> params) {
         try {
-            JavaPuppetNode javaPuppetNode = ControllerUtil.getPuppetNode(params);
+            ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
 
             // 调用组件检查环境
             HashMap<String, Object> checkParams = new HashMap<String, Object>();
-            HashMap<String, Object> checkResult = (HashMap<String, Object>) javaPuppetNode.invokeComponent(
+            HashMap<String, Object> checkResult = (HashMap<String, Object>) componentNode.invokeComponent(
                     "ScreenComponent",
                     checkParams
             );

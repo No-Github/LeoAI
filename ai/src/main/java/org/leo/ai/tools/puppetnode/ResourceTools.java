@@ -2,7 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.ResourceCapable;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +24,7 @@ public class ResourceTools {
             return (Map<String, Object>) cachedMap;
         }
 
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ResourceCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ResourceCapable.class);
         Map<String, Object> results = node.getResource(resourcePath);
         if (results != null) {
             PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
@@ -65,7 +65,7 @@ public class ResourceTools {
         if (cached instanceof Map<?, ?> cachedMap) {
             return (Map<String, Object>) cachedMap;
         }
-        JavaPuppetNode node = PuppetNodeSessionUtils.getJavaPuppetNode(sessionId);
+        ResourceCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ResourceCapable.class);
         Map<String, Object> results = node.getClassBytecode(className);
         if (results != null) {
             PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
