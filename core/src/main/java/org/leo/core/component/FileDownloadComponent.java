@@ -78,12 +78,25 @@ public class FileDownloadComponent implements Runnable {
         
         try {
             inputFile = new RandomAccessFile(downloadFile, "r");
+
+            long fileLength = inputFile.length();
+            if (fileLength == 0 && offset == 0) {
+                results.put("code", 200);
+                results.put("length", Long.valueOf(0L));
+                results.put("data", new byte[0]);
+                results.put("bytesRead", Integer.valueOf(0));
+                results.put("offset", Long.valueOf(0L));
+                results.put("nextOffset", Long.valueOf(0L));
+                results.put("isComplete", Boolean.TRUE);
+                return;
+            }
+
             inputFile.seek(offset);
             
-            long availableSize = inputFile.length() - offset;
+            long availableSize = fileLength - offset;
             if (availableSize <= 0) {
                 results.put("code", 416);
-                results.put("msg", "请求范围不满足: offset=" + offset + ", fileSize=" + downloadFile.length());
+                results.put("msg", "请求范围不满足: offset=" + offset + ", fileSize=" + fileLength);
                 return;
             }
             
@@ -113,9 +126,9 @@ public class FileDownloadComponent implements Runnable {
             }
             
             // 设置响应状态
-            boolean isComplete = (offset + totalRead) >= downloadFile.length();
+            boolean isComplete = (offset + totalRead) >= fileLength;
             results.put("code", isComplete ? 200 : 100);
-            results.put("length", downloadFile.length());
+            results.put("length", fileLength);
             results.put("data", buffer);
             results.put("bytesRead", totalRead);
             results.put("offset", offset);

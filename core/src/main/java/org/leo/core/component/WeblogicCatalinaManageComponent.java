@@ -167,7 +167,7 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         };
 
         // 已采集实例去重（同一 listener 可能同时落在多个分类）
-        Set<String> seen = new HashSet<>();
+        Set<String> seen = new HashSet();
         for (int hi = 0; hi < holders.length; hi++) {
             Object holder = holders[hi];
             if (holder == null) continue;

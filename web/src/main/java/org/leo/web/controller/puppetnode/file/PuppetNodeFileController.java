@@ -261,10 +261,15 @@ public class PuppetNodeFileController {
         int innerCode = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
         normalized.put("truncated", innerCode == 100);
 
-        // 文件总大小
+        // 文件总大小。底层下载组件使用 length，旧调用方可能使用 size，两者都兼容。
         Object sizeObj = raw.get("size");
+        if (!(sizeObj instanceof Number)) {
+            sizeObj = raw.get("length");
+        }
+        Long totalSize = null;
         if (sizeObj instanceof Number) {
-            normalized.put("size", ((Number) sizeObj).longValue());
+            totalSize = ((Number) sizeObj).longValue();
+            normalized.put("size", totalSize);
         }
 
         // data：确保为 base64 字符串
@@ -273,6 +278,8 @@ public class PuppetNodeFileController {
             normalized.put("data", Base64.getEncoder().encodeToString((byte[]) dataObj));
         } else if (dataObj instanceof String) {
             normalized.put("data", dataObj);
+        } else if (totalSize != null && totalSize == 0L && innerCode == 200) {
+            normalized.put("data", "");
         }
 
         return normalized;
