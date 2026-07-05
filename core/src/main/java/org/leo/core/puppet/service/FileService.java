@@ -42,10 +42,13 @@ public class FileService extends ComponentService {
         return invokeComponent("CompressComponent", params);
     }
 
-    public Map<String, Object> decompress(String src, String des) throws Exception {
+    public Map<String, Object> decompress(String src, String des, String format) throws Exception {
         HashMap<String, Object> params = new HashMap<String, Object>();
         params.put("src", src.getBytes("UTF-8"));
         params.put("des", des.getBytes("UTF-8"));
+        if (format != null && !format.isBlank()) {
+            params.put("format", format.trim());
+        }
         return invokeComponent("DecompressComponent", params);
     }
 

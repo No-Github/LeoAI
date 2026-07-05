@@ -282,7 +282,18 @@ public class PuppetNodeFileController {
             normalized.put("data", "");
         }
 
+        copyIfPresent(raw, normalized, "bytesRead");
+        copyIfPresent(raw, normalized, "offset");
+        copyIfPresent(raw, normalized, "nextOffset");
+        copyIfPresent(raw, normalized, "isComplete");
+
         return normalized;
+    }
+
+    private void copyIfPresent(Map<String, Object> source, HashMap<String, Object> target, String key) {
+        if (source.containsKey(key)) {
+            target.put(key, source.get(key));
+        }
     }
 
     /**
@@ -413,7 +424,7 @@ public class PuppetNodeFileController {
 
         FileCapable node = getFileNode(params);
         AbstractPuppetNode auditNode = asAuditNode(node);
-        Map<String, Object> results = puppetCall(() -> node.decompressFile(src, des), "文件解压失败");
+        Map<String, Object> results = puppetCall(() -> node.decompressFile(src, des, format), "文件解压失败");
         String operationPath = src + " -> " + des + " (" + format + ")";
         AuditLogUtil.logSuccess(auditNode, "FILE_DECOMPRESS", "文件解压", operationPath, params,
                 ApiResponse.CODE_SUCCESS, "文件解压成功", AuditLogUtil.getClientIp());

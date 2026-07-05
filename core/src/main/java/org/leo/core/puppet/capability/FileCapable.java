@@ -31,5 +31,5 @@ public interface FileCapable {
 
     Map<String, Object> editFile(String path, String content) throws Exception;
 
-    Map<String, Object> decompressFile(String src, String des) throws Exception;
+    Map<String, Object> decompressFile(String src, String des, String format) throws Exception;
 }

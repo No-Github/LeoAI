@@ -498,8 +498,8 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> decompressFile(String src, String des) throws Exception {
-        return fileService.decompress(src, des);
+    public Map<String, Object> decompressFile(String src, String des, String format) throws Exception {
+        return fileService.decompress(src, des, format);
     }
 
     @Override
