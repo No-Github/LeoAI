@@ -13,7 +13,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.Proxy;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
@@ -62,6 +67,9 @@ public class HttpCommunication implements Communication {
 
     /** per-request 噪声 Header（每次请求前设置，用完清除） */
     private final ThreadLocal<Map<String, String>> requestNoiseHeaders = new ThreadLocal<>();
+
+    /** 从 Set-Cookie 学习到的 Cookie，按 name/domain/path 存储并按请求 URL 作用域匹配。 */
+    private final Map<String, Cookie> responseCookies = new ConcurrentHashMap<>();
 
     /**
      * 构造函数
@@ -190,20 +198,23 @@ public class HttpCommunication implements Communication {
             body = RequestBody.create(data);
         }
 
-        Request.Builder builder = new Request.Builder().url(targetUrl);
+        HttpUrl requestUrl = HttpUrl.get(targetUrl);
+        Request.Builder builder = new Request.Builder().url(requestUrl);
+        List<String> configuredCookieHeaders = new ArrayList<>();
 
         // 设置 headers
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            builder.addHeader(entry.getKey(), entry.getValue());
-        }
+        addHeaders(builder, headers, configuredCookieHeaders);
 
         // 注入噪声 Header（一次性，用完清除）
         Map<String, String> noiseHeaders = requestNoiseHeaders.get();
         if (noiseHeaders != null && !noiseHeaders.isEmpty()) {
-            for (Map.Entry<String, String> entry : noiseHeaders.entrySet()) {
-                builder.addHeader(entry.getKey(), entry.getValue());
-            }
+            addHeaders(builder, noiseHeaders, configuredCookieHeaders);
             requestNoiseHeaders.remove();
+        }
+
+        String cookieHeader = buildCookieHeader(requestUrl, configuredCookieHeaders);
+        if (cookieHeader != null && !cookieHeader.isBlank()) {
+            builder.addHeader("Cookie", cookieHeader);
         }
 
         // 设置 method
@@ -221,6 +232,7 @@ public class HttpCommunication implements Communication {
         Response response = null;
         try {
             response = httpClient.newCall(request).execute();
+            storeResponseCookies(request.url(), response.headers());
             ResponseBody responseBody = response.body();
             if (responseBody == null) {
                 logger.warn("[HttpCommunication] 响应体为 null url={} status={}", url, response.code());
@@ -327,5 +339,105 @@ public class HttpCommunication implements Communication {
      */
     public Proxy getProxy() {
         return proxy;
+    }
+
+    private void addHeaders(Request.Builder builder,
+                            Map<String, String> sourceHeaders,
+                            List<String> configuredCookieHeaders) {
+        if (sourceHeaders == null || sourceHeaders.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, String> entry : sourceHeaders.entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+            if (key == null || value == null) {
+                continue;
+            }
+            if ("Cookie".equalsIgnoreCase(key)) {
+                if (!value.isBlank()) {
+                    configuredCookieHeaders.add(value);
+                }
+                continue;
+            }
+            builder.addHeader(key, value);
+        }
+    }
+
+    private void storeResponseCookies(HttpUrl requestUrl, Headers responseHeaders) {
+        List<Cookie> parsedCookies = Cookie.parseAll(requestUrl, responseHeaders);
+        if (parsedCookies.isEmpty()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        for (Cookie cookie : parsedCookies) {
+            String key = cookieStoreKey(cookie);
+            if (cookie.expiresAt() <= now) {
+                responseCookies.remove(key);
+            } else {
+                responseCookies.put(key, cookie);
+            }
+        }
+    }
+
+    private String buildCookieHeader(HttpUrl requestUrl, List<String> configuredCookieHeaders) {
+        List<String> cookieParts = new ArrayList<>();
+        Set<String> configuredCookieNames = new HashSet<>();
+        long now = System.currentTimeMillis();
+
+        if (configuredCookieHeaders != null) {
+            for (String configured : configuredCookieHeaders) {
+                if (configured == null || configured.isBlank()) {
+                    continue;
+                }
+                cookieParts.add(configured.trim());
+                collectCookieNames(configured, configuredCookieNames);
+            }
+        }
+
+        List<Cookie> matchedCookies = new ArrayList<>();
+        for (Cookie cookie : responseCookies.values()) {
+            if (cookie.expiresAt() <= now) {
+                responseCookies.remove(cookieStoreKey(cookie));
+                continue;
+            }
+            if (configuredCookieNames.contains(cookie.name())) {
+                continue;
+            }
+            if (cookie.matches(requestUrl)) {
+                matchedCookies.add(cookie);
+            }
+        }
+        matchedCookies.sort(Comparator
+                .comparingInt((Cookie cookie) -> cookie.path().length())
+                .reversed());
+
+        for (Cookie cookie : matchedCookies) {
+            cookieParts.add(cookie.name() + "=" + cookie.value());
+        }
+
+        return cookieParts.isEmpty() ? null : String.join("; ", cookieParts);
+    }
+
+    private void collectCookieNames(String cookieHeader, Set<String> names) {
+        String[] parts = cookieHeader.split(";");
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            int eq = trimmed.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String name = trimmed.substring(0, eq).trim();
+            if (!name.isEmpty()) {
+                names.add(name);
+            }
+        }
+    }
+
+    private String cookieStoreKey(Cookie cookie) {
+        return cookie.name() + "\n" + cookie.domain() + "\n" + cookie.path();
     }
 }
