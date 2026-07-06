@@ -185,7 +185,7 @@ public class ControllerUtil {
         return requireCapability(session, capabilityType);
     }
 
-    private static <T> T requireCapability(PuppetNodeSession session, Class<T> capabilityType) {
+    public static <T> T requireCapability(PuppetNodeSession session, Class<T> capabilityType) {
         if (capabilityType == null) {
             throw ApiException.badRequest("capabilityType不能为空");
         }

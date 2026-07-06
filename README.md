@@ -49,7 +49,7 @@ LeoAI 是一款专为红队操作人员设计的后渗透管理工具，深度�
 | **大上下文窗口** | 动态适配模型上下文窗口（最高 1M），自动压缩历史消息保留关键信息 |
 | **任务计划** | AI 自动规划多步任务、逐步执行并回写结果，前端顶栏实时追踪进度 |
 | **100+ 个 AI Tools** | AI Agent 可调用的原子能力，涵盖命令执行、文件、网络、凭据、扫描、HTTP 发包、数据库、脚本、插件等全场景 |
-| **8 个内置 AI Skills** | 预置的场景化任务提示词，一键启动完整攻击链（详见下方 Skills 列表） |
+| **多套内置 AI Skills** | 预置 puppet-node / platform 两类场景化任务提示词，一键启动侦察、凭据收集、提权、持久化、横向移动、伪装开发、指纹开发、漏洞建议等流程 |
 | **Skill 管理器** | 可视化管理 Skills：查看/编辑内容与描述、标签分类、启用/禁用、全文搜索、导入/导出，修改实时生效无需重启 |
 | **上下文积累** | 侦察摘要自动积累与压缩，AI 上下文随操作深入持续增强 |
 | **操作报告生成** | AI 自动生成操作总结和风险分析报告 |
@@ -71,7 +71,7 @@ LeoAI 是一款专为红队操作人员设计的后渗透管理工具，深度�
 ### 操作控制台工具集
 
 #### 交互与命令执行
-- **Web 终端**：交互式 Shell，支持命令补全、历史记录、实时流输出
+- **虚拟终端**：基于 xterm.js 的多会话交互式 Shell，支持实时流输出、会话搜索、清屏、中断、关闭和后端进程生命周期清理
 - **后台任务**：异步执行长时间命令，支持输出轮询和任务取消
 
 #### 文件与存储
@@ -190,16 +190,16 @@ LeoAI 是一款专为红队操作人员设计的后渗透管理工具，深度�
 
 ### 第一步：获取 JAR
 
-从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载最新版本：
+从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-0.0.7-SNAPSHOT.jar
+LeoAi-<version>.jar
 ```
 
 ### 第二步：启动
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -345,8 +345,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # 生产环境建议改成强随机字符串（至少 16 位）
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
-# 锁定到特定版本的 JAR（默认会拉 v0.0.7）
-# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.7/LeoAi-0.0.7-SNAPSHOT.jar
+# 锁定到特定版本的 JAR；默认值以 docker-compose.yml / Dockerfile 为准
+# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/vX.Y.Z/LeoAi-X.Y.Z.jar
 ```
 
 修改 `.env` 后用 `docker compose up -d` 让改动生效。**注意**：改 `JAR_URL` 必须加 `--build`，否则不会重新拉取。
@@ -381,7 +381,7 @@ LEOAI_PORT=9090 OPENAI_API_KEY=sk-xxxxx docker compose up -d
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.7-SNAPSHOT.jar --server.port=9090
+  LeoAi-<version>.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -390,7 +390,7 @@ java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.7-SNAPSHOT.jar \
+  LeoAi-<version>.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -411,7 +411,7 @@ LeoAI 的 AI 功能需要接入 LLM 接口，支持两种配置方式：
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 ### 支持的 AI 模型
@@ -470,7 +470,7 @@ leo.ai.openai.thinking-enabled=false
 
 进入节点后可使用各工具模块：
 
-- **终端**：执行 Shell 命令，实时流式输出
+- **虚拟终端**：多会话执行 Shell 命令，实时流式输出；支持检索输出、清屏、中断、关闭会话，并在关闭/重置时回收后端进程
 - **文件管理**：树形浏览、上传下载、在线编辑、压缩解压、文件预览
 - **数据库**：先在「系统配置 → 数据库配置」添加 JDBC 连接，再在控制台选择使用
 - **端口扫描**：快速扫描 / 自定义端口范围 / 结果导出
@@ -565,7 +565,7 @@ tags:
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 ---

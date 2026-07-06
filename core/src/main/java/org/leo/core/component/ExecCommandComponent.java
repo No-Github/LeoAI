@@ -2,6 +2,7 @@ package org.leo.core.component;
 
 import java.io.*;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -61,6 +62,11 @@ public class ExecCommandComponent implements Runnable {
 
     private static final int BUFFER_SIZE = 1024;
     private static final int MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB 输出上限
+    private static final int MAX_PROCESS_COUNT = 32;
+    private static final long IDLE_TIMEOUT_MS = 30L * 60L * 1000L;
+
+    private static final String KEY_LAST_ACCESS_TIME = "lastAccessTime";
+    private static final String KEY_CREATED_AT = "createdAt";
 
     // processId -> processMap（线程安全）
     private static Map env = new ConcurrentHashMap();
@@ -154,12 +160,26 @@ public class ExecCommandComponent implements Runnable {
 
     private void execCommand() throws Exception {
         String processId = getStringParam("processId");
+        int operation = ((Number) params.get("op")).intValue();
+
+        cleanupExpiredProcesses();
 
         Map processMap = (Map) env.get(processId);
 
         if (processMap == null) {
+            if (operation != OP_WRITE) {
+                writeMissingProcessResult(operation);
+                return;
+            }
+            if (env.size() >= MAX_PROCESS_COUNT) {
+                throw new IllegalStateException("too many active terminal processes, max=" + MAX_PROCESS_COUNT);
+            }
+
             // 【修复 #1】先占位 processMap，再启动线程，避免竞态重复创建
             ConcurrentHashMap placeholder = new ConcurrentHashMap();
+            long now = System.currentTimeMillis();
+            placeholder.put(KEY_CREATED_AT, Long.valueOf(now));
+            placeholder.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
             env.put(processId, placeholder);
 
             // 【修复 #4】通过 THREAD_PARAMS 传递 processId，避免 params 竞态
@@ -173,7 +193,7 @@ public class ExecCommandComponent implements Runnable {
             return;
         }
 
-        int operation = ((Number) params.get("op")).intValue();
+        touchProcess(processMap);
 
         switch (operation) {
             case OP_WRITE:
@@ -190,6 +210,47 @@ public class ExecCommandComponent implements Runnable {
         }
 
         results.put("code", 200);
+    }
+
+    private void writeMissingProcessResult(int operation) {
+        if (operation == OP_READ) {
+            results.put("data", new byte[0]);
+            results.put("alive", Boolean.FALSE);
+            results.put("missing", Boolean.TRUE);
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
+        if (operation == OP_STOP) {
+            results.put("msg", "process not found");
+            results.put("missing", Boolean.TRUE);
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
+        throw new IllegalArgumentException("Invalid op: " + operation);
+    }
+
+    private void touchProcess(Map processMap) {
+        if (processMap != null) {
+            processMap.put(KEY_LAST_ACCESS_TIME, Long.valueOf(System.currentTimeMillis()));
+        }
+    }
+
+    private void cleanupExpiredProcesses() {
+        long now = System.currentTimeMillis();
+        Iterator it = env.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry entry = (Map.Entry) it.next();
+            String processId = (String) entry.getKey();
+            Map processMap = (Map) entry.getValue();
+            Long lastAccess = (Long) processMap.get(KEY_LAST_ACCESS_TIME);
+            if (lastAccess == null) {
+                processMap.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
+                continue;
+            }
+            if (now - lastAccess.longValue() > IDLE_TIMEOUT_MS) {
+                destroyProcess(processId, processMap);
+            }
+        }
     }
 
     private void writeCommand(Map processMap) throws IOException {

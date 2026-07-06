@@ -49,7 +49,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 | **Large Context Window** | Dynamically adapts to model context windows (up to 1M tokens); auto-compresses history to preserve key information |
 | **Task Planning** | AI auto-plans multi-step tasks, executes sequentially with result writeback, tracked in real-time via sticky top bar |
 | **100+ AI Tools** | Atomic capabilities callable by the AI Agent — covering command execution, files, networking, credentials, scanning, HTTP requests, databases, scripting, plugins, and more |
-| **8 Built-in AI Skills** | Pre-configured scenario-based task prompts for launching complete attack chains with one click (see Skills list below) |
+| **Built-in AI Skills** | Pre-configured puppet-node / platform task prompts for launching reconnaissance, credential hunting, privilege escalation, persistence, lateral movement, disguise development, fingerprint development, and exploit suggestion workflows |
 | **Skill Manager** | Visually manage Skills: view/edit content and descriptions, tag categorization, enable/disable, full-text search, import/export — changes take effect immediately without restarting |
 | **Context Accumulation** | Reconnaissance summaries accumulate and compress automatically; AI context grows richer as operations deepen |
 | **Operation Report Generation** | AI automatically generates operation summaries and risk analysis reports |
@@ -71,7 +71,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 ### Operations Console Toolset
 
 #### Interactive & Command Execution
-- **Web Terminal**: Interactive shell with command completion, history, and real-time streaming output
+- **Virtual Terminal**: Multi-session interactive shell based on xterm.js, with real-time streaming output, session search, clear, interrupt, close, and backend process lifecycle cleanup
 - **Background Tasks**: Asynchronous execution of long-running commands, with output polling and task cancellation
 
 #### Files & Storage
@@ -190,16 +190,16 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 
 ### Step 1: Get the JAR
 
-Download the latest release from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
+Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
 ```
-LeoAi-0.0.7-SNAPSHOT.jar
+LeoAi-<version>.jar
 ```
 
 ### Step 2: Launch
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 > The `--add-opens java.base/java.lang=ALL-UNNAMED` flag is **required** — it grants the necessary internal Java module access.
@@ -343,8 +343,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 # For production, change this to a strong random string (16+ characters)
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
-# Pin to a specific JAR version (defaults to v0.0.7)
-# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.7/LeoAi-0.0.7-SNAPSHOT.jar
+# Pin to a specific JAR version; the default is defined in docker-compose.yml / Dockerfile
+# JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/vX.Y.Z/LeoAi-X.Y.Z.jar
 ```
 
 After editing `.env`, run `docker compose up -d` to apply changes. **Note**: changing `JAR_URL` requires `--build` to re-fetch the JAR.
@@ -379,7 +379,7 @@ The default port is `8082`. Override it via a startup argument:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.7-SNAPSHOT.jar --server.port=9090
+  LeoAi-<version>.jar --server.port=9090
 ```
 
 ### Changing the Database Location
@@ -388,7 +388,7 @@ The default database file is `data.db` in the working directory:
 
 ```bash
 java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-0.0.7-SNAPSHOT.jar \
+  LeoAi-<version>.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -409,7 +409,7 @@ LeoAI's AI features require an LLM endpoint. Two configuration methods are avail
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 ### Supported AI Models
@@ -468,7 +468,7 @@ leo.ai.openai.thinking-enabled=false
 
 After entering a node, use the available tool modules:
 
-- **Terminal**: Execute shell commands with real-time streaming output
+- **Virtual Terminal**: Run shell commands in multiple sessions with real-time streaming output; search output, clear screen, interrupt, close sessions, and reclaim backend processes on close/reset
 - **File Manager**: Tree browsing, upload/download, online editing, compress/decompress, file preview
 - **Database**: First add a JDBC connection under "System Config → Database Config", then select it in the console
 - **Port Scanner**: Quick scan / custom port range / export results
@@ -563,7 +563,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 The `--add-opens` flag is mandatory and cannot be omitted:
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-0.0.7-SNAPSHOT.jar
+java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 ```
 
 ---

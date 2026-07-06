@@ -62,7 +62,7 @@
     </dependencies>
 
     <build>
-        <finalName>LeoAi-0.0.7-SNAPSHOT</finalName>
+        <finalName>LeoAi-0.0.8-SNAPSHOT</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

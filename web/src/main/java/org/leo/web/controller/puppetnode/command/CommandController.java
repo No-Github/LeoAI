@@ -2,6 +2,7 @@ package org.leo.web.controller.puppetnode.command;
 
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.TerminalCapable;
+import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.command.CommandExecRequest;
 import org.leo.web.exception.ApiException;
@@ -34,7 +35,9 @@ public class CommandController {
             String processId = requireText(request.processId(), "processId");
             cmd = "write".equals(type) ? requireCommandPayload(request.cmd()) : normalizeCommand(request.cmd());
 
-            TerminalCapable commandNode = ControllerUtil.requireCapability(sessionId, TerminalCapable.class);
+            PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+            TerminalCapable commandNode = ControllerUtil.requireCapability(session, TerminalCapable.class);
+            session.touchLastActiveTime();
             if (commandNode instanceof AbstractPuppetNode node) {
                 auditNode = node;
             }
