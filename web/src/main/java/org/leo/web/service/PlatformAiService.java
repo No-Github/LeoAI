@@ -7,6 +7,7 @@ import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAgent;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -59,6 +60,7 @@ public class PlatformAiService {
     private final AiAgentFactory aiAgentFactory;
     private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider dynamicModelProvider;
+    private final AiModelFailoverService failoverService;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
@@ -67,12 +69,14 @@ public class PlatformAiService {
     public PlatformAiService(AiAgentFactory aiAgentFactory,
                              AiModelConfigService modelConfigService,
                              DynamicModelProvider dynamicModelProvider,
+                             AiModelFailoverService failoverService,
                              AiErrorClassifier aiErrorClassifier,
                              AiAuditLogStore auditLogStore,
                              AiConversationStoreService conversationStore) {
         this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
+        this.failoverService = failoverService;
         this.aiErrorClassifier = aiErrorClassifier;
         this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
@@ -164,7 +168,10 @@ public class PlatformAiService {
             conversationStore.appendMessage(state.getStateId(), "user", userMessage);
             String messageForAgent = withPersistedHistoryContext(state, guardedMessage);
             CachedPlatformAgent agentRuntime = threadAgent(state);
-            runId = conversationStore.startRun(state.getStateId(), state.getAiConfigId(),
+            if (agentRuntime.failoverMessage() != null) {
+                sendRecordedEventSafely(state, emitter, "warn", agentRuntime.failoverMessage());
+            }
+            runId = conversationStore.startRun(state.getStateId(), agentRuntime.effectiveConfigId(),
                     messageForAgent, startMs, agentRuntime.runtimeJson());
             conversationStore.updateRuntime(sessionId, state.getStateId(), state.getLastActiveAt(), state.getRunStatus());
             sendRecordedEvent(state, emitter, "status", PlatformAiState.STATUS_RUNNING);
@@ -229,6 +236,7 @@ public class PlatformAiService {
                     String output = recorder.reply();
                     Object[] turnHolder = { null };
                     try {
+                        failoverService.recordSuccess(agentRuntime.effectiveConfigId());
                         int toolCallCount = countToolCallEvents(eventLog);
                         audit.complete(output, toolCallCount, System.currentTimeMillis() - startMs);
                         finishRun(fRunId, PlatformAiState.STATUS_COMPLETED, startMs, output, null, toolCallCount);
@@ -273,6 +281,7 @@ public class PlatformAiService {
                         AiControllerUtil.safeSendError(emitter, reason);
                     } else {
                         AiErrorClassifier.Classification classification = aiErrorClassifier.classify(error);
+                        failoverService.recordFailure(agentRuntime.effectiveConfigId(), classification);
                         audit.fail(classification.message(), System.currentTimeMillis() - startMs);
                         state.markFailed();
                         finishRun(fRunId, PlatformAiState.STATUS_FAILED, startMs, null, classification.message(), 0);
@@ -317,20 +326,35 @@ public class PlatformAiService {
         List<AiThreadRecord> records = conversationStore.listPlatformThreads(user.getUserId());
         if (records == null) return List.of();
         return records.stream().map(r -> {
+            PlatformAiState runtimeState = PlatformAiStateStore.get(r.getThreadId());
+            long persistedLastActiveAt = r.getLastActiveAt() != null ? r.getLastActiveAt() : 0L;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("threadId", r.getThreadId());
             item.put("title", r.getTitle());
             item.put("createdAt", r.getCreatedAt());
-            item.put("lastActiveAt", r.getLastActiveAt());
+            item.put("lastActiveAt", runtimeState != null
+                    ? Math.max(persistedLastActiveAt, runtimeState.getLastActiveAt())
+                    : r.getLastActiveAt());
             item.put("messageCount", r.getMessageCount() != null ? r.getMessageCount() : 0);
-            item.put("runStatus", r.getRunStatus());
-            item.put("executing", false);
+            item.put("runStatus", runtimeState != null ? runtimeState.getRunStatus() : r.getRunStatus());
+            item.put("executing", runtimeState != null && runtimeState.isExecuting());
+            item.put("mode", runtimeState != null ? runtimeState.getMode() : r.getMode());
             item.put("configId", r.getConfigId());
             item.put("configName", r.getConfigName());
             item.put("configProtocol", r.getConfigProtocol());
             item.put("configModel", r.getConfigModel());
             return item;
         }).collect(Collectors.toList());
+    }
+
+    /** 返回属于指定用户的平台 AI 内存状态，不会创建新状态。 */
+    public PlatformAiState stateForUser(User user, String threadId) {
+        if (user == null || threadId == null || threadId.isBlank()) {
+            return null;
+        }
+        boolean owned = listThreads(user).stream()
+                .anyMatch(item -> threadId.equals(String.valueOf(item.get("threadId"))));
+        return owned ? PlatformAiStateStore.get(threadId) : null;
     }
 
     /**
@@ -433,6 +457,22 @@ public class PlatformAiService {
         data.put("runStatus", state.getRunStatus());
         data.putAll(runtimeSnapshot(state, 0L));
         return data;
+    }
+
+    /**
+     * 返回当前 HTTP Session 激活的平台 AI 状态；尚未创建或状态已释放时返回 {@code null}。
+     *
+     * <p>该只读入口供全局任务中心汇总运行状态使用，不会隐式创建或切换线程。</p>
+     */
+    public PlatformAiState currentState(HttpSession httpSession) {
+        if (httpSession == null) {
+            return null;
+        }
+        Object stateId = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);
+        if (stateId == null) {
+            return null;
+        }
+        return PlatformAiStateStore.get(String.valueOf(stateId));
     }
 
     public Map<String, Object> messages(HttpSession httpSession, Integer requestedOffset, Integer requestedLimit) {
@@ -803,26 +843,32 @@ public class PlatformAiService {
     }
 
     private CachedPlatformAgent threadAgent(PlatformAiState state) {
-        AiModelConfig config = resolveChannel(state != null ? state.getAiConfigId() : null);
-        if (state != null) {
-            state.setAiConfigId(config.getId());
+        AiModelConfig requested = resolveChannel(state != null ? state.getAiConfigId() : null);
+        if (state != null && state.getAiConfigId() == null) {
+            state.setAiConfigId(requested.getId());
         }
+        AiModelFailoverService.ModelSelection selection = failoverService.selectForExecution(requested);
+        AiModelConfig config = selection.effectiveConfig();
         String stateId = state != null ? state.getStateId() : "";
-        String cacheKey = dynamicModelProvider.plannedRuntimeCacheKey(config);
+        String cacheKey = requested.getId() + "->" + config.getId() + ":"
+                + dynamicModelProvider.plannedRuntimeCacheKey(config);
         CachedPlatformAgent cached = platformAgents.get(stateId);
         if (cached != null && cacheKey.equals(cached.cacheKey())) {
             return cached;
         }
         DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
         PlatformAgent agent = aiAgentFactory.createPlatformAgent(
-                runtime.streamingModel(), runtime.supportsFunctionCalling());
+                runtime.streamingModel(), runtime.supportsFunctionCalling(),
+                modelConfigService.getContextWindowTokens(config));
         CachedPlatformAgent created = new CachedPlatformAgent(cacheKey, agent,
-                DynamicModelProvider.runtimeSnapshotJson(config, runtime));
+                DynamicModelProvider.runtimeSnapshotJson(config, runtime), config.getId(),
+                selection.failover() ? selection.message() : null);
         platformAgents.put(stateId, created);
         return created;
     }
 
-    private record CachedPlatformAgent(String cacheKey, PlatformAgent agent, String runtimeJson) {}
+    private record CachedPlatformAgent(String cacheKey, PlatformAgent agent, String runtimeJson,
+                                       Integer effectiveConfigId, String failoverMessage) {}
 
     private PlatformAiState recreateState(HttpSession httpSession) {
         Object existing = httpSession.getAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID);

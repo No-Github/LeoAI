@@ -76,7 +76,8 @@ public class AiProviderController {
         m.put("baseUrl", p.getBaseUrl());
         m.put("protocol", p.getProtocol());
         m.put("completionsPath", p.getCompletionsPath());
-        m.put("headersJson", p.getHeadersJson());
+        String headers = p.getHeadersJson();
+        m.put("headersConfigured", headers != null && !headers.isBlank());
         m.put("enabled", p.getEnabled());
         m.put("createTime", p.getCreateTime());
         m.put("updateTime", p.getUpdateTime());

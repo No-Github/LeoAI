@@ -41,7 +41,7 @@ INSERT OR REPLACE INTO users (
 ) VALUES (
     'admin',
     'admin',
-    '052fb3c5d2d357ba01d068ff0303a076', -- MD5加密的密码
+    '052fb3c5d2d357ba01d068ff0303a076', -- 仅用于首次引导；ApplicationReady 时自动升级为 PBKDF2
     'admin',
     'admin@leospring.com',
     '',
@@ -73,4 +73,5 @@ INSERT OR REPLACE INTO system_configs (
 ('max.file.upload.size.mb', '100', 'number', '最大文件上传大小(MB)', datetime('now'), datetime('now')),
 ('max.concurrent.sessions', '10', 'number', '最大并发会话数', datetime('now'), datetime('now')),
 ('security.password.min.length', '6', 'number', '密码最小长度', datetime('now'), datetime('now')),
-('security.login.max.attempts', '5', 'number', '最大登录尝试次数', datetime('now'), datetime('now'));
+('security.login.max.attempts', '5', 'number', '最大登录尝试次数', datetime('now'), datetime('now')),
+('security.login.lock.seconds', '300', 'number', '登录失败锁定时长(秒)', datetime('now'), datetime('now'));

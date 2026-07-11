@@ -6,6 +6,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
+import org.leo.web.security.RoleAwareAdminEndpoint;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -28,6 +29,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/platform/admin")
+@RoleAwareAdminEndpoint
 public class UserController {
 
     private static final String SESSION_USER = "user";
@@ -120,7 +122,7 @@ public class UserController {
 
         user.setUserId(UUID.randomUUID().toString());
         user.setPrivilege(targetPrivilege);
-        user.setPassword(PasswordUtil.md5(user.getPassword()));
+        user.setPassword(PasswordUtil.hash(user.getPassword()));
         user.setStatus(normalizeStatus(user.getStatus(), 1));
         user.setLoginCount(0);
 
@@ -133,7 +135,7 @@ public class UserController {
     /**
      * 更新用户信息。
      * admin 可更新任意非 admin 用户；leader 只能更新自己团队内的 normal 用户。
-     * id 必填；password 不为空时自动 MD5 后存储。
+     * id 必填；password 不为空时使用带盐 PBKDF2 存储。
      */
     @RequestMapping(value = "/users/update", method = RequestMethod.POST)
     public HashMap<String, Object> updateUser(HttpServletRequest request,
@@ -175,7 +177,7 @@ public class UserController {
 
         String newPwd = getString(params, "password");
         if (newPwd != null && !newPwd.isEmpty()) {
-            target.setPassword(PasswordUtil.md5(newPwd));
+            target.setPassword(PasswordUtil.hash(newPwd));
         }
 
         String newPrivilege = getString(params, "privilege");
@@ -250,7 +252,7 @@ public class UserController {
             return ApiResponse.forbidden("无权重置密码");
         }
 
-        target.setPassword(PasswordUtil.md5(newPassword));
+        target.setPassword(PasswordUtil.hash(newPassword));
         boolean ok = userService.updateUser(target);
         return ok ? ApiResponse.success() : ApiResponse.error("重置失败");
     }

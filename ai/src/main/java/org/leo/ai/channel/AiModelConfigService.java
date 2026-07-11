@@ -12,8 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * AI 模型配置服务（ccswitch 风格的单表 CRUD）。
@@ -28,14 +31,17 @@ public class AiModelConfigService {
     private final AiModelConfigMapper mapper;
     private final AiProviderMapper providerMapper;
     private final AiModelCapabilityMapper capabilityMapper;
+    private final AiSecretCryptoService secretCryptoService;
     private volatile DynamicModelProvider dynamicModelProvider;
 
     public AiModelConfigService(AiModelConfigMapper mapper,
                                 AiProviderMapper providerMapper,
-                                AiModelCapabilityMapper capabilityMapper) {
+                                AiModelCapabilityMapper capabilityMapper,
+                                AiSecretCryptoService secretCryptoService) {
         this.mapper = mapper;
         this.providerMapper = providerMapper;
         this.capabilityMapper = capabilityMapper;
+        this.secretCryptoService = secretCryptoService;
     }
 
     /** 由 DynamicModelProvider 在初始化后回调注入，避免循环依赖。 */
@@ -44,15 +50,15 @@ public class AiModelConfigService {
     }
 
     public List<AiModelConfig> listAll() {
-        return mapper.listAll();
+        return decryptModels(mapper.listAll());
     }
 
     public List<AiModelConfig> listEnabled() {
-        return mapper.listEnabled();
+        return decryptModels(mapper.listEnabled());
     }
 
     public List<AiProvider> listProviders() {
-        return providerMapper.listAll();
+        return decryptProviders(providerMapper.listAll());
     }
 
     public List<AiModelCapability> listModelCapabilities() {
@@ -100,7 +106,7 @@ public class AiModelConfigService {
     }
 
     public AiProvider findProviderById(Integer id) {
-        return id == null ? null : providerMapper.findById(id);
+        return id == null ? null : decryptProvider(providerMapper.findById(id));
     }
 
     public AiProvider createProvider(AiProvider row) {
@@ -109,8 +115,8 @@ public class AiModelConfigService {
         String now = nowSqlite();
         row.setCreateTime(now);
         row.setUpdateTime(now);
-        providerMapper.insert(row);
-        return providerMapper.findById(row.getId());
+        withEncryptedProviderSecrets(row, () -> providerMapper.insert(row));
+        return findProviderById(row.getId());
     }
 
     @Transactional
@@ -147,7 +153,7 @@ public class AiModelConfigService {
         if (defaultIndex >= 0) {
             notifyModelRefresh();
         }
-        return providerMapper.findById(saved.getId());
+        return findProviderById(saved.getId());
     }
 
     public AiProvider updateProvider(Integer id, AiProvider patch) {
@@ -156,19 +162,20 @@ public class AiModelConfigService {
         validateProvider(patch, false);
         normalizeProvider(patch, existing);
         existing.setUpdateTime(nowSqlite());
-        providerMapper.update(existing);
+        withEncryptedProviderSecrets(existing, () -> providerMapper.update(existing));
         syncProviderSnapshot(existing);
         if (!Integer.valueOf(1).equals(existing.getEnabled())) {
             mapper.disableByProviderId(existing.getId(), nowSqlite());
         }
         notifyModelRefresh();
-        return providerMapper.findById(id);
+        return findProviderById(id);
     }
 
     @Transactional
     public boolean deleteProvider(Integer id) {
         AiProvider existing = findProviderById(id);
         if (existing == null) return false;
+        mapper.clearFallbackByProviderId(id);
         mapper.deleteByProviderId(id);
         providerMapper.deleteById(id);
         notifyModelRefresh();
@@ -176,11 +183,11 @@ public class AiModelConfigService {
     }
 
     public AiModelConfig findById(Integer id) {
-        return id == null ? null : mapper.findById(id);
+        return id == null ? null : decryptModel(mapper.findById(id));
     }
 
     public AiModelConfig getActive() {
-        return mapper.findActive();
+        return decryptModel(mapper.findActive());
     }
 
     public AiModelConfig create(AiModelConfig row) {
@@ -227,6 +234,52 @@ public class AiModelConfigService {
         return capabilityMapper.findByModelName(existing.getModelName());
     }
 
+    /**
+     * 将真实探测中有明确证据的结果写入能力库。null 表示探测不确定，保留原值；
+     * 这样网络、鉴权或服务端偶发异常不会误伤模型能力配置。
+     */
+    @Transactional
+    public AiModelCapability applyProbeResult(AiModelConfig config, Map<String, Boolean> verifiedFeatures) {
+        if (config == null) throw new IllegalArgumentException("模型配置不能为空");
+        String modelName = capabilityModelName(config);
+        if (modelName.isBlank()) throw new IllegalArgumentException("模型名称不能为空");
+
+        AiModelCapability row = capabilityMapper.findByModelName(modelName);
+        boolean creating = row == null;
+        if (creating) {
+            row = new AiModelCapability();
+            row.setModelName(modelName);
+            row.setSource("probe");
+            row.setContextWindowTokens(config.getContextWindowTokens() != null && config.getContextWindowTokens() > 0
+                    ? config.getContextWindowTokens() : 32_768);
+            row.setMaxOutputTokens(config.getMaxOutputTokens() != null && config.getMaxOutputTokens() > 0
+                    ? config.getMaxOutputTokens() : 4_096);
+            // 未探测项沿用当前保守默认，避免一次探针失败让模型不可用。
+            row.setSupportsTextGeneration(1);
+            row.setSupportsReasoning(0);
+            row.setSupportsStreaming(1);
+            row.setSupportsFunctionCalling(0);
+            row.setSupportsStructuredOutput(0);
+            row.setSupportsWebSearch(0);
+            row.setSupportsParallelToolCalls(0);
+            row.setCreateTime(nowSqlite());
+        }
+        applyProbeFlag(verifiedFeatures, "textGeneration", row::setSupportsTextGeneration);
+        applyProbeFlag(verifiedFeatures, "reasoning", row::setSupportsReasoning);
+        applyProbeFlag(verifiedFeatures, "streaming", row::setSupportsStreaming);
+        applyProbeFlag(verifiedFeatures, "functionCalling", row::setSupportsFunctionCalling);
+        applyProbeFlag(verifiedFeatures, "structuredOutput", row::setSupportsStructuredOutput);
+        row.setSource("probe");
+        row.setUpdateTime(nowSqlite());
+        if (creating) {
+            capabilityMapper.insert(row);
+        } else {
+            capabilityMapper.update(row);
+        }
+        notifyModelRefresh();
+        return capabilityMapper.findByModelName(modelName);
+    }
+
     public boolean deleteCapability(String modelName) {
         String normalizedName = normalizeCapabilityKey(modelName);
         if (normalizedName == null || normalizedName.isBlank()) return false;
@@ -239,6 +292,7 @@ public class AiModelConfigService {
         validateRequired(row);
         normalize(row);
         applyProvider(row);
+        validateFallback(row, null);
         String now = nowSqlite();
         row.setCreateTime(now);
         row.setUpdateTime(now);
@@ -256,11 +310,11 @@ public class AiModelConfigService {
             assertUsable(row);
             mapper.clearActive();
         }
-        mapper.insert(row);
+        withEncryptedModelSecrets(row, () -> mapper.insert(row));
         if (notify && Integer.valueOf(1).equals(row.getIsActive())) {
             notifyModelRefresh();
         }
-        return mapper.findById(row.getId());
+        return findById(row.getId());
     }
 
     public AiModelConfig update(Integer id, AiModelConfig patch) {
@@ -297,6 +351,7 @@ public class AiModelConfigService {
         if (patch.getEnabled() != null) {
             existing.setEnabled(Integer.valueOf(1).equals(patch.getEnabled()) ? 1 : 0);
         }
+        existing.setFallbackModelId(patch.getFallbackModelId());
         if (patch.getRemark() != null) existing.setRemark(patch.getRemark());
         boolean activating = patch.getIsActive() != null && Integer.valueOf(1).equals(patch.getIsActive());
         if (patch.getIsActive() != null) {
@@ -312,6 +367,7 @@ public class AiModelConfigService {
         existing.setUpdateTime(nowSqlite());
         normalize(existing);
         applyProvider(existing);
+        validateFallback(existing, id);
         if (activating && !Integer.valueOf(1).equals(existing.getIsActive())) {
             throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
         }
@@ -321,17 +377,18 @@ public class AiModelConfigService {
         if (activating) {
             mapper.clearActive();
         }
-        mapper.update(existing);
+        withEncryptedModelSecrets(existing, () -> mapper.update(existing));
         boolean isActiveNow = Integer.valueOf(1).equals(existing.getIsActive());
         if (wasActive || isActiveNow) {
             notifyModelRefresh();
         }
-        return mapper.findById(id);
+        return findById(id);
     }
 
     public boolean deleteById(Integer id) {
         AiModelConfig row = findById(id);
         if (row == null) return false;
+        mapper.clearFallbackByModelId(id);
         mapper.deleteById(id);
         return true;
     }
@@ -342,7 +399,7 @@ public class AiModelConfigService {
         assertUsable(row);
         mapper.clearActive();
         mapper.setActiveById(id, nowSqlite());
-        AiModelConfig activated = mapper.findById(id);
+        AiModelConfig activated = findById(id);
         notifyModelRefresh();
         return activated;
     }
@@ -350,8 +407,8 @@ public class AiModelConfigService {
     /** 解析"要使用的模型"。requested 可为空，空则取激活记录。 */
     public AiModelConfig resolve(Integer requestedId) {
         if (requestedId != null) {
-            AiModelConfig found = mapper.findById(requestedId);
-            if (found != null && Integer.valueOf(1).equals(found.getEnabled())) return found;
+            AiModelConfig found = findById(requestedId);
+            return found != null && Integer.valueOf(1).equals(found.getEnabled()) ? found : null;
         }
         return getActive();
     }
@@ -374,8 +431,14 @@ public class AiModelConfigService {
         if (active == null) {
             return 32_768;
         }
-        ProviderCapabilities capabilities = capabilitiesForModel(active);
-        Integer custom = active.getContextWindowTokens();
+        return getContextWindowTokens(active);
+    }
+
+    /** 返回指定模型的实际上下文硬上限，线程级选模必须使用该方法。 */
+    public int getContextWindowTokens(AiModelConfig config) {
+        if (config == null) return 32_768;
+        ProviderCapabilities capabilities = capabilitiesForModel(config);
+        Integer custom = config.getContextWindowTokens();
         if (custom != null && custom > 0) {
             return Math.min(custom, capabilities.contextWindowTokens());
         }
@@ -392,6 +455,13 @@ public class AiModelConfigService {
 
     private static int nonNegativeOrDefault(Integer value, int fallback) {
         return value != null && value >= 0 ? value : fallback;
+    }
+
+    private static void applyProbeFlag(Map<String, Boolean> values, String key,
+                                       java.util.function.Consumer<Integer> setter) {
+        if (values == null) return;
+        Boolean value = values.get(key);
+        if (value != null) setter.accept(value ? 1 : 0);
     }
 
     // ── 内部工具 ──────────────────────────────────────────────────────────
@@ -437,7 +507,7 @@ public class AiModelConfigService {
 
     private void applyProvider(AiModelConfig row) {
         if (row.getProviderId() == null) return;
-        AiProvider provider = providerMapper.findById(row.getProviderId());
+        AiProvider provider = findProviderById(row.getProviderId());
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
         }
@@ -469,12 +539,46 @@ public class AiModelConfigService {
             throw new IllegalArgumentException("模型最大输出长度为 0，不能用于当前聊天通道");
         }
         if (row.getProviderId() == null) return;
-        AiProvider provider = providerMapper.findById(row.getProviderId());
+        AiProvider provider = findProviderById(row.getProviderId());
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
         }
         if (!Integer.valueOf(1).equals(provider.getEnabled())) {
             throw new IllegalArgumentException("供应商已禁用，不能设为默认模型");
+        }
+    }
+
+    /**
+     * 备用模型只允许指向已启用、可用于当前流式对话的模型；同时拒绝配置环路。
+     * 这样运行时的熔断选择始终是确定且安全的。
+     */
+    private void validateFallback(AiModelConfig row, Integer currentId) {
+        Integer fallbackId = row.getFallbackModelId();
+        if (fallbackId == null) return;
+        if (currentId != null && currentId.equals(fallbackId)) {
+            throw new IllegalArgumentException("备用模型不能指向自身");
+        }
+        AiModelConfig fallback = findById(fallbackId);
+        if (fallback == null || !Integer.valueOf(1).equals(fallback.getEnabled())) {
+            throw new IllegalArgumentException("备用模型不存在或未启用，fallbackModelId: " + fallbackId);
+        }
+        ProviderCapabilities capabilities = capabilitiesForModel(fallback);
+        if (!capabilities.supportsTextGeneration() || !capabilities.supportsStreaming()) {
+            throw new IllegalArgumentException("备用模型必须支持文本生成和流式输出");
+        }
+
+        Set<Integer> visited = new HashSet<>();
+        if (currentId != null) visited.add(currentId);
+        AiModelConfig cursor = fallback;
+        while (cursor != null) {
+            Integer cursorId = cursor.getId();
+            if (cursorId != null && !visited.add(cursorId)) {
+                throw new IllegalArgumentException("备用模型链不能形成循环");
+            }
+            Integer nextId = cursor.getFallbackModelId();
+            if (nextId == null) break;
+            cursor = findById(nextId);
+            if (cursor == null) break;
         }
     }
 
@@ -489,7 +593,132 @@ public class AiModelConfigService {
         snapshot.setCompletionsPath(provider.getCompletionsPath());
         snapshot.setHeadersJson(provider.getHeadersJson());
         snapshot.setUpdateTime(nowSqlite());
-        mapper.updateProviderSnapshot(snapshot);
+        withEncryptedModelSecrets(snapshot, () -> mapper.updateProviderSnapshot(snapshot));
+    }
+
+    /**
+     * 启动阶段迁移历史明文；已加密记录也会尝试解密一次，用于尽早发现主密钥不匹配。
+     */
+    @Transactional
+    public int migrateSecretsAtRest() {
+        int migrated = 0;
+        List<AiProvider> providers = providerMapper.listAll();
+        if (providers != null) {
+            for (AiProvider provider : providers) {
+                if (migrateProviderSecrets(provider)) {
+                    providerMapper.update(provider);
+                    migrated++;
+                }
+            }
+        }
+        List<AiModelConfig> models = mapper.listAll();
+        if (models != null) {
+            for (AiModelConfig model : models) {
+                if (migrateModelSecrets(model)) {
+                    mapper.update(model);
+                    migrated++;
+                }
+            }
+        }
+        return migrated;
+    }
+
+    private boolean migrateProviderSecrets(AiProvider row) {
+        boolean changed = false;
+        if (hasText(row.getApiKey())) {
+            if (secretCryptoService.isEncrypted(row.getApiKey())) {
+                secretCryptoService.decrypt(row.getApiKey());
+            } else {
+                row.setApiKey(secretCryptoService.encrypt(row.getApiKey()));
+                changed = true;
+            }
+        }
+        if (hasText(row.getHeadersJson())) {
+            if (secretCryptoService.isEncrypted(row.getHeadersJson())) {
+                secretCryptoService.decrypt(row.getHeadersJson());
+            } else {
+                row.setHeadersJson(secretCryptoService.encrypt(row.getHeadersJson()));
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private boolean migrateModelSecrets(AiModelConfig row) {
+        boolean changed = false;
+        if (hasText(row.getApiKey())) {
+            if (secretCryptoService.isEncrypted(row.getApiKey())) {
+                secretCryptoService.decrypt(row.getApiKey());
+            } else {
+                row.setApiKey(secretCryptoService.encrypt(row.getApiKey()));
+                changed = true;
+            }
+        }
+        if (hasText(row.getHeadersJson())) {
+            if (secretCryptoService.isEncrypted(row.getHeadersJson())) {
+                secretCryptoService.decrypt(row.getHeadersJson());
+            } else {
+                row.setHeadersJson(secretCryptoService.encrypt(row.getHeadersJson()));
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private List<AiProvider> decryptProviders(List<AiProvider> rows) {
+        if (rows == null) return List.of();
+        rows.forEach(this::decryptProvider);
+        return rows;
+    }
+
+    private List<AiModelConfig> decryptModels(List<AiModelConfig> rows) {
+        if (rows == null) return List.of();
+        rows.forEach(this::decryptModel);
+        return rows;
+    }
+
+    private AiProvider decryptProvider(AiProvider row) {
+        if (row == null) return null;
+        row.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
+        row.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
+        return row;
+    }
+
+    private AiModelConfig decryptModel(AiModelConfig row) {
+        if (row == null) return null;
+        row.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
+        row.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
+        return row;
+    }
+
+    private void withEncryptedProviderSecrets(AiProvider row, Runnable writer) {
+        String apiKey = row.getApiKey();
+        String headersJson = row.getHeadersJson();
+        row.setApiKey(secretCryptoService.encrypt(apiKey));
+        row.setHeadersJson(secretCryptoService.encrypt(headersJson));
+        try {
+            writer.run();
+        } finally {
+            row.setApiKey(apiKey);
+            row.setHeadersJson(headersJson);
+        }
+    }
+
+    private void withEncryptedModelSecrets(AiModelConfig row, Runnable writer) {
+        String apiKey = row.getApiKey();
+        String headersJson = row.getHeadersJson();
+        row.setApiKey(secretCryptoService.encrypt(apiKey));
+        row.setHeadersJson(secretCryptoService.encrypt(headersJson));
+        try {
+            writer.run();
+        } finally {
+            row.setApiKey(apiKey);
+            row.setHeadersJson(headersJson);
+        }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private void validateProvider(AiProvider row, boolean creating) {

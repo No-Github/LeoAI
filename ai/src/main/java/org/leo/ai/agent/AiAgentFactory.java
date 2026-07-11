@@ -46,6 +46,7 @@ import java.util.concurrent.ExecutorService;
 public class AiAgentFactory {
 
     private final ChatMemoryProvider memoryProvider;
+    private final AiChatMemoryProviderFactory memoryProviderFactory;
     private final PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider;
     private final PlatformSystemPromptProvider platformSystemPromptProvider;
     private final CommandTools commandTools;
@@ -78,6 +79,7 @@ public class AiAgentFactory {
     private final ExecutorService aiToolExecutor;
 
     public AiAgentFactory(ChatMemoryProvider memoryProvider,
+                          AiChatMemoryProviderFactory memoryProviderFactory,
                           PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider,
                           PlatformSystemPromptProvider platformSystemPromptProvider,
                           CommandTools commandTools,
@@ -109,6 +111,7 @@ public class AiAgentFactory {
                           @Qualifier("platformSkillActivationTools") SkillActivationTools platformSkillActivationTools,
                           ExecutorService aiToolExecutor) {
         this.memoryProvider = memoryProvider;
+        this.memoryProviderFactory = memoryProviderFactory;
         this.puppetNodeSystemPromptProvider = puppetNodeSystemPromptProvider;
         this.platformSystemPromptProvider = platformSystemPromptProvider;
         this.commandTools = commandTools;
@@ -148,10 +151,25 @@ public class AiAgentFactory {
     public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
                                                  ChatModel chatModel,
                                                  boolean enableTools) {
+        return createPuppetNodeAgent(streamingModel, chatModel, enableTools, memoryProvider);
+    }
+
+    public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
+                                                 ChatModel chatModel,
+                                                 boolean enableTools,
+                                                 int modelContextWindowTokens) {
+        return createPuppetNodeAgent(streamingModel, chatModel, enableTools,
+                memoryProviderFactory.createPuppetProvider(modelContextWindowTokens));
+    }
+
+    private PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
+                                                  ChatModel chatModel,
+                                                  boolean enableTools,
+                                                  ChatMemoryProvider selectedMemoryProvider) {
         var builder = AiServices.builder(PuppetNodeAgent.class)
                 .streamingChatModel(streamingModel)
                 .chatModel(chatModel)
-                .chatMemoryProvider(memoryProvider)
+                .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(aiToolExecutor)
                 .beforeToolExecution(execution -> {
@@ -185,9 +203,22 @@ public class AiAgentFactory {
     }
 
     public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel, boolean enableTools) {
+        return createPlatformAgent(streamingModel, enableTools, memoryProvider);
+    }
+
+    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
+                                             boolean enableTools,
+                                             int modelContextWindowTokens) {
+        return createPlatformAgent(streamingModel, enableTools,
+                memoryProviderFactory.createPlatformProvider(modelContextWindowTokens));
+    }
+
+    private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
+                                              boolean enableTools,
+                                              ChatMemoryProvider selectedMemoryProvider) {
         var builder = AiServices.builder(PlatformAgent.class)
                 .streamingChatModel(streamingModel)
-                .chatMemoryProvider(memoryProvider)
+                .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(platformSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(aiToolExecutor);
         if (enableTools) {

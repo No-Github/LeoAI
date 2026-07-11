@@ -5,7 +5,9 @@ import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
+import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
+import org.leo.core.entity.ProviderCapabilities;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.platform.ai.PlatformAiDtos;
@@ -60,11 +62,53 @@ public class PlatformAiController {
      */
     @GetMapping("/availability")
     public Map<String, Object> availability() {
-        int enabledCount = aiModelConfigService.listEnabled().size();
+        int enabledCount = availableModelCatalog().size();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("available", enabledCount > 0);
         data.put("enabledCount", enabledCount);
         return ApiResponse.success(data);
+    }
+
+    /**
+     * 普通用户可读取的脱敏模型目录，不返回 API Key、Base URL 或自定义 Headers。
+     */
+    @GetMapping("/models")
+    public Map<String, Object> models() {
+        return ApiResponse.success(availableModelCatalog());
+    }
+
+    private List<Map<String, Object>> availableModelCatalog() {
+        return aiModelConfigService.listEnabled().stream()
+                .filter(config -> {
+                    ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
+                    return capabilities.supportsTextGeneration()
+                            && capabilities.supportsStreaming()
+                            && capabilities.maxOutputTokens() > 0;
+                })
+                .map(this::toCatalogItem)
+                .toList();
+    }
+
+    private Map<String, Object> toCatalogItem(AiModelConfig config) {
+        ProviderCapabilities capabilities = aiModelConfigService.capabilitiesForModel(config);
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", config.getId());
+        item.put("name", config.getName());
+        item.put("providerKey", config.getProviderKey());
+        item.put("providerName", config.getProviderName());
+        item.put("model", config.getModel());
+        item.put("protocol", config.getProtocol());
+        item.put("isActive", config.getIsActive());
+        item.put("isDefault", config.getIsActive());
+        item.put("enabled", config.getEnabled());
+        item.put("contextWindowTokens", aiModelConfigService.getContextWindowTokens(config));
+        item.put("maxOutputTokens", config.getMaxOutputTokens() != null
+                ? Math.min(config.getMaxOutputTokens(), capabilities.maxOutputTokens())
+                : capabilities.maxOutputTokens());
+        item.put("supportsReasoning", capabilities.supportsReasoning());
+        item.put("supportsFunctionCalling", capabilities.supportsFunctionCalling());
+        item.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
+        return item;
     }
 
     /**

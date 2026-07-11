@@ -3,6 +3,7 @@ package org.leo.core.init;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 @Component
+@Order(0)
 public class DatabaseInitializer implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
@@ -68,6 +70,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         ensureAiProviderColumns();
         backfillAiProtocolColumns();
         normalizeAiModelConfigOptionalDefaults();
+        ensureAiModelConfigIndexes();
     }
 
     private void addColumnIfMissing(String table, String column, String typeDecl) {
@@ -97,11 +100,28 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
+    private void ensureAiModelConfigIndexes() {
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_ai_model_configs_provider_id "
+                + "ON ai_model_configs(provider_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_ai_model_configs_fallback_model_id "
+                + "ON ai_model_configs(fallback_model_id)");
+    }
+
+    private void executeMigrationSql(String sql) {
+        try (Connection conn = dataSource.getConnection();
+             Statement st = conn.createStatement()) {
+            st.execute(sql);
+        } catch (SQLException e) {
+            log.warn("迁移 SQL 执行失败: {} - {}", sql, e.getMessage());
+        }
+    }
+
     private void ensureAiModelConfigColumns() {
         addColumnIfMissing("ai_model_configs", "provider_id", "INTEGER");
         addColumnIfMissing("ai_model_configs", "provider_key", "VARCHAR(64) NOT NULL DEFAULT 'custom'");
         addColumnIfMissing("ai_model_configs", "provider_name", "VARCHAR(100)");
         addColumnIfMissing("ai_model_configs", "enabled", "INTEGER NOT NULL DEFAULT 1");
+        addColumnIfMissing("ai_model_configs", "fallback_model_id", "INTEGER");
         addColumnIfMissing("ai_model_configs", "protocol", "VARCHAR(32) NOT NULL DEFAULT 'chat_completions'");
         addColumnIfMissing("ai_model_configs", "reasoning_effort", "VARCHAR(16)");
         addColumnIfMissing("ai_model_configs", "temperature", "REAL");

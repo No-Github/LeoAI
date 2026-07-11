@@ -29,6 +29,7 @@ import java.util.stream.Stream;
  * <p>目录结构：
  * <pre>
  * root/users/{userId}/
+ * ├── workspace/                   ← 用户个人工作区，可由文件模块读写
  * ├── puppets/{puppetId}/          ← puppet 级，跨 session 共享
  * │   ├── basic-info.json          ← OS/硬件/中间件快照（last-write-wins）
  * │   ├── catalina-info.json       ← Tomcat 容器信息快照（last-write-wins）
@@ -46,6 +47,7 @@ public final class PuppetNodeSessionWorkDirUtil {
     private static final String SESSIONS_SUBDIR    = "sessions";
     private static final String PUPPETS_SUBDIR     = "puppets";
     private static final String USERS_SUBDIR       = "users";
+    private static final String WORKSPACE_SUBDIR   = "workspace";
     private static final String FILE_SUBDIR        = "file";
     private static final String AI_THREADS_SUBDIR  = "ai-threads";
     private static final String AI_THREAD_CHECKPOINTS_SUBDIR = "checkpoints";
@@ -67,6 +69,24 @@ public final class PuppetNodeSessionWorkDirUtil {
             vfsPath = "root";
         }
         return new File(vfsPath);
+    }
+
+    /**
+     * 获取用户个人工作区：root/users/{userId}/workspace。
+     *
+     * <p>该目录与 sessions、puppets 等系统运行目录隔离，供用户文件模块读写。
+     * 若不存在则创建。
+     */
+    public static File getUserWorkspaceDir(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("userId 不能为空");
+        }
+        File userDir = new File(new File(getRootDir(), USERS_SUBDIR), userId.trim());
+        File workspaceDir = new File(userDir, WORKSPACE_SUBDIR);
+        if (!workspaceDir.exists()) {
+            workspaceDir.mkdirs();
+        }
+        return workspaceDir;
     }
 
     // ── session 级目录 ────────────────────────────────────────────────────────

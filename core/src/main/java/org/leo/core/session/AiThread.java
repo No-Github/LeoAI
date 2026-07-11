@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AiThread {
 
     private static final int MAX_TURNS_WARN = 25;
-    private static final int MAX_RECENT_EVENTS = 500;
+    /** 为页面刷新和较长时间网络中断保留足够的可重放事件。 */
+    private static final int MAX_RECENT_EVENTS = 2000;
 
     public static final String STATUS_IDLE = "idle";
     public static final String STATUS_RUNNING = "running";

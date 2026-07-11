@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>初始化内容：
  * <ol>
- *   <li>内置 admin 用户（用户名: admin，默认密码: 54ikun，以 MD5 存储）。</li>
+ *   <li>内置 admin 用户（用户名: admin，默认密码: 54ikun，以 PBKDF2 存储）。</li>
  *   <li>内置 system-admin 团队，admin 为队长。</li>
  * </ol>
  *
@@ -31,7 +31,7 @@ public class DataInitializer {
 
     private static final String ADMIN_USER_ID   = "admin";
     private static final String ADMIN_USER_NAME = "admin";
-    private static final String ADMIN_PASSWORD  = "54ikun";   // 明文，存储时自动 MD5
+    private static final String ADMIN_PASSWORD  = "54ikun";   // 明文，存储时自动 PBKDF2
     private static final String ADMIN_TEAM_ID   = TeamService.ADMIN_TEAM_ID;
     private static final String ADMIN_TEAM_NAME = TeamService.ADMIN_TEAM_NAME;
     private static final String LEGACY_ADMIN_TEAM_ID = "admin-team";
@@ -64,7 +64,7 @@ public class DataInitializer {
         User admin = new User();
         admin.setUserId(ADMIN_USER_ID);
         admin.setUserName(ADMIN_USER_NAME);
-        admin.setPassword(PasswordUtil.md5(ADMIN_PASSWORD));
+        admin.setPassword(PasswordUtil.hash(ADMIN_PASSWORD));
         admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
         admin.setTeamId(ADMIN_TEAM_ID);
         admin.setStatus(1);
@@ -120,6 +120,13 @@ public class DataInitializer {
         }
         if (!ADMIN_TEAM_ID.equals(admin.getTeamId())) {
             admin.setTeamId(ADMIN_TEAM_ID);
+            changed = true;
+        }
+        // data.sql and older installations contain the known legacy MD5 of the
+        // initial password. Upgrade that deterministic value immediately.
+        if (PasswordUtil.needsRehash(admin.getPassword())
+                && PasswordUtil.verify(ADMIN_PASSWORD, admin.getPassword())) {
+            admin.setPassword(PasswordUtil.hash(ADMIN_PASSWORD));
             changed = true;
         }
         if (changed) {

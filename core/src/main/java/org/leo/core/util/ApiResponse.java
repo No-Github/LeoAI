@@ -17,6 +17,8 @@ public class ApiResponse {
     public static final int CODE_UNAUTHORIZED = 401;
     public static final int CODE_FORBIDDEN = 403;
     public static final int CODE_NOT_FOUND = 404;
+    public static final int CODE_CONFLICT = 409;
+    public static final int CODE_TOO_MANY_REQUESTS = 429;
     public static final int CODE_ERROR = 500;
     
     // 响应字段常量
@@ -101,5 +103,15 @@ public class ApiResponse {
     public static HashMap<String, Object> notFound(String message) {
         return error(CODE_NOT_FOUND, message);
     }
-}
 
+    /**
+     * 创建409冲突错误响应。
+     */
+    public static HashMap<String, Object> conflict(String message) {
+        return error(CODE_CONFLICT, message);
+    }
+
+    public static HashMap<String, Object> tooManyRequests(String message) {
+        return error(CODE_TOO_MANY_REQUESTS, message);
+    }
+}

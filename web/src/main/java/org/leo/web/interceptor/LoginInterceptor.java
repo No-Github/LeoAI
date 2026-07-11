@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.web.security.PermissionPolicy;
+import org.leo.web.security.RoleAwareAdminEndpoint;
 import org.leo.core.util.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,11 +41,12 @@ public class LoginInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        boolean aiModelWrite = request.getRequestURI().startsWith(request.getContextPath() + "/platform/admin/ai-models")
-                && !"GET".equalsIgnoreCase(request.getMethod());
-        boolean aiProviderWrite = request.getRequestURI().startsWith(request.getContextPath() + "/platform/admin/ai-providers")
-                && !"GET".equalsIgnoreCase(request.getMethod());
-        if (aiModelWrite || aiProviderWrite) {
+        boolean adminNamespace = request.getRequestURI()
+                .startsWith(request.getContextPath() + "/platform/admin/");
+        boolean roleAwareEndpoint = !adminNamespace
+                || handlerMethod.hasMethodAnnotation(RoleAwareAdminEndpoint.class)
+                || handlerMethod.getBeanType().isAnnotationPresent(RoleAwareAdminEndpoint.class);
+        if (adminNamespace && !roleAwareEndpoint) {
             if (!PermissionPolicy.isAdmin(user)) {
                 writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("管理员权限不足"));
                 return false;

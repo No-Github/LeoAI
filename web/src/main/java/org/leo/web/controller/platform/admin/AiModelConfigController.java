@@ -7,6 +7,8 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelCapabilityProbeService;
+import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
@@ -44,13 +46,19 @@ public class AiModelConfigController {
     private final AiModelConfigService configService;
     private final DynamicModelProvider dynamicModelProvider;
     private final AiErrorClassifier aiErrorClassifier;
+    private final AiModelFailoverService failoverService;
+    private final AiModelCapabilityProbeService capabilityProbeService;
 
     public AiModelConfigController(AiModelConfigService configService,
                                    DynamicModelProvider dynamicModelProvider,
-                                   AiErrorClassifier aiErrorClassifier) {
+                                   AiErrorClassifier aiErrorClassifier,
+                                   AiModelFailoverService failoverService,
+                                   AiModelCapabilityProbeService capabilityProbeService) {
         this.configService = configService;
         this.dynamicModelProvider = dynamicModelProvider;
         this.aiErrorClassifier = aiErrorClassifier;
+        this.failoverService = failoverService;
+        this.capabilityProbeService = capabilityProbeService;
     }
 
     @RequestMapping(method = RequestMethod.GET)
@@ -132,6 +140,7 @@ public class AiModelConfigController {
         String effectiveBaseUrl = DynamicModelProvider.resolveEffectiveBaseUrl(config);
         try {
             ChatResponse response = testConnectionWithRuntime(config);
+            failoverService.recordSuccess(config.getId());
             long latency = System.currentTimeMillis() - start;
             String text = response != null && response.aiMessage() != null
                     ? response.aiMessage().text() : null;
@@ -148,6 +157,7 @@ public class AiModelConfigController {
         } catch (Exception e) {
             long latency = System.currentTimeMillis() - start;
             AiErrorClassifier.Classification classification = aiErrorClassifier.classify(e);
+            failoverService.recordFailure(config.getId(), classification);
             LinkedHashMap<String, Object> result = new LinkedHashMap<>();
             result.put("success", false);
             result.put("latencyMs", latency);
@@ -159,6 +169,39 @@ public class AiModelConfigController {
             result.put("message", classification.message());
             return ApiResponse.success(result);
         }
+    }
+
+    /**
+     * 使用当前模型实际发起最小、无副作用的能力探针，并把有明确证据的结果写入能力库。
+     * 探测包含文本、流式、虚拟工具调用、JSON 输出和 reasoning；不会执行任何工具。
+     */
+    @RequestMapping(value = "/{id}/probe-capabilities", method = RequestMethod.POST)
+    public HashMap<String, Object> probeCapabilities(@PathVariable("id") Integer id) {
+        AiModelConfig config = configService.findById(id);
+        if (config == null) {
+            return ApiResponse.notFound("模型配置不存在，id: " + id);
+        }
+        try {
+            return ApiResponse.success(capabilityProbeService.probe(config).toMap());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+    }
+
+    /** 返回运行进程内的模型健康与熔断快照，不包含任何凭据。 */
+    @RequestMapping(value = "/health", method = RequestMethod.GET)
+    public HashMap<String, Object> health() {
+        return ApiResponse.success(failoverService.snapshots(configService.listAll()));
+    }
+
+    /** 管理员修复配置后，可手动清除临时健康状态；成功的连接测试也会自动清除。 */
+    @RequestMapping(value = "/{id}/health/reset", method = RequestMethod.POST)
+    public HashMap<String, Object> resetHealth(@PathVariable("id") Integer id) {
+        if (configService.findById(id) == null) {
+            return ApiResponse.notFound("模型配置不存在，id: " + id);
+        }
+        failoverService.reset(id);
+        return ApiResponse.success(failoverService.snapshot(id).toMap());
     }
 
     private ChatResponse testConnectionWithRuntime(AiModelConfig config) {
@@ -363,12 +406,17 @@ public class AiModelConfigController {
         m.put("isActive", c.getIsActive());
         m.put("isDefault", c.getIsActive());
         m.put("enabled", c.getEnabled());
+        m.put("fallbackModelId", c.getFallbackModelId());
+        AiModelConfig fallback = c.getFallbackModelId() != null
+                ? configService.findById(c.getFallbackModelId()) : null;
+        m.put("fallbackModelName", fallback != null ? fallback.getName() : null);
         m.put("maxOutputTokens", c.getMaxOutputTokens());
         m.put("thinkingEnabled", c.getThinkingEnabled());
         m.put("reasoningEffort", c.getReasoningEffort());
         m.put("contextWindowTokens", c.getContextWindowTokens());
         m.put("temperature", c.getTemperature());
-        m.put("headersJson", c.getHeadersJson());
+        String headers = c.getHeadersJson();
+        m.put("headersConfigured", headers != null && !headers.isBlank());
         m.put("capabilityStatus", capabilities.status());
         m.put("capabilityRecognized", capabilities.recognized());
         m.put("capabilitySource", capabilities.source());

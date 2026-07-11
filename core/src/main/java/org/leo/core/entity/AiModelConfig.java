@@ -23,6 +23,8 @@ public class AiModelConfig {
     private String completionsPath;
     private Integer isActive;
     private Integer enabled;
+    /** 当前模型熔断时，下一轮请求可自动切换到的备用模型。 */
+    private Integer fallbackModelId;
     private Integer maxOutputTokens;
     private Integer thinkingEnabled;
     private String reasoningEffort;
@@ -68,6 +70,9 @@ public class AiModelConfig {
 
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
+
+    public Integer getFallbackModelId() { return fallbackModelId; }
+    public void setFallbackModelId(Integer fallbackModelId) { this.fallbackModelId = fallbackModelId; }
 
     public Integer getMaxOutputTokens() { return maxOutputTokens; }
     public void setMaxOutputTokens(Integer maxOutputTokens) { this.maxOutputTokens = maxOutputTokens; }

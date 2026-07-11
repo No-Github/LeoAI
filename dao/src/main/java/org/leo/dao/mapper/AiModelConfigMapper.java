@@ -30,11 +30,11 @@ public interface AiModelConfigMapper {
     int countAll();
 
     @Insert("INSERT INTO ai_model_configs (provider_id, name, provider_key, provider_name, api_key, base_url, "
-            + "model, protocol, completions_path, is_active, enabled, max_output_tokens, thinking_enabled, "
+            + "model, protocol, completions_path, is_active, enabled, fallback_model_id, max_output_tokens, thinking_enabled, "
             + "reasoning_effort, context_window_tokens, temperature, headers_json, "
             + "create_time, update_time, remark) "
             + "VALUES (#{providerId}, #{name}, #{providerKey}, #{providerName}, #{apiKey}, #{baseUrl}, "
-            + "#{model}, #{protocol}, #{completionsPath}, #{isActive}, #{enabled}, #{maxOutputTokens}, "
+            + "#{model}, #{protocol}, #{completionsPath}, #{isActive}, #{enabled}, #{fallbackModelId}, #{maxOutputTokens}, "
             + "#{thinkingEnabled}, #{reasoningEffort}, #{contextWindowTokens}, #{temperature}, "
             + "#{headersJson}, #{createTime}, #{updateTime}, #{remark})")
     @Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")
@@ -43,7 +43,7 @@ public interface AiModelConfigMapper {
     @Update("UPDATE ai_model_configs SET provider_id=#{providerId}, name=#{name}, provider_key=#{providerKey}, "
             + "provider_name=#{providerName}, api_key=#{apiKey}, base_url=#{baseUrl}, "
             + "model=#{model}, protocol=#{protocol}, completions_path=#{completionsPath}, is_active=#{isActive}, "
-            + "enabled=#{enabled}, max_output_tokens=#{maxOutputTokens}, "
+            + "enabled=#{enabled}, fallback_model_id=#{fallbackModelId}, max_output_tokens=#{maxOutputTokens}, "
             + "thinking_enabled=#{thinkingEnabled}, reasoning_effort=#{reasoningEffort}, "
             + "context_window_tokens=#{contextWindowTokens}, temperature=#{temperature}, "
             + "headers_json=#{headersJson}, update_time=#{updateTime}, remark=#{remark} WHERE id=#{id}")
@@ -60,6 +60,13 @@ public interface AiModelConfigMapper {
 
     @Update("UPDATE ai_model_configs SET is_active = 0")
     int clearActive();
+
+    @Update("UPDATE ai_model_configs SET fallback_model_id = NULL WHERE fallback_model_id = #{id}")
+    int clearFallbackByModelId(@Param("id") Integer id);
+
+    @Update("UPDATE ai_model_configs SET fallback_model_id = NULL "
+            + "WHERE fallback_model_id IN (SELECT id FROM ai_model_configs WHERE provider_id = #{providerId})")
+    int clearFallbackByProviderId(@Param("providerId") Integer providerId);
 
     @Update("UPDATE ai_model_configs SET is_active = 1, enabled = 1, update_time = #{updateTime} WHERE id = #{id}")
     int setActiveById(@Param("id") Integer id, @Param("updateTime") String updateTime);

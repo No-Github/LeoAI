@@ -37,6 +37,7 @@ data.db
 data.db-shm
 data.db-wal
 data.db-wal-*
+.leo/
 /root/users/
 
 ### Internal dev docs (not for public repo) ###

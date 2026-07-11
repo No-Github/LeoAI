@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     completions_path VARCHAR(255) NOT NULL DEFAULT '/v1/chat/completions',
     is_active INTEGER NOT NULL DEFAULT 0,
     enabled INTEGER NOT NULL DEFAULT 1,
+    fallback_model_id INTEGER,
     max_output_tokens INTEGER,
     thinking_enabled INTEGER,
     reasoning_effort VARCHAR(16),

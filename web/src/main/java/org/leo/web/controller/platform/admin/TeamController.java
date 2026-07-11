@@ -9,6 +9,7 @@ import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.admin.TeamDtos.DeleteTeamRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
+import org.leo.web.security.RoleAwareAdminEndpoint;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -31,6 +32,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/platform/admin")
+@RoleAwareAdminEndpoint
 public class TeamController {
 
     private final TeamService teamService;

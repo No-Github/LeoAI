@@ -5,6 +5,7 @@ import dev.langchain4j.service.TokenStream;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PuppetNodeAgent;
 import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.channel.AiModelFailoverService;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.AiErrorClassifier;
@@ -66,6 +67,7 @@ public class PuppetNodeAiThreadService {
     private final AiAgentFactory aiAgentFactory;
     private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider dynamicModelProvider;
+    private final AiModelFailoverService failoverService;
     private final AiErrorClassifier aiErrorClassifier;
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
@@ -76,6 +78,7 @@ public class PuppetNodeAiThreadService {
     public PuppetNodeAiThreadService(AiAgentFactory aiAgentFactory,
                                      AiModelConfigService modelConfigService,
                                      DynamicModelProvider dynamicModelProvider,
+                                     AiModelFailoverService failoverService,
                                      AiErrorClassifier aiErrorClassifier,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
@@ -83,6 +86,7 @@ public class PuppetNodeAiThreadService {
         this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
+        this.failoverService = failoverService;
         this.aiErrorClassifier = aiErrorClassifier;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
@@ -110,7 +114,11 @@ public class PuppetNodeAiThreadService {
                 throw new InterruptedException("已停止");
             }
             CachedPuppetNodeAgent agentRuntime = threadAgent(session, thread);
-            runId = conversationStore.startRun(thread, messageForAgent, startMs, agentRuntime.runtimeJson());
+            if (agentRuntime.failoverMessage() != null) {
+                sendRecordedEventSafely(thread, emitter, "warn", agentRuntime.failoverMessage());
+            }
+            runId = conversationStore.startRun(threadId, agentRuntime.effectiveConfigId(),
+                    messageForAgent, startMs, agentRuntime.runtimeJson());
             conversationStore.updateRuntime(session.getSessionId(), thread);
             sendRecordedEvent(thread, emitter, "status", AiThread.STATUS_RUNNING);
 
@@ -163,6 +171,7 @@ public class PuppetNodeAiThreadService {
                     // turnHolder[0] 在 try 块中构建，在 finally 中发送（跨块共享）
                     Object[] turnHolder = { null };
                     try {
+                        failoverService.recordSuccess(agentRuntime.effectiveConfigId());
                         int toolCallCount = countToolCallEvents(eventLog);
                         audit.complete(output, toolCallCount, System.currentTimeMillis() - startMs);
                         finishRun(fRunId, AiThread.STATUS_COMPLETED, startMs, output, null, toolCallCount);
@@ -211,6 +220,7 @@ public class PuppetNodeAiThreadService {
                             AiControllerUtil.safeSendError(emitter, reason);
                         } else {
                             AiErrorClassifier.Classification classification = aiErrorClassifier.classify(error);
+                            failoverService.recordFailure(agentRuntime.effectiveConfigId(), classification);
                             String errMsg = classification.message();
                             thread.markFailed();
                             audit.fail(errMsg, System.currentTimeMillis() - startMs);
@@ -990,21 +1000,26 @@ public class PuppetNodeAiThreadService {
     }
 
     private CachedPuppetNodeAgent threadAgent(PuppetNodeSession session, AiThread thread) {
-        AiModelConfig config = resolveChannel(thread != null ? thread.getAiConfigId() : null);
-        if (thread != null) {
-            thread.setAiConfigId(config.getId());
+        AiModelConfig requested = resolveChannel(thread != null ? thread.getAiConfigId() : null);
+        if (thread != null && thread.getAiConfigId() == null) {
+            thread.setAiConfigId(requested.getId());
         }
+        AiModelFailoverService.ModelSelection selection = failoverService.selectForExecution(requested);
+        AiModelConfig config = selection.effectiveConfig();
         String agentKey = agentCacheKey(session, thread != null ? thread.getThreadId() : null);
-        String cacheKey = dynamicModelProvider.plannedRuntimeCacheKey(config);
+        String cacheKey = requested.getId() + "->" + config.getId() + ":"
+                + dynamicModelProvider.plannedRuntimeCacheKey(config);
         CachedPuppetNodeAgent cached = puppetNodeAgents.get(agentKey);
         if (cached != null && cacheKey.equals(cached.cacheKey())) {
             return cached;
         }
         DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
         PuppetNodeAgent agent = aiAgentFactory.createPuppetNodeAgent(
-                runtime.streamingModel(), runtime.chatModel(), runtime.supportsFunctionCalling());
+                runtime.streamingModel(), runtime.chatModel(), runtime.supportsFunctionCalling(),
+                modelConfigService.getContextWindowTokens(config));
         CachedPuppetNodeAgent created = new CachedPuppetNodeAgent(cacheKey, agent,
-                DynamicModelProvider.runtimeSnapshotJson(config, runtime));
+                DynamicModelProvider.runtimeSnapshotJson(config, runtime), config.getId(),
+                selection.failover() ? selection.message() : null);
         puppetNodeAgents.put(agentKey, created);
         return created;
     }
@@ -1014,7 +1029,8 @@ public class PuppetNodeAiThreadService {
         return sessionId + ":" + (threadId != null ? threadId : "");
     }
 
-    private record CachedPuppetNodeAgent(String cacheKey, PuppetNodeAgent agent, String runtimeJson) {}
+    private record CachedPuppetNodeAgent(String cacheKey, PuppetNodeAgent agent, String runtimeJson,
+                                         Integer effectiveConfigId, String failoverMessage) {}
 
     private String validateConfigId(Integer configId) {
         // 新架构下不再做能力探测，仅校验存在性

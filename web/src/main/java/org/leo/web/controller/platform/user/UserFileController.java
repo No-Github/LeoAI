@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.service.config.SystemConfigService;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -15,8 +16,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -33,8 +36,15 @@ import java.util.stream.Stream;
 public class UserFileController {
     private static final long DEFAULT_PREVIEW_SIZE = 64 * 1024L;
     private static final long MAX_PREVIEW_SIZE = 1024 * 1024L;
+    private static final long DEFAULT_MAX_UPLOAD_SIZE_MB = 100L;
     private static final int RECENT_FILE_LIMIT = 8;
     private static final int TOP_DIRECTORY_LIMIT = 6;
+
+    private final SystemConfigService systemConfigService;
+
+    public UserFileController(SystemConfigService systemConfigService) {
+        this.systemConfigService = systemConfigService;
+    }
 
     @RequestMapping(value = "/overview", method = RequestMethod.GET)
     public HashMap<String, Object> overview(HttpServletRequest request) {
@@ -44,7 +54,7 @@ public class UserFileController {
                 return ApiResponse.unauthorized("用户未登录");
             }
 
-            Path base = getUserBasePath(user.getUserId());
+            Path base = getUserWorkspacePath(user.getUserId());
             Files.createDirectories(base);
 
             WorkspaceOverviewStats stats = collectWorkspaceOverview(base);
@@ -70,6 +80,7 @@ public class UserFileController {
             data.put("updatedAt", stats.updatedAt);
             data.put("recentFiles", recentFiles);
             data.put("topDirectories", topDirectories);
+            data.put("maxUploadBytes", getMaxUploadSizeBytes());
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("获取用户空间概览失败: " + e.getMessage());
@@ -113,7 +124,8 @@ public class UserFileController {
     public HashMap<String, Object> upload(HttpServletRequest request,
                                           @RequestPart("file") MultipartFile file,
                                           @RequestParam(value = "path", required = false) String relativeDir,
-                                          @RequestParam(value = "filename", required = false) String filename) {
+                                          @RequestParam(value = "filename", required = false) String filename,
+                                          @RequestParam(value = "overwrite", required = false) Boolean overwrite) {
         try {
             User user = getUserFromSession(request);
             if (user == null) {
@@ -121,6 +133,10 @@ public class UserFileController {
             }
             if (file == null || file.isEmpty()) {
                 return ApiResponse.badRequest("上传文件不能为空");
+            }
+            long maxUploadBytes = getMaxUploadSizeBytes();
+            if (file.getSize() > maxUploadBytes) {
+                return ApiResponse.badRequest("文件超过单文件上传上限（" + formatMegabytes(maxUploadBytes) + " MB）");
             }
 
             String uploadName = sanitizeFileName(filename);
@@ -134,15 +150,27 @@ public class UserFileController {
             Path dir = resolveUserPath(user.getUserId(), relativeDir, true);
             Files.createDirectories(dir);
             Path target = dir.resolve(uploadName).normalize();
-            if (!target.startsWith(getUserBasePath(user.getUserId()))) {
+            if (!target.startsWith(getUserWorkspacePath(user.getUserId()))) {
                 return ApiResponse.forbidden("非法路径");
             }
-            Files.write(target, file.getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            boolean overwriteExisting = Boolean.TRUE.equals(overwrite);
+            if (Files.exists(target) && !overwriteExisting) {
+                return ApiResponse.conflict("同名文件已存在，请确认后覆盖上传");
+            }
+            StandardOpenOption[] writeOptions = overwriteExisting
+                    ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING}
+                    : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW};
+            try (InputStream input = file.getInputStream();
+                 OutputStream output = Files.newOutputStream(target, writeOptions)) {
+                input.transferTo(output);
+            }
 
             HashMap<String, Object> data = new HashMap<>();
             data.put("path", toUserRelativePath(user.getUserId(), target));
             data.put("size", Files.size(target));
             return ApiResponse.success("上传成功", data);
+        } catch (FileAlreadyExistsException e) {
+            return ApiResponse.conflict("同名文件已存在，请确认后覆盖上传");
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -196,7 +224,8 @@ public class UserFileController {
     @RequestMapping(value = "/create-file", method = RequestMethod.POST)
     public HashMap<String, Object> createFile(HttpServletRequest request,
                                               @RequestParam("path") String relativePath,
-                                              @RequestParam(value = "content", required = false) String content) {
+                                              @RequestParam(value = "content", required = false) String content,
+                                              @RequestParam(value = "overwrite", required = false) Boolean overwrite) {
         try {
             User user = getUserFromSession(request);
             if (user == null) {
@@ -207,13 +236,23 @@ public class UserFileController {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
+            boolean overwriteExisting = Boolean.TRUE.equals(overwrite);
+            if (Files.exists(target) && !overwriteExisting) {
+                return ApiResponse.conflict("同名文件已存在，请确认后覆盖创建");
+            }
             byte[] data = content == null ? new byte[0] : content.getBytes(StandardCharsets.UTF_8);
-            Files.write(target, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            if (overwriteExisting) {
+                Files.write(target, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            } else {
+                Files.write(target, data, StandardOpenOption.CREATE_NEW);
+            }
 
             HashMap<String, Object> result = new HashMap<>();
             result.put("path", toUserRelativePath(user.getUserId(), target));
             result.put("size", Files.size(target));
             return ApiResponse.success("文件创建成功", result);
+        } catch (FileAlreadyExistsException e) {
+            return ApiResponse.conflict("同名文件已存在，请确认后覆盖创建");
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         } catch (Exception e) {
@@ -230,6 +269,9 @@ public class UserFileController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             Path target = resolveUserPath(user.getUserId(), relativePath, true);
+            if (Files.exists(target) && !Files.isDirectory(target)) {
+                return ApiResponse.conflict("同名文件已存在，无法创建目录");
+            }
             Files.createDirectories(target);
 
             HashMap<String, Object> result = new HashMap<>();
@@ -325,16 +367,36 @@ public class UserFileController {
         return (User) request.getSession().getAttribute("user");
     }
 
-    private Path getUserBasePath(String userId) {
-        File root = PuppetNodeSessionWorkDirUtil.getRootDir();
-        return new File(new File(root, "users"), userId).toPath().toAbsolutePath().normalize();
+    private Path getUserWorkspacePath(String userId) {
+        return PuppetNodeSessionWorkDirUtil.getUserWorkspaceDir(userId)
+                .toPath()
+                .toAbsolutePath()
+                .normalize();
+    }
+
+    private long getMaxUploadSizeBytes() {
+        String configured = systemConfigService.getString("max.file.upload.size.mb",
+                String.valueOf(DEFAULT_MAX_UPLOAD_SIZE_MB));
+        try {
+            long megabytes = Long.parseLong(configured);
+            if (megabytes <= 0 || megabytes > Long.MAX_VALUE / 1024 / 1024) {
+                return DEFAULT_MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+            }
+            return megabytes * 1024 * 1024;
+        } catch (NumberFormatException e) {
+            return DEFAULT_MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+        }
+    }
+
+    private String formatMegabytes(long bytes) {
+        return String.valueOf(bytes / 1024 / 1024);
     }
 
     private Path resolveUserPath(String userId, String relativePath, boolean asDirectory) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户信息无效");
         }
-        Path base = getUserBasePath(userId);
+        Path base = getUserWorkspacePath(userId);
         Path resolved = base;
         if (relativePath != null && !relativePath.isBlank()) {
             String normalized = relativePath.trim().replace('\\', '/');
@@ -430,7 +492,7 @@ public class UserFileController {
 
     private Path getParentPath(String userId, Path path) {
         Path parent = path.getParent();
-        return parent == null ? getUserBasePath(userId) : parent;
+        return parent == null ? getUserWorkspacePath(userId) : parent;
     }
 
     private long countDirectChildren(Path path) {
@@ -458,7 +520,7 @@ public class UserFileController {
     }
 
     private String toUserRelativePath(String userId, Path path) {
-        Path base = getUserBasePath(userId);
+        Path base = getUserWorkspacePath(userId);
         Path p = path.toAbsolutePath().normalize();
         if (!p.startsWith(base)) {
             return "";

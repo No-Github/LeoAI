@@ -131,13 +131,25 @@ public class DynamicModelProvider {
     }
 
     public ModelRuntime buildRuntime(AiModelConfig config) {
+        return buildRuntime(config, false);
+    }
+
+    /**
+     * 构建用于管理员能力探测的运行时。forceReasoning 仅用于探针请求，
+     * 不会改变已保存的模型配置或普通会话的推理策略。
+     */
+    public ModelRuntime buildProbeRuntime(AiModelConfig config, boolean forceReasoning) {
+        return buildRuntime(config, forceReasoning);
+    }
+
+    private ModelRuntime buildRuntime(AiModelConfig config, boolean forceReasoning) {
         String apiKey = config.getApiKey();
         if (apiKey == null || apiKey.isEmpty()) {
             throw new IllegalArgumentException("模型配置 apiKey 为空，id=" + config.getId());
         }
         boolean responsesApi = useResponsesApi(config);
         String baseUrl = responsesApi ? resolveResponsesBaseUrl(config) : resolveChatCompletionsBaseUrl(config);
-        ModelPlan plan = plan(config);
+        ModelPlan plan = plan(config, forceReasoning);
         StreamingChatModel streaming = responsesApi
                 ? buildResponsesStreaming(apiKey, baseUrl, plan)
                 : buildChatStreaming(apiKey, baseUrl, plan);
@@ -253,6 +265,10 @@ public class DynamicModelProvider {
     // ── 计划构造 ──────────────────────────────────────────────────────────
 
     private ModelPlan plan(AiModelConfig config) {
+        return plan(config, false);
+    }
+
+    private ModelPlan plan(AiModelConfig config, boolean forceReasoning) {
         String modelName = config.getModel();
         String providerKey = config.getProviderKey();
         ProviderCapabilities caps = configService.capabilitiesForModel(providerKey, modelName);
@@ -267,7 +283,9 @@ public class DynamicModelProvider {
         Boolean modelDefault = ModelDefaults.defaultThinkingEnabled(providerKey, modelName);
         String reasoningEffort = config.getReasoningEffort();
         boolean wantsReasoning;
-        if (userIntent != null) {
+        if (forceReasoning) {
+            wantsReasoning = true;
+        } else if (userIntent != null) {
             wantsReasoning = userIntent;
         } else if (reasoningEffort != null && !reasoningEffort.isBlank()
                 && !"auto".equalsIgnoreCase(reasoningEffort)) {
@@ -278,7 +296,7 @@ public class DynamicModelProvider {
             wantsReasoning = false;
         }
 
-        boolean doReasoning = wantsReasoning && caps.supportsReasoning();
+        boolean doReasoning = wantsReasoning && (forceReasoning || caps.supportsReasoning());
         if (wantsReasoning && !caps.supportsReasoning()) {
             log.warn("模型 {} 不支持 reasoning_content，配置将被忽略", modelName);
         }

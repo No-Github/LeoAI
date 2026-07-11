@@ -1,6 +1,7 @@
 package org.leo.web.controller.platform;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
@@ -9,6 +10,7 @@ import org.leo.web.dto.platform.user.ChangePasswordRequest;
 import org.leo.web.dto.platform.user.LoginRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
+import org.leo.web.security.LoginAttemptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,7 +24,7 @@ import java.util.Map;
 
 /**
  * 用户登录控制器。
- * 密码以 MD5 形式存储与比对。
+ * Passwords use salted PBKDF2 hashes; legacy MD5 rows are upgraded on login.
  */
 @RestController
 @RequestMapping("/platform/user")
@@ -34,28 +36,45 @@ public class LoginController {
 
     private final UserService userService;
     private final PermissionService permissionService;
+    private final LoginAttemptService loginAttemptService;
 
-    public LoginController(UserService userService, PermissionService permissionService) {
+    public LoginController(UserService userService, PermissionService permissionService,
+                           LoginAttemptService loginAttemptService) {
         this.userService = userService;
         this.permissionService = permissionService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     /**
-     * 用户登录。提交的明文密码会转为 MD5 后与数据库比对。
+     * 用户登录。旧 MD5 记录会在验证成功后透明升级。
      */
     @PostMapping("/login")
     public Map<String, Object> login(HttpServletRequest request,
                                      @RequestBody LoginRequest body) {
         String username = requireText(body != null ? body.username() : null, "username不能为空");
         String password = requireText(body != null ? body.password() : null, "password不能为空");
+        String remoteAddress = request.getRemoteAddr();
+        long retryAfter = loginAttemptService.retryAfterSeconds(username, remoteAddress);
+        if (retryAfter > 0L) {
+            throw ApiException.tooManyRequests("登录失败次数过多，请在 " + retryAfter + " 秒后重试");
+        }
 
         User user = userService.getUserByName(username);
         if (user == null || !PasswordUtil.verify(password, user.getPassword())) {
+            loginAttemptService.recordFailure(username, remoteAddress);
             logger.warn("登录失败，用户名或密码错误: {}", username);
-            throw ApiException.badRequest("用户名或密码错误");
+            throw ApiException.unauthorized("用户名或密码错误");
+        }
+        loginAttemptService.recordSuccess(username, remoteAddress);
+
+        if (PasswordUtil.needsRehash(user.getPassword())) {
+            user.setPassword(PasswordUtil.hash(password));
+            userService.updateUser(user);
         }
 
-        request.getSession().setAttribute(SESSION_ATTR_USER, user);
+        HttpSession session = request.getSession(true);
+        request.changeSessionId();
+        session.setAttribute(SESSION_ATTR_USER, user);
         logger.info("用户登录成功: {} ({})", username, user.getPrivilege());
         return ApiResponse.success();
     }
@@ -69,7 +88,10 @@ public class LoginController {
         if (user != null) {
             logger.info("用户登出: {}", user.getUserName());
         }
-        request.getSession().removeAttribute(SESSION_ATTR_USER);
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
         return ApiResponse.success();
     }
 
@@ -91,7 +113,7 @@ public class LoginController {
     }
 
     /**
-     * 修改密码。oldPassword 为明文，系统自动 MD5 比对；newPassword 为明文，保存时自动 MD5。
+     * 修改密码。oldPassword 为明文，newPassword 使用带盐 PBKDF2 保存。
      */
     @PostMapping("/change-password")
     public Map<String, Object> changePassword(HttpServletRequest request,
@@ -106,7 +128,7 @@ public class LoginController {
             throw ApiException.badRequest("旧密码不正确");
         }
 
-        user.setPassword(PasswordUtil.md5(newPassword));
+        user.setPassword(PasswordUtil.hash(newPassword));
         userService.updateUser(user);
 
         // 更新 Session 中的用户信息

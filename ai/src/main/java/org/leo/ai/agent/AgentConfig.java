@@ -132,56 +132,24 @@ public class AgentConfig {
     /**
      * 主 Agent 对话记忆：自动适配模型上下文窗口大小。
      *
-     * <p>优先级：
+     * <p>预算规则：
      * <ol>
-     *   <li>数据库激活模型配置的 {@code contextWindowTokens} 字段</li>
-     *   <li>常见模型名的默认窗口推断（gpt-4o→200K, gemini→1M 等）</li>
-     *   <li>配置文件 {@code leo.ai.agent.puppet-node.main.max-context-tokens}（默认 180K）</li>
+     *   <li>使用当前线程实际选择模型的上下文硬上限</li>
+     *   <li>预留 system prompt、工具定义和输出空间</li>
+     *   <li>配置文件 {@code max-context-tokens} 作为系统侧上限，不得放大模型窗口</li>
      * </ol>
      *
      * <p>小窗口（&lt;=96K）使用 {@link TokenWindowChatMemory}（基于 token 精确淘汰）；
      * 大窗口（&gt;96K）使用 {@link MessageWindowChatMemory}（按消息条数淘汰），
      * 避免 {@link CharBasedTokenEstimator} 在百万 token 量级下的累积误差。
      *
-     * <p>压缩由 {@link ContextCompressionService#compressIfNeeded} 在工具执行前触发，
+     * <p>压缩由 {@link CompressingChatMemory#messages()} 在读取记忆视图时触发，
      * 仅当窗口 &gt;=100K 且当前 token 数 &gt; 80% 阈值时执行。
      */
     @Bean
     @Primary
-    public ChatMemoryProvider chatMemoryProvider(TokenCountEstimator tokenEstimator,
-                                                  ContextCompressionService compressionService) {
-        return memoryId -> {
-            int modelWindow = modelConfigService.getActiveContextWindowTokens();
-            // 预留 system prompt + tools 空间，默认扣除 20K
-            int effectiveWindow = modelWindow > 0 ? modelWindow - 20_000 : 180_000;
-            int configuredMin = agentProps.getPuppetNode().getMain().getMaxContextTokens();
-            effectiveWindow = Math.max(effectiveWindow, configuredMin);
-
-            // 小窗口用 TokenWindow（精确），大窗口用 MessageWindow（避免 token 估算误差）
-            if (effectiveWindow <= 96_000) {
-                return TokenWindowChatMemory.builder()
-                        .id(memoryId)
-                        .maxTokens(effectiveWindow, tokenEstimator)
-                        .build();
-            }
-            // 大窗口：按消息条数 + 压缩兜底
-            int maxMessages = estimateMaxMessages(effectiveWindow);
-            return new CompressingChatMemory(
-                    memoryId,
-                    MessageWindowChatMemory.builder().id(memoryId).maxMessages(maxMessages).build(),
-                    tokenEstimator,
-                    compressionService,
-                    effectiveWindow
-            );
-        };
-    }
-
-    /**
-     * 根据上下文窗口估算可保留的最大消息条数。
-     * 假设每条消息平均 2K token（含工具调用和结果）。
-     */
-    private static int estimateMaxMessages(int contextWindowTokens) {
-        return Math.max(50, contextWindowTokens / 2000);
+    public ChatMemoryProvider chatMemoryProvider(AiChatMemoryProviderFactory memoryProviderFactory) {
+        return memoryProviderFactory.createPuppetProvider(modelConfigService.getActiveContextWindowTokens());
     }
 
     // ── 模型 Bean ────────────────────────────────────────────────────────────
