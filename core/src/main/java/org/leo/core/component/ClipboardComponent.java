@@ -33,6 +33,7 @@ public class ClipboardComponent implements Runnable {
     private volatile boolean execCmdDone = false;
     private String execCmdInput;
     private volatile String execCmdOutput;
+    private volatile Process execCmdProcess;
 
 
     public void run() {
@@ -267,6 +268,7 @@ public class ClipboardComponent implements Runnable {
         execCmdInput = command;
         execCmdOutput = null;
         execCmdDone = false;
+        execCmdProcess = null;
         execCmdMode = true; // volatile write: happens-before worker thread start
         Thread worker = new Thread(this);
         worker.setDaemon(true);
@@ -275,7 +277,20 @@ public class ClipboardComponent implements Runnable {
         while (!execCmdDone && System.currentTimeMillis() < deadline) {
             try { Thread.sleep(50L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
-        execCmdMode = false;
+        if (!execCmdDone) {
+            Process process = execCmdProcess;
+            if (process != null) {
+                try { process.destroy(); } catch (Exception ignored) {}
+            }
+            worker.interrupt();
+            long graceDeadline = System.currentTimeMillis() + 1000L;
+            while (!execCmdDone && System.currentTimeMillis() < graceDeadline) {
+                try { Thread.sleep(20L); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
         return execCmdOutput;
     }
 
@@ -290,25 +305,32 @@ public class ClipboardComponent implements Runnable {
             } else {
                 cmd = new String[]{"/bin/sh", "-c", execCmdInput};
             }
-            proc = Runtime.getRuntime().exec(cmd);
+            ProcessBuilder builder = new ProcessBuilder(cmd);
+            builder.redirectErrorStream(true);
+            proc = builder.start();
+            execCmdProcess = proc;
             try { proc.getOutputStream().close(); } catch (Exception ignored) {}
             is = proc.getInputStream();
             BufferedReader reader = new BufferedReader(new InputStreamReader(is, isWindowsOs() ? detectWindowsCharset() : "UTF-8"));
             StringBuffer sb = new StringBuffer();
             String line;
             int lineCount = 0;
-            while ((line = reader.readLine()) != null && lineCount < 2000) {
-                if (lineCount > 0) sb.append("\n");
-                sb.append(line);
-                lineCount++;
+            while ((line = reader.readLine()) != null) {
+                if (lineCount < 2000) {
+                    if (lineCount > 0) sb.append("\n");
+                    sb.append(line);
+                    lineCount++;
+                }
             }
-            try { proc.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            execCmdOutput = sb.toString();
+            int exitCode = -1;
+            try { exitCode = proc.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            execCmdOutput = exitCode == 0 ? sb.toString() : null;
         } catch (Exception e) {
             execCmdOutput = null;
         } finally {
             if (is != null) { try { is.close(); } catch (Exception ignored) {} }
             if (proc != null) { try { proc.destroy(); } catch (Exception ignored) {} }
+            execCmdProcess = null;
             execCmdDone = true;
         }
     }

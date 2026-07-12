@@ -1,1 +1,0 @@
-import{i as e}from"./auth-ngPJrF-T.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};

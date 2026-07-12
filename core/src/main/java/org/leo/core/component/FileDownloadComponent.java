@@ -1,6 +1,5 @@
 package org.leo.core.component;
 
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.util.HashMap;
@@ -56,10 +55,22 @@ public class FileDownloadComponent implements Runnable {
         Object sizeObj = params.get("size");
         Object offsetObj = params.get("offset");
 
+        if (!(pathObj instanceof byte[])) {
+            throw new IllegalArgumentException("path 必须是 UTF-8 byte[]");
+        }
         String path = new String((byte[]) pathObj, "UTF-8");
         
         long size = sizeObj != null ? ((Number) sizeObj).longValue() : 0;
         long offset = offsetObj != null ? ((Number) offsetObj).longValue() : 0;
+        if (path.length() == 0) {
+            throw new IllegalArgumentException("path 不能为空");
+        }
+        if (size <= 0L) {
+            throw new IllegalArgumentException("size 必须大于 0");
+        }
+        if (offset < 0L) {
+            throw new IllegalArgumentException("offset 不能为负数");
+        }
         
         File downloadFile = new File(path);
         if (!downloadFile.exists()) {
@@ -73,8 +84,12 @@ public class FileDownloadComponent implements Runnable {
             results.put("msg", "文件无读取权限: " + path);
             return;
         }
+        if (!downloadFile.isFile()) {
+            results.put("code", 400);
+            results.put("msg", "path 不是普通文件: " + path);
+            return;
+        }
         RandomAccessFile inputFile = null;
-        BufferedInputStream bufferedInput = null;
         
         try {
             inputFile = new RandomAccessFile(downloadFile, "r");
@@ -136,7 +151,6 @@ public class FileDownloadComponent implements Runnable {
             results.put("isComplete", isComplete);
         } finally {
             // 优化：确保资源正确关闭
-            closeQuietly(bufferedInput);
             closeQuietly(inputFile);
         }
     }

@@ -106,7 +106,7 @@ public class ExecCommandSimpleComponent implements Runnable {
             try {
                 while ((read = is.read(buffer)) != -1) {
                     int remaining = MAX_OUTPUT_BYTES - total;
-                    if (remaining <= 0) break;
+                    if (remaining <= 0) continue; // 继续排空管道，避免子进程阻塞
                     int toWrite = read <= remaining ? read : remaining;
                     output.write(buffer, 0, toWrite);
                     total += toWrite;
@@ -223,6 +223,7 @@ public class ExecCommandSimpleComponent implements Runnable {
             }
         }
         if (seconds <= 0) return DEFAULT_TIMEOUT_MS;
+        if (seconds > MAX_TIMEOUT_MS / 1000L) return MAX_TIMEOUT_MS;
         long ms = seconds * 1000L;
         if (ms > MAX_TIMEOUT_MS) return MAX_TIMEOUT_MS;
         return ms;

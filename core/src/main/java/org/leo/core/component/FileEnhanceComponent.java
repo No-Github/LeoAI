@@ -29,6 +29,9 @@ public class FileEnhanceComponent implements Runnable {
 
     private HashMap params;
     private HashMap results;
+    private String packSourceCanonical;
+    private String packDestinationCanonical;
+    private HashSet packVisitedDirectories;
 
     @Override
 
@@ -80,6 +83,10 @@ public class FileEnhanceComponent implements Runnable {
         if (keyword == null || keyword.isEmpty()) {
             results.put("code", 400); results.put("msg", "keyword 不能为空"); return;
         }
+        if (maxResults < 1) maxResults = 1;
+        if (maxResults > 10000) maxResults = 10000;
+        if (maxLineLen < 1) maxLineLen = 1;
+        if (maxLineLen > 10000) maxLineLen = 10000;
 
         File root = new File(rootPath);
         if (!root.exists()) {
@@ -101,7 +108,7 @@ public class FileEnhanceComponent implements Runnable {
         int[] scannedFiles = new int[] {0};
         int[] remaining = new int[] {maxResults};
 
-        grepRecursive(root, include, pattern, maxLineLen, matches, totalFiles, scannedFiles, remaining);
+        grepRecursive(root, include, pattern, maxLineLen, matches, totalFiles, scannedFiles, remaining, 0);
 
         results.put("code", 200);
         results.put("matches", matches);
@@ -113,8 +120,8 @@ public class FileEnhanceComponent implements Runnable {
 
     private void grepRecursive(File file, String include, Pattern pattern, int maxLineLen,
                                List matches, int[] totalFiles, int[] scannedFiles,
-                               int[] remaining) {
-        if (file == null || remaining[0] <= 0) {
+                               int[] remaining, int depth) {
+        if (file == null || remaining[0] <= 0 || depth > 256) {
             return;
         }
         if (file.isDirectory()) {
@@ -125,7 +132,7 @@ public class FileEnhanceComponent implements Runnable {
             Arrays.sort(children);
             for (int i = 0; i < children.length && remaining[0] > 0; i++) {
                 grepRecursive(children[i], include, pattern, maxLineLen, matches,
-                        totalFiles, scannedFiles, remaining);
+                        totalFiles, scannedFiles, remaining, depth + 1);
             }
             return;
         }
@@ -247,7 +254,7 @@ public class FileEnhanceComponent implements Runnable {
         int count;
 
         if (recursive && target.isDirectory()) {
-            count = touchRecursive(target, timestamp);
+            count = touchRecursive(target, timestamp, 0);
         } else {
             target.setLastModified(timestamp);
             count = 1;
@@ -259,16 +266,16 @@ public class FileEnhanceComponent implements Runnable {
         results.put("newTime", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(timestamp)));
     }
 
-    private int touchRecursive(File file, long timestamp) {
+    private int touchRecursive(File file, long timestamp, int depth) {
         int count = 0;
-        if (file == null) {
+        if (file == null || depth > 256) {
             return 0;
         }
         if (file.isDirectory()) {
             File[] children = file.listFiles();
             if (children != null) {
                 for (int i = 0; i < children.length; i++) {
-                    count += touchRecursive(children[i], timestamp);
+                    count += touchRecursive(children[i], timestamp, depth + 1);
                 }
             }
         }
@@ -290,6 +297,7 @@ public class FileEnhanceComponent implements Runnable {
         if (!source.exists()) {
             results.put("code", 404); results.put("msg", "路径不存在: " + sourcePath); return;
         }
+        source = source.getCanonicalFile();
 
         // 确定输出路径
         String archiveName = source.getName() + "_" + System.currentTimeMillis() + ".tar.gz";
@@ -299,6 +307,16 @@ public class FileEnhanceComponent implements Runnable {
         } else {
             destFile = new File(System.getProperty("java.io.tmpdir"), archiveName);
         }
+        File destDir = destFile.getParentFile();
+        if (destDir != null && !destDir.exists() && !destDir.mkdirs() && !destDir.isDirectory()) {
+            throw new IOException("无法创建目标目录: " + destDir.getAbsolutePath());
+        }
+        if (destDir != null && !destDir.isDirectory()) {
+            throw new IOException("目标路径不是目录: " + destDir.getAbsolutePath());
+        }
+        packSourceCanonical = source.getCanonicalPath();
+        packDestinationCanonical = destFile.getCanonicalPath();
+        packVisitedDirectories = new HashSet();
 
         // 写 tar.gz（纯 Java 实现，不依赖外部命令）
         FileOutputStream fos = null;
@@ -306,7 +324,10 @@ public class FileEnhanceComponent implements Runnable {
         try {
             fos = new FileOutputStream(destFile);
             gzos = new GZIPOutputStream(fos);
-            writeTar(source, source.getParentFile(), gzos);
+            File baseDir = source.getParentFile();
+            if (baseDir == null) baseDir = new File(".").getCanonicalFile();
+            writeTar(source, baseDir, gzos);
+            gzos.write(new byte[1024]);
             gzos.finish();
         } finally {
             closeQuietly(gzos);
@@ -325,7 +346,19 @@ public class FileEnhanceComponent implements Runnable {
      * 不依赖 Apache Commons Compress，兼容性更好。
      */
     private void writeTar(File file, File baseDir, OutputStream out) throws Exception {
+        String canonical = file.getCanonicalPath();
+        if (canonical.equals(packDestinationCanonical)) {
+            return;
+        }
+        if (!canonical.equals(packSourceCanonical)
+                && !canonical.startsWith(packSourceCanonical + File.separator)) {
+            return;
+        }
         if (file.isDirectory()) {
+            if (packVisitedDirectories.contains(canonical)) {
+                return;
+            }
+            packVisitedDirectories.add(canonical);
             writeTarEntry(file, baseDir, out);
             File[] children = file.listFiles();
             if (children != null) {
@@ -372,10 +405,7 @@ public class FileEnhanceComponent implements Runnable {
         byte[] header = new byte[512];
         Arrays.fill(header, (byte) 0);
 
-        // name (100 bytes)
-        byte[] nameBytes = name.getBytes("UTF-8");
-        int nameLen = Math.min(nameBytes.length, 100);
-        System.arraycopy(nameBytes, 0, header, 0, nameLen);
+        writeTarName(header, name);
 
         // mode (8 bytes)
         fillOctal(header, 100, 8, file.isDirectory() ? 0755 : 0644);
@@ -390,9 +420,10 @@ public class FileEnhanceComponent implements Runnable {
         Arrays.fill(header, 148, 156, (byte) ' ');
         // typeflag
         header[156] = (byte)(file.isDirectory() ? '5' : '0');
-        // magic "ustar"
-        byte[] magic = "ustar  \0".getBytes("UTF-8");
-        System.arraycopy(magic, 0, header, 257, Math.min(magic.length, 8));
+        byte[] magic = "ustar\0".getBytes("UTF-8");
+        System.arraycopy(magic, 0, header, 257, magic.length);
+        header[263] = '0';
+        header[264] = '0';
 
         // compute checksum
         int checksum = 0;
@@ -403,9 +434,34 @@ public class FileEnhanceComponent implements Runnable {
         return header;
     }
 
+    private void writeTarName(byte[] header, String name) throws Exception {
+        byte[] nameBytes = name.getBytes("UTF-8");
+        if (nameBytes.length <= 100) {
+            System.arraycopy(nameBytes, 0, header, 0, nameBytes.length);
+            return;
+        }
+        int slash = name.lastIndexOf('/');
+        while (slash > 0) {
+            String prefix = name.substring(0, slash);
+            String suffix = name.substring(slash + 1);
+            byte[] prefixBytes = prefix.getBytes("UTF-8");
+            byte[] suffixBytes = suffix.getBytes("UTF-8");
+            if (prefixBytes.length <= 155 && suffixBytes.length <= 100) {
+                System.arraycopy(suffixBytes, 0, header, 0, suffixBytes.length);
+                System.arraycopy(prefixBytes, 0, header, 345, prefixBytes.length);
+                return;
+            }
+            slash = name.lastIndexOf('/', slash - 1);
+        }
+        throw new IOException("TAR 条目路径过长: " + name);
+    }
+
     private void fillOctal(byte[] buf, int offset, int len, long value) throws Exception {
         String octal = String.format("%0" + (len - 1) + "o", value);
         byte[] bytes = octal.getBytes("UTF-8");
+        if (bytes.length > len - 1) {
+            throw new IOException("TAR 数值字段溢出: " + value);
+        }
         int start = offset + (len - 1 - bytes.length);
         System.arraycopy(bytes, 0, buf, start, bytes.length);
     }
@@ -493,7 +549,7 @@ public class FileEnhanceComponent implements Runnable {
             exitCode = proc.waitFor();
         } catch (Exception e) {
             // chmod 命令不可用（Windows），降级为 Java File API
-            exitCode = applyChmodJava(target, modeClean, recursive) ? 0 : 1;
+            exitCode = applyChmodJava(target, modeClean, recursive, 0) ? 0 : 1;
         } finally {
             if (proc != null) {
                 try { proc.destroy(); } catch (Exception ignored) {}
@@ -515,7 +571,8 @@ public class FileEnhanceComponent implements Runnable {
      * 使用 Java File API 做有限的权限映射（Windows / 无 chmod 环境回退）。
      * 仅支持 owner 读/写/执行三位（取八进制 mode 最后三位的 owner 位）。
      */
-    private boolean applyChmodJava(File target, String mode, boolean recursive) {
+    private boolean applyChmodJava(File target, String mode, boolean recursive, int depth) {
+        if (target == null || depth > 256) return false;
         int octal;
         try {
             octal = Integer.parseInt(mode, 8);
@@ -531,7 +588,7 @@ public class FileEnhanceComponent implements Runnable {
             File[] children = target.listFiles();
             if (children != null) {
                 for (int i = 0; i < children.length; i++) {
-                    applyChmodJava(children[i], mode, true);
+                    applyChmodJava(children[i], mode, true, depth + 1);
                 }
             }
         }

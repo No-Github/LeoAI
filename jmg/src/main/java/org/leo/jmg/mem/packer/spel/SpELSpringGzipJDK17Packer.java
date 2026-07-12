@@ -18,10 +18,22 @@ public class SpELSpringGzipJDK17Packer implements Packer {
     }
 
     public static void assertClassNameValid(String className) {
-        String packageName = className.substring(0, className.lastIndexOf("."));
-        if (!"org.springframework.expression".equals(packageName)) {
-            throw new UnsupportedOperationException(className + " is not supported, please set className in same package org.springframework.expression, " +
-                    "for example, org.springframework.expression.CommonUtil, org.springframework.expression.sub.CommonUtil will also not work");
+        if (className == null || className.trim().isEmpty()) {
+            throw new IllegalArgumentException("className 不能为空");
         }
+        int lastDot = className.lastIndexOf('.');
+        if (lastDot <= 0 || lastDot == className.length() - 1) {
+            throw unsupportedClassName(className);
+        }
+        String packageName = className.substring(0, lastDot);
+        if (!"org.springframework.expression".equals(packageName)) {
+            throw unsupportedClassName(className);
+        }
+    }
+
+    private static UnsupportedOperationException unsupportedClassName(String className) {
+        return new UnsupportedOperationException(className
+                + " is not supported, please set className in package org.springframework.expression, "
+                + "for example org.springframework.expression.CommonUtil");
     }
 }

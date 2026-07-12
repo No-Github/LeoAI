@@ -113,11 +113,12 @@ public class ExecCommandComponent implements Runnable {
 
         ProcessBuilder builder = createProcessBuilder();
         builder.redirectErrorStream(true);
-
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-
+        Process process = null;
+        InputStream stdout = null;
+        InputStreamReader reader = null;
         try {
-            Process process = builder.start();
+            process = builder.start();
 
             // 填充占位 map 的实际字段
             processMap.put("stdin", process.getOutputStream());
@@ -127,8 +128,8 @@ public class ExecCommandComponent implements Runnable {
             // 【修复 #6】动态检测 Windows 控制台编码
             String charset = detectCharset();
 
-            InputStream stdout = process.getInputStream();
-            InputStreamReader reader = new InputStreamReader(stdout, charset);
+            stdout = process.getInputStream();
+            reader = new InputStreamReader(stdout, charset);
 
             char[] buffer = new char[BUFFER_SIZE];
             int len;
@@ -148,9 +149,18 @@ public class ExecCommandComponent implements Runnable {
                 }
             }
 
-        } catch (IOException ignored) {
+        } catch (IOException e) {
             // 进程被 destroy 或 I/O 中断，正常退出
+            processMap.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+            if (process != null) {
+                try { process.destroy(); } catch (Exception ignored) {}
+            }
         } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (IOException ignored) {}
+            } else if (stdout != null) {
+                try { stdout.close(); } catch (IOException ignored) {}
+            }
             // 【修复 #5】进程自然退出后标记，供 read 感知
             if (processMap != null) {
                 processMap.put("exited", Boolean.TRUE);
@@ -160,7 +170,14 @@ public class ExecCommandComponent implements Runnable {
 
     private void execCommand() throws Exception {
         String processId = getStringParam("processId");
-        int operation = ((Number) params.get("op")).intValue();
+        if (processId == null || processId.trim().length() == 0) {
+            throw new IllegalArgumentException("processId is required");
+        }
+        Object operationObj = params.get("op");
+        if (!(operationObj instanceof Number)) {
+            throw new IllegalArgumentException("op must be a number");
+        }
+        int operation = ((Number) operationObj).intValue();
 
         cleanupExpiredProcesses();
 
@@ -180,17 +197,26 @@ public class ExecCommandComponent implements Runnable {
             long now = System.currentTimeMillis();
             placeholder.put(KEY_CREATED_AT, Long.valueOf(now));
             placeholder.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
-            env.put(processId, placeholder);
+            Object existing = ((ConcurrentHashMap) env).putIfAbsent(processId, placeholder);
+            if (existing != null) {
+                processMap = (Map) existing;
+            } else {
+                // 【修复 #4】通过 THREAD_PARAMS 传递 processId，避免 params 竞态
+                Thread t = new Thread(this, "ExecCommand-" + processId);
+                t.setDaemon(true);
+                THREAD_PARAMS.put(t, processId);
+                try {
+                    t.start();
+                } catch (RuntimeException e) {
+                    THREAD_PARAMS.remove(t);
+                    if (env.get(processId) == placeholder) env.remove(processId);
+                    throw e;
+                }
 
-            // 【修复 #4】通过 THREAD_PARAMS 传递 processId，避免 params 竞态
-            Thread t = new Thread(this, "ExecCommand-" + processId);
-            t.setDaemon(true);
-            THREAD_PARAMS.put(t, processId);
-            t.start();
-
-            results.put("code", 200);
-            results.put("msg", "process starting");
-            return;
+                results.put("code", 200);
+                results.put("msg", "process starting");
+                return;
+            }
         }
 
         touchProcess(processMap);
@@ -380,7 +406,8 @@ public class ExecCommandComponent implements Runnable {
         // 【修复 #5】如果标记了 exited 且 process 也为空，说明启动失败
         if (Boolean.TRUE.equals(processMap.get("exited")) && process == null) {
             results.put("alive", Boolean.FALSE);
-            results.put("error", "process failed to start");
+            Object error = processMap.get("error");
+            results.put("error", error != null ? error : "process failed to start");
         }
     }
 

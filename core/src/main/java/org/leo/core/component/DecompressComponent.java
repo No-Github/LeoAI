@@ -66,6 +66,9 @@ public class DecompressComponent implements Runnable {
                 throw new IOException("无法创建输出目录: " + outputFolder);
             }
         }
+        if (!outDir.isDirectory()) {
+            throw new IOException("输出路径不是目录: " + outputFolder);
+        }
         
         int fileCount = 0;
         long totalSize = 0;
@@ -129,6 +132,9 @@ public class DecompressComponent implements Runnable {
         
         // 创建输出目录
         File outputFileObj = new File(outputFile);
+        if (gzipFileObj.getCanonicalPath().equals(outputFileObj.getCanonicalPath())) {
+            throw new IOException("GZIP 源文件与输出文件不能是同一路径");
+        }
         File parentDir = outputFileObj.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
             if (!parentDir.mkdirs()) {
@@ -256,6 +262,9 @@ public class DecompressComponent implements Runnable {
             if (!outDir.mkdirs()) {
                 throw new IOException("无法创建输出目录: " + outputFolder);
             }
+        }
+        if (!outDir.isDirectory()) {
+            throw new IOException("输出路径不是目录: " + outputFolder);
         }
         return outDir;
     }
@@ -470,6 +479,9 @@ public class DecompressComponent implements Runnable {
         Object desObj = params.get("des");
         Object formatObj = params.get("format");
         String format = formatObj == null ? null : formatObj.toString();
+        if (!(srcObj instanceof byte[]) || !(desObj instanceof byte[])) {
+            throw new IllegalArgumentException("src 和 des 必须是 UTF-8 byte[]");
+        }
         String src = new String((byte[]) srcObj, "utf-8");
         String des = new String((byte[]) desObj, "utf-8");
         format = normalizeFormat(format, src);

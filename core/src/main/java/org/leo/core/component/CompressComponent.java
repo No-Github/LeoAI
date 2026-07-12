@@ -2,6 +2,7 @@ package org.leo.core.component;
 
 import java.io.*;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -28,6 +29,9 @@ public class CompressComponent implements Runnable {
     // 排除模式（正则表达式）
     private Pattern excludePattern;
     private File sourceRoot;
+    private String sourceRootCanonical;
+    private String destinationCanonical;
+    private HashSet visitedDirectories;
 
     @Override
 
@@ -61,6 +65,11 @@ public class CompressComponent implements Runnable {
         
         // 验证目标路径
         File zipFileObj = new File(zipFile);
+        String sourceCanonical = sourceFile.getCanonicalPath();
+        destinationCanonical = zipFileObj.getCanonicalPath();
+        if (sourceCanonical.equals(destinationCanonical)) {
+            throw new IOException("源文件与目标 ZIP 不能是同一路径");
+        }
         File parentDir = zipFileObj.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
             if (!parentDir.mkdirs()) {
@@ -71,6 +80,8 @@ public class CompressComponent implements Runnable {
         // 初始化排除模式
         initializeExcludePattern(excludePattern);
         sourceRoot = sourceFile.isDirectory() ? sourceFile : sourceFile.getParentFile();
+        sourceRootCanonical = sourceRoot == null ? null : sourceRoot.getCanonicalPath();
+        visitedDirectories = new HashSet();
         
         ZipOutputStream zos = null;
         try {
@@ -95,6 +106,11 @@ public class CompressComponent implements Runnable {
      * 递归压缩目录（ZIP格式）
      */
     private void compressDirectory(File folder, String parentFolder, ZipOutputStream zos) throws IOException {
+        String canonical = folder.getCanonicalPath();
+        if (visitedDirectories.contains(canonical)) {
+            return;
+        }
+        visitedDirectories.add(canonical);
         File[] files = folder.listFiles();
         if (files != null) {
             for (File file : files) {
@@ -154,10 +170,6 @@ public class CompressComponent implements Runnable {
      * @return true表示应该排除，false表示应该包含
      */
     private boolean shouldExclude(File file, String entryPath) {
-        if (excludePattern == null) {
-            return false;
-        }
-        
         // 标准化路径（使用正斜杠）
         String normalizedPath = entryPath.replace("\\", "/");
         
@@ -166,7 +178,14 @@ public class CompressComponent implements Runnable {
         try {
             if (sourceRoot != null) {
                 String filePath = file.getCanonicalPath();
-                String rootPath = sourceRoot.getCanonicalPath();
+                if (filePath.equals(destinationCanonical)) {
+                    return true;
+                }
+                String rootPath = sourceRootCanonical;
+                if (rootPath != null && !filePath.equals(rootPath)
+                        && !filePath.startsWith(rootPath + File.separator)) {
+                    return true;
+                }
                 if (filePath.startsWith(rootPath)) {
                     relativePath = filePath.substring(rootPath.length());
                     if (relativePath.startsWith(File.separator)) {
@@ -178,7 +197,10 @@ public class CompressComponent implements Runnable {
         } catch (IOException e) {
             // 使用标准化路径
         }
-        
+
+        if (excludePattern == null) {
+            return false;
+        }
         // 匹配完整路径或文件名
         return excludePattern.matcher(relativePath).matches() 
             || excludePattern.matcher(normalizedPath).matches()
@@ -206,7 +228,9 @@ public class CompressComponent implements Runnable {
         Object srcObj = params.get("src");
         Object desObj = params.get("des");
 
-
+        if (!(srcObj instanceof byte[]) || !(desObj instanceof byte[])) {
+            throw new IllegalArgumentException("src 和 des 必须是 UTF-8 byte[]");
+        }
         String src = new String((byte[]) srcObj, "utf-8");
         String des = new String((byte[]) desObj, "utf-8");
 

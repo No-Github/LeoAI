@@ -1,9 +1,31 @@
 package org.leo.core.component;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import javax.script.ScriptEngine;
+import javax.script.ScriptEngineManager;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author LeoSpring
  * @version 1.0
  */
-public class ReconScanComponent implements Runnable {
+public class ReconScanComponent implements Runnable, InvocationHandler {
 
     private HashMap params;
     private HashMap results;
@@ -37,12 +59,17 @@ public class ReconScanComponent implements Runnable {
 
     private static final int DEFAULT_THREADS      = 10;
     private static final int MAX_THREADS          = 128;
+    private static final int DEFAULT_TIMEOUT      = 3000;
+    private static final int DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+    private static final int MAX_TIMEOUT          = 300000;
+    private static final int MAX_BODY_BYTES       = 10 * 1024 * 1024;
     private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
 
     /** taskId → task HashMap */
     private static final ConcurrentHashMap tasks     = new ConcurrentHashMap();
     /** taskId → Object (monitor) */
     private static final ConcurrentHashMap taskLocks = new ConcurrentHashMap();
+    private static volatile SSLSocketFactory trustAllFactory;
 
     // ── worker 字段 ──────────────────────────────────────────────────────────
     private String taskId;
@@ -116,9 +143,9 @@ public class ReconScanComponent implements Runnable {
                 Map req = (Map) requests.get(i);
                 try {
                     if (isTcpTarget(target)) {
-                        resp.add(FingerprintComponent.execTcp(target, req));
+                        resp.add(execTcp(target, req));
                     } else {
-                        resp.add(FingerprintComponent.execHttp(target, req));
+                        resp.add(execHttp(target, req));
                     }
                 } catch (Exception e) {
                     HashMap err = new HashMap();
@@ -132,7 +159,7 @@ public class ReconScanComponent implements Runnable {
 
             boolean hit = false;
             try {
-                hit = FingerprintComponent.evalJs(resp, script);
+                hit = evalJs(resp, script);
             } catch (Exception e) {
                 HashMap err = new HashMap();
                 err.put("stage",     "script");
@@ -151,6 +178,252 @@ public class ReconScanComponent implements Runnable {
         } finally {
             markCompleted(task);
         }
+    }
+
+    // ==================== 独立 I/O 实现 ====================
+
+    /**
+     * SSL 动态代理回调。Recon payload 必须自包含，不能直接引用另一个
+     * Component；远端每次只加载并重命名一个 class。
+     */
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        String name = method.getName();
+        if ("verify".equals(name)) return Boolean.TRUE;
+        if ("getAcceptedIssuers".equals(name)) return new X509Certificate[0];
+        return null;
+    }
+
+    private static HashMap execHttp(Map target, Map req) throws Exception {
+        String baseUrl = stringVal(target.get("baseUrl"));
+        if (baseUrl.length() == 0) throw new IllegalArgumentException("HTTP target requires baseUrl");
+
+        String uri = stringVal(req.get("uri"));
+        if (uri.length() == 0) uri = stringVal(req.get("path"));
+        if (uri.length() == 0) uri = "/";
+        String method = stringVal(req.get("method")).toUpperCase(Locale.ENGLISH);
+        if (method.length() == 0) method = "GET";
+        int timeout = timeoutVal(req.get("timeout"));
+        String charset = charsetVal(req.get("charset"));
+        int maxBodyBytes = maxBodyBytesVal(req.get("maxBodyBytes"));
+
+        HttpURLConnection conn = null;
+        OutputStream os = null;
+        InputStream is = null;
+        try {
+            conn = (HttpURLConnection) new URL(buildUrl(baseUrl, uri)).openConnection();
+            conn.setConnectTimeout(timeout);
+            conn.setReadTimeout(timeout);
+            conn.setUseCaches(false);
+            conn.setInstanceFollowRedirects(false);
+            if (conn instanceof HttpsURLConnection) {
+                HttpsURLConnection https = (HttpsURLConnection) conn;
+                ReconScanComponent handler = new ReconScanComponent();
+                https.setSSLSocketFactory(buildTrustAllFactory(handler));
+                ClassLoader cl = Thread.currentThread().getContextClassLoader();
+                HostnameVerifier verifier = (HostnameVerifier) Proxy.newProxyInstance(
+                        cl, new Class[]{HostnameVerifier.class}, handler);
+                https.setHostnameVerifier(verifier);
+            }
+            conn.setRequestMethod(method);
+            conn.setDoInput(true);
+
+            Object headersObj = req.get("headers");
+            if (headersObj instanceof Map) {
+                Map headers = (Map) headersObj;
+                for (Iterator it = headers.keySet().iterator(); it.hasNext(); ) {
+                    Object key = it.next();
+                    Object value = headers.get(key);
+                    if (key != null && value != null) {
+                        conn.setRequestProperty(String.valueOf(key), String.valueOf(value));
+                    }
+                }
+            }
+
+            Object bodyObj = req.get("body");
+            if (bodyObj != null && ("POST".equals(method) || "PUT".equals(method)
+                    || "PATCH".equals(method))) {
+                byte[] body = String.valueOf(bodyObj).getBytes(charset);
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(body.length);
+                os = conn.getOutputStream();
+                os.write(body);
+                os.flush();
+            }
+
+            int status = conn.getResponseCode();
+            is = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            HashMap bodyMap = readBody(is, charset, maxBodyBytes);
+            HashMap response = new HashMap();
+            response.put("status", Integer.valueOf(status));
+            response.put("body", bodyMap.get("body"));
+            response.put("bodyLength", bodyMap.get("bodyLength"));
+            response.put("truncated", bodyMap.get("truncated"));
+            response.put("headers", conn.getHeaderFields());
+            return response;
+        } finally {
+            closeQuietly(os);
+            closeQuietly(is);
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static HashMap execTcp(Map target, Map req) throws Exception {
+        String host = stringVal(target.get("host"));
+        if (host.length() == 0) throw new IllegalArgumentException("TCP target requires host");
+        int port = intVal(target.get("port"), -1);
+        if (port <= 0 || port > 65535) {
+            throw new IllegalArgumentException("TCP target port is invalid: " + target.get("port"));
+        }
+        int timeout = timeoutVal(req.get("timeout"));
+        String charset = charsetVal(req.get("charset"));
+        int maxBodyBytes = maxBodyBytesVal(req.get("maxBodyBytes"));
+
+        Socket socket = null;
+        OutputStream os = null;
+        InputStream is = null;
+        try {
+            socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), timeout);
+            socket.setSoTimeout(timeout);
+            Object bodyObj = req.get("body");
+            if (bodyObj != null) {
+                os = socket.getOutputStream();
+                os.write(String.valueOf(bodyObj).getBytes(charset));
+                os.flush();
+            }
+            is = socket.getInputStream();
+            HashMap bodyMap = readBytes(is, maxBodyBytes, true);
+            byte[] bytes = (byte[]) bodyMap.get("bytes");
+            HashMap response = new HashMap();
+            response.put("raw", new String(bytes, charset));
+            response.put("bytes", bytes);
+            response.put("bodyLength", bodyMap.get("bodyLength"));
+            response.put("truncated", bodyMap.get("truncated"));
+            return response;
+        } finally {
+            closeQuietly(os);
+            closeQuietly(is);
+            closeQuietly(socket);
+        }
+    }
+
+    private static boolean evalJs(List responses, String script) throws Exception {
+        ScriptEngineManager manager = new ScriptEngineManager();
+        String[] names = new String[]{"js", "nashorn", "graal.js", "JavaScript", "ecmascript"};
+        ScriptEngine engine = null;
+        for (int i = 0; i < names.length; i++) {
+            engine = manager.getEngineByName(names[i]);
+            if (engine != null) break;
+        }
+        if (engine == null) {
+            throw new IllegalStateException("No JavaScript engine available (Java "
+                    + System.getProperty("java.version", "unknown") + ")");
+        }
+        engine.put("resp", responses);
+        if (responses.size() == 1 && responses.get(0) instanceof Map) {
+            Map first = (Map) responses.get(0);
+            for (Iterator it = first.keySet().iterator(); it.hasNext(); ) {
+                Object key = it.next();
+                engine.put(String.valueOf(key), first.get(key));
+            }
+        }
+        Object value = engine.eval(script);
+        if (value instanceof Boolean) return ((Boolean) value).booleanValue();
+        if (value instanceof Number) return ((Number) value).intValue() != 0;
+        return "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private static SSLSocketFactory buildTrustAllFactory(InvocationHandler handler) throws Exception {
+        SSLSocketFactory current = trustAllFactory;
+        if (current != null) return current;
+        synchronized (ReconScanComponent.class) {
+            if (trustAllFactory == null) {
+                ClassLoader cl = Thread.currentThread().getContextClassLoader();
+                TrustManager manager = (TrustManager) Proxy.newProxyInstance(
+                        cl, new Class[]{X509TrustManager.class}, handler);
+                SSLContext context = SSLContext.getInstance("TLS");
+                context.init(null, new TrustManager[]{manager}, new SecureRandom());
+                trustAllFactory = context.getSocketFactory();
+            }
+            return trustAllFactory;
+        }
+    }
+
+    private static HashMap readBody(InputStream in, String charset, int maxBytes) throws Exception {
+        HashMap value = readBytes(in, maxBytes, false);
+        value.put("body", new String((byte[]) value.get("bytes"), charset));
+        value.remove("bytes");
+        return value;
+    }
+
+    private static HashMap readBytes(InputStream in, int maxBytes, boolean tcpMode) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        boolean truncated = false;
+        if (in != null) {
+            byte[] buffer = new byte[4096];
+            while (true) {
+                int len;
+                try {
+                    len = in.read(buffer);
+                } catch (SocketTimeoutException e) {
+                    if (tcpMode && out.size() > 0) break;
+                    throw e;
+                }
+                if (len < 0) break;
+                if (len == 0) continue;
+                int allowed = maxBytes - out.size();
+                if (allowed <= 0) {
+                    truncated = true;
+                    break;
+                }
+                if (len > allowed) {
+                    out.write(buffer, 0, allowed);
+                    truncated = true;
+                    break;
+                }
+                out.write(buffer, 0, len);
+            }
+        }
+        byte[] bytes = out.toByteArray();
+        HashMap result = new HashMap();
+        result.put("bytes", bytes);
+        result.put("bodyLength", Integer.valueOf(bytes.length));
+        result.put("truncated", Boolean.valueOf(truncated));
+        return result;
+    }
+
+    private static String buildUrl(String baseUrl, String uri) {
+        String lower = uri.toLowerCase(Locale.ENGLISH);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return uri;
+        if (baseUrl.endsWith("/") && uri.startsWith("/")) return baseUrl + uri.substring(1);
+        if (!baseUrl.endsWith("/") && !uri.startsWith("/")) return baseUrl + "/" + uri;
+        return baseUrl + uri;
+    }
+
+    private static int timeoutVal(Object value) {
+        int timeout = intVal(value, DEFAULT_TIMEOUT);
+        if (timeout <= 0) return DEFAULT_TIMEOUT;
+        return timeout > MAX_TIMEOUT ? MAX_TIMEOUT : timeout;
+    }
+
+    private static int maxBodyBytesVal(Object value) {
+        int max = intVal(value, DEFAULT_MAX_BODY_BYTES);
+        if (max <= 0) return DEFAULT_MAX_BODY_BYTES;
+        return max > MAX_BODY_BYTES ? MAX_BODY_BYTES : max;
+    }
+
+    private static String charsetVal(Object value) {
+        String charset = stringVal(value).trim();
+        return charset.length() == 0 ? "UTF-8" : charset;
+    }
+
+    private static void closeQuietly(Object closeable) {
+        if (closeable == null) return;
+        try {
+            if (closeable instanceof InputStream) ((InputStream) closeable).close();
+            else if (closeable instanceof OutputStream) ((OutputStream) closeable).close();
+            else if (closeable instanceof Socket) ((Socket) closeable).close();
+        } catch (Exception ignored) {}
     }
 
     // ==================== 方法调度 ====================
@@ -371,7 +644,7 @@ public class ReconScanComponent implements Runnable {
         // 从二维 results 构建 matched：{targetKey → [ruleId,...]}（值为 true 的规则）
         ConcurrentHashMap allResults = (ConcurrentHashMap) task.get("results");
         HashMap matched = new HashMap();
-        for (Iterator it = allResults.keySet().iterator(); it.hasNext(); ) {
+        for (Iterator it = ((Map) allResults).keySet().iterator(); it.hasNext(); ) {
             Object targetKey = it.next();
             Object targetVal = allResults.get(targetKey);
             if (!(targetVal instanceof Map)) continue;
@@ -428,7 +701,7 @@ public class ReconScanComponent implements Runnable {
 
     private void cleanupStoppedTasks() {
         long now = System.currentTimeMillis();
-        for (Iterator it = tasks.keySet().iterator(); it.hasNext(); ) {
+        for (Iterator it = ((Map) tasks).keySet().iterator(); it.hasNext(); ) {
             Object id   = it.next();
             Map    task = (Map) tasks.get(id);
             if (task == null || !STATE_STOPPED.equals(task.get("status"))) continue;

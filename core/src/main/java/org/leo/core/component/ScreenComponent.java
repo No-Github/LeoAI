@@ -63,12 +63,18 @@ public class ScreenComponent implements Runnable {
         // 获取参数
         String format = (String) params.get("format");
         if (format == null) format = "jpg";
+        format = format.toLowerCase();
+        if (!isFormatSupported(format)) format = "jpg";
         
         Object qualityObj = params.get("quality");
         float quality = qualityObj instanceof Number ? ((Number) qualityObj).intValue() / 100.0f : 0.8f;
+        if (quality < 0.0f) quality = 0.0f;
+        if (quality > 1.0f) quality = 1.0f;
 
         Object delayObj = params.get("delay");
         int delay = delayObj instanceof Number ? ((Number) delayObj).intValue() : 100;
+        if (delay < 0) delay = 0;
+        if (delay > 10000) delay = 10000;
         
         // 截图延迟，避免动画干扰
         if (delay > 0) {
@@ -119,7 +125,7 @@ public class ScreenComponent implements Runnable {
     private BufferedImage captureFullScreen() throws Exception {
 
         // Linux 环境补充检查（DISPLAY 缺失意味着无法截图）
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("linux")) {
             String display = System.getenv("DISPLAY");
             if (display == null || display.trim().isEmpty()) {
@@ -140,6 +146,9 @@ public class ScreenComponent implements Runnable {
         // 真正执行截图（多屏支持）
         GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
         GraphicsDevice[] screens = ge.getScreenDevices();
+        if (screens == null || screens.length == 0) {
+            throw new Exception("未检测到可用屏幕");
+        }
 
         Rectangle allScreenBounds = new Rectangle();
         for (GraphicsDevice screen : screens) {

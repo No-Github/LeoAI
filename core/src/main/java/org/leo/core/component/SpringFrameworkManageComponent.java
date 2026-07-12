@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class SpringFrameworkManageComponent implements Runnable {
 
@@ -11,7 +12,7 @@ public class SpringFrameworkManageComponent implements Runnable {
     private HashMap results;
     // 注意：曾经这里有 `private static Object context` 缓存，第一次 idle 拿不到就永远空。
     // 现在每次 invoke 都重新解析。
-    private static HashMap interceptorMap=new HashMap();
+    private static Map interceptorMap = new ConcurrentHashMap();
 
 
     public void run() {
@@ -44,14 +45,16 @@ public class SpringFrameworkManageComponent implements Runnable {
         String methodName = (String) params.get("methodName");
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
-        }
-        if ("unLoadController".equals(methodName)) {
+        } else if ("unLoadController".equals(methodName)) {
             String mappingInfo= (String) params.get("mappingInfo");
             unLoadController(mappingInfo);
-        }
-        if ("unLoadInterceptor".equals(methodName)) {
+        } else if ("unLoadInterceptor".equals(methodName)) {
             String interceptorId= (String) params.get("interceptorId");
             unLoadInterceptor(interceptorId);
+        } else {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 methodName: " + methodName);
+            return;
         }
         results.put("code", 200);
     }
@@ -118,6 +121,7 @@ public class SpringFrameworkManageComponent implements Runnable {
 
 
     public ArrayList getAllMappedInterceptor() throws Exception {
+        interceptorMap.clear();
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
         Object[] adaptedInterceptors= (Object[]) invokeMethod(abstractHandlerMapping,"getAdaptedInterceptors");
         ArrayList AllMappedInterceptor=new ArrayList();
@@ -180,7 +184,8 @@ public class SpringFrameworkManageComponent implements Runnable {
             Object httprequest = invokeMethod(requestAttributes, "getRequest");
             Object session = invokeMethod(httprequest, "getSession");
             Object servletContext = invokeMethod(session, "getServletContext");
-            context = invokeMethod(classLoader.loadClass("org.springframework.web.context.support.WebApplicationContextUtils"), "getWebApplicationContext", new Class[]{classLoader.loadClass("javax.servlet.ServletContext")}, new Object[]{servletContext});
+            Class servletContextClass = loadServletContextClass(classLoader);
+            context = invokeMethod(classLoader.loadClass("org.springframework.web.context.support.WebApplicationContextUtils"), "getWebApplicationContext", new Class[]{servletContextClass}, new Object[]{servletContext});
         } catch (Exception e) {
         }
 
@@ -254,7 +259,7 @@ public class SpringFrameworkManageComponent implements Runnable {
     private static Object resolveWebAppContext(HashSet standardContexts, ClassLoader cl) throws Throwable {
         if (standardContexts == null || standardContexts.isEmpty()) return null;
         Class waCtxUtils = cl.loadClass("org.springframework.web.context.support.WebApplicationContextUtils");
-        Class servletCtxClass = cl.loadClass("javax.servlet.ServletContext");
+        Class servletCtxClass = loadServletContextClass(cl);
         Method getCtx = waCtxUtils.getMethod("getWebApplicationContext", servletCtxClass);
         for (Object stdCtx : standardContexts) {
             try {
@@ -271,6 +276,14 @@ public class SpringFrameworkManageComponent implements Runnable {
             }
         }
         return null;
+    }
+
+    private static Class loadServletContextClass(ClassLoader cl) throws ClassNotFoundException {
+        try {
+            return cl.loadClass("jakarta.servlet.ServletContext");
+        } catch (ClassNotFoundException ignored) {
+            return cl.loadClass("javax.servlet.ServletContext");
+        }
     }
 
 

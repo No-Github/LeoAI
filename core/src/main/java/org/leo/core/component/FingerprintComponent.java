@@ -63,6 +63,8 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
     private static final int  MAX_THREADS            = 64;
     private static final int  DEFAULT_TIMEOUT        = 3000;
     private static final int  DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+    private static final int  MAX_TIMEOUT            = 300000;
+    private static final int  MAX_BODY_BYTES         = 10 * 1024 * 1024;
     private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
 
     // ==================== 静态状态 ====================
@@ -208,6 +210,12 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
         if (targets.isEmpty())           throw new IllegalArgumentException("targets cannot be empty");
         if (requests.isEmpty())          throw new IllegalArgumentException("rule.requests cannot be empty");
 
+        for (int i = 0; i < targets.size(); i++) {
+            if (!(targets.get(i) instanceof Map)) {
+                throw new IllegalArgumentException("targets[" + i + "] must be an object");
+            }
+        }
+
         int threads = intVal(p.get("threads"), DEFAULT_THREADS);
         if (threads < 1)              threads = 1;
         if (threads > MAX_THREADS)    threads = MAX_THREADS;
@@ -231,10 +239,15 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
 
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         task.put("executor", pool);
-        for (int i = 0; i < targets.size(); i++) {
-            Object item = targets.get(i);
-            if (!(item instanceof Map)) throw new IllegalArgumentException("targets[" + i + "] must be an object");
-            pool.execute(new FingerprintComponent(id, (Map) item));
+        try {
+            for (int i = 0; i < targets.size(); i++) {
+                pool.execute(new FingerprintComponent(id, (Map) targets.get(i)));
+            }
+        } catch (RuntimeException e) {
+            task.put("status", STATE_STOPPED);
+            task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            pool.shutdownNow();
+            throw e;
         }
         pool.shutdown();
         return id;
@@ -569,7 +582,7 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
 
     private void cleanupStoppedTasks() {
         long now = System.currentTimeMillis();
-        for (Iterator it = tasks.keySet().iterator(); it.hasNext(); ) {
+        for (Iterator it = ((Map) tasks).keySet().iterator(); it.hasNext(); ) {
             Object id   = it.next();
             Map    task = (Map) tasks.get(id);
             if (task == null || !STATE_STOPPED.equals(task.get("status"))) continue;
@@ -625,12 +638,14 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
 
     private static int timeoutVal(Object v) {
         int t = intVal(v, DEFAULT_TIMEOUT);
-        return t > 0 ? t : DEFAULT_TIMEOUT;
+        if (t <= 0) return DEFAULT_TIMEOUT;
+        return t > MAX_TIMEOUT ? MAX_TIMEOUT : t;
     }
 
     private static int maxBodyBytesVal(Object v) {
         int m = intVal(v, DEFAULT_MAX_BODY_BYTES);
-        return m > 0 ? m : DEFAULT_MAX_BODY_BYTES;
+        if (m <= 0) return DEFAULT_MAX_BODY_BYTES;
+        return m > MAX_BODY_BYTES ? MAX_BODY_BYTES : m;
     }
 
     private static int intVal(Object v, int def) {

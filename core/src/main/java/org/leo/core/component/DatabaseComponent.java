@@ -120,10 +120,16 @@ public class DatabaseComponent implements Runnable {
     /**
      * 安全关闭资源
      */
-    private void closeResource(AutoCloseable resource, String resourceName) {
+    private void closeResource(Object resource, String resourceName) {
         if (resource != null) {
             try {
-                resource.close();
+                if (resource instanceof ResultSet) {
+                    ((ResultSet) resource).close();
+                } else if (resource instanceof Statement) {
+                    ((Statement) resource).close();
+                } else if (resource instanceof Connection) {
+                    ((Connection) resource).close();
+                }
             } catch (Exception e) {
                 // 忽略关闭资源时的异常
             }

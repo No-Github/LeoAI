@@ -22,6 +22,8 @@ public class ProxyForwardComponent implements Runnable {
 
     // 缓冲区大小
     private static final int BUFFER_SIZE = 65536;
+    private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10000;
+    private static final int MAX_CONNECT_TIMEOUT_MS = 300000;
     // idle 超时（10 分钟）
     private static final long IDLE_TIMEOUT_MS = 10L * 60L * 1000L;
 
@@ -53,8 +55,19 @@ public class ProxyForwardComponent implements Runnable {
 
  
     public void invoke() throws IOException, NoSuchFieldException, IllegalAccessException {
-        int op = ((Number) params.get("op")).intValue();
+        Object opObj = params.get("op");
+        if (!(opObj instanceof Number)) {
+            results.put("code", 400);
+            results.put("msg", "op must be a number");
+            return;
+        }
+        int op = ((Number) opObj).intValue();
         String connId = (String) params.get("connId");
+        if (connId == null || connId.length() == 0) {
+            results.put("code", 400);
+            results.put("msg", "connId required");
+            return;
+        }
         
         if (op == OP_OPEN) {
             handleOpen(connId);
@@ -85,18 +98,49 @@ public class ProxyForwardComponent implements Runnable {
     private void handleOpen(String connId)  {
         sweepIdleConns();
         String targetHost = (String) params.get("targetHost");
-        int targetPort = ((Number) params.get("targetPort")).intValue();
+        Object portObj = params.get("targetPort");
+        if (targetHost == null || targetHost.length() == 0 || !(portObj instanceof Number)) {
+            results.put("code", 400);
+            results.put("msg", "targetHost and targetPort required");
+            return;
+        }
+        int targetPort = ((Number) portObj).intValue();
+        if (targetPort < 1 || targetPort > 65535) {
+            results.put("code", 400);
+            results.put("msg", "targetPort out of range");
+            return;
+        }
+        if (connMap.containsKey(connId)) {
+            results.put("code", 409);
+            results.put("msg", "connId already exists");
+            return;
+        }
+        int timeout = DEFAULT_CONNECT_TIMEOUT_MS;
+        Object timeoutObj = params.get("connectTimeout");
+        if (timeoutObj instanceof Number) timeout = ((Number) timeoutObj).intValue();
+        if (timeout <= 0) timeout = DEFAULT_CONNECT_TIMEOUT_MS;
+        if (timeout > MAX_CONNECT_TIMEOUT_MS) timeout = MAX_CONNECT_TIMEOUT_MS;
+        SocketChannel socketChannel = null;
         try {
-            SocketChannel socketChannel = SocketChannel.open();
-            socketChannel.connect(new InetSocketAddress(targetHost, targetPort));
+            socketChannel = SocketChannel.open();
+            socketChannel.socket().connect(new InetSocketAddress(targetHost, targetPort), timeout);
             socketChannel.configureBlocking(false);
-            connMap.put(connId, socketChannel);
+            Object existing = ((ConcurrentHashMap) connMap).putIfAbsent(connId, socketChannel);
+            if (existing != null) {
+                socketChannel.close();
+                results.put("code", 409);
+                results.put("msg", "connId already exists");
+                return;
+            }
             connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
             results.put("code", 200);
             results.put("msg", "opened");
         } catch (IOException e) {
+            if (socketChannel != null) {
+                try { socketChannel.close(); } catch (IOException ignored) {}
+            }
             results.put("code", 404);
-            results.put("msg", "建立连接失败");
+            results.put("msg", "建立连接失败: " + e.getMessage());
         }
     }
 
@@ -120,12 +164,20 @@ public class ProxyForwardComponent implements Runnable {
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
+                closeConnection(connId, socketChannel);
                 results.put("code", 500);
                 results.put("msg", "write timeout");
                 results.put("bytesWritten", written);
                 return;
             }
-            try { Thread.sleep(1); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            if (Thread.currentThread().isInterrupted()) {
+                closeConnection(connId, socketChannel);
+                results.put("code", 500);
+                results.put("msg", "write interrupted");
+                results.put("bytesWritten", written);
+                return;
+            }
         }
         results.put("code", 200);
         results.put("bytesWritten", written);
@@ -163,10 +215,16 @@ public class ProxyForwardComponent implements Runnable {
      * 处理关闭连接操作
      */
     private void handleClose(SocketChannel socketChannel, String connId) throws IOException {
-        socketChannel.socket().close();
+        closeConnection(connId, socketChannel);
+        results.put("code", 200);
+    }
+
+    private void closeConnection(String connId, SocketChannel socketChannel) {
         connMap.remove(connId);
         connLastActivity.remove(connId);
-        results.put("code", 200);
+        if (socketChannel != null) {
+            try { socketChannel.close(); } catch (IOException ignored) {}
+        }
     }
 
     /**
@@ -189,5 +247,3 @@ public class ProxyForwardComponent implements Runnable {
         }
     }
 }
-
-

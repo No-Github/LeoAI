@@ -39,6 +39,7 @@ public class ReverseTunnelComponent implements Runnable {
     private static final int OP_LIST_LISTENS = 6;
 
     private static final int BUFFER_SIZE = 65536;
+    private static final int MAX_ACCEPT_PER_CALL = 256;
 
     // listenId -> ServerSocketChannel
     private static Map listenMap = new ConcurrentHashMap();
@@ -96,7 +97,13 @@ public class ReverseTunnelComponent implements Runnable {
 
     private void handleStartListen() {
         String listenId = (String) params.get("listenId");
-        int listenPort = ((Number) params.get("listenPort")).intValue();
+        Object portObj = params.get("listenPort");
+        if (!(portObj instanceof Number)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "listenPort required");
+            return;
+        }
+        int listenPort = ((Number) portObj).intValue();
         String bindAddr = (String) params.get("bindAddr");
         if (bindAddr == null || bindAddr.length() == 0) {
             bindAddr = "127.0.0.1";
@@ -104,6 +111,11 @@ public class ReverseTunnelComponent implements Runnable {
         if (listenId == null || listenId.length() == 0) {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "listenId required");
+            return;
+        }
+        if (listenPort < 0 || listenPort > 65535) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "listenPort out of range");
             return;
         }
         if (listenMap.containsKey(listenId)) {
@@ -117,15 +129,22 @@ public class ReverseTunnelComponent implements Runnable {
             ssc.configureBlocking(false);
             ssc.socket().setReuseAddress(true);
             ssc.socket().bind(new InetSocketAddress(bindAddr, listenPort));
-            listenMap.put(listenId, ssc);
+            Object existing = ((ConcurrentHashMap) listenMap).putIfAbsent(listenId, ssc);
+            if (existing != null) {
+                ssc.close();
+                results.put("code", Integer.valueOf(409));
+                results.put("msg", "listenId already exists");
+                return;
+            }
+            int actualPort = ssc.socket().getLocalPort();
             HashMap info = new HashMap();
             info.put("listenId", listenId);
-            info.put("listenPort", Integer.valueOf(listenPort));
+            info.put("listenPort", Integer.valueOf(actualPort));
             info.put("bindAddr", bindAddr);
             listenInfoMap.put(listenId, info);
             results.put("code", Integer.valueOf(200));
             results.put("msg", "listening");
-            results.put("listenPort", Integer.valueOf(listenPort));
+            results.put("listenPort", Integer.valueOf(actualPort));
             results.put("bindAddr", bindAddr);
         } catch (IOException e) {
             try { if (ssc != null) ssc.close(); } catch (IOException ignored) {}
@@ -176,7 +195,7 @@ public class ReverseTunnelComponent implements Runnable {
         }
         List newConns = new ArrayList();
         // drain 非阻塞 accept
-        while (true) {
+        while (newConns.size() < MAX_ACCEPT_PER_CALL) {
             SocketChannel sc = ssc.accept();
             if (sc == null) break;
             sc.configureBlocking(false);
@@ -260,7 +279,17 @@ public class ReverseTunnelComponent implements Runnable {
                 results.put("bytesWritten", Integer.valueOf(written));
                 return;
             }
-            try { Thread.sleep(1); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            if (Thread.currentThread().isInterrupted()) {
+                try { sc.close(); } catch (IOException ignored) {}
+                connMap.remove(connId);
+                connToListen.remove(connId);
+                connLastActivity.remove(connId);
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "write interrupted");
+                results.put("bytesWritten", Integer.valueOf(written));
+                return;
+            }
         }
         results.put("code", Integer.valueOf(200));
         results.put("bytesWritten", Integer.valueOf(written));

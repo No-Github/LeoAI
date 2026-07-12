@@ -104,10 +104,12 @@ public final class JspObfuscationPipeline {
             this.webshellCompatible = webshellCompatible;
             this.incompatibleWith = incompatibleWith.length == 0
                     ? java.util.Collections.emptySet()
-                    : new java.util.HashSet<String>(java.util.Arrays.asList(incompatibleWith));
+                    : java.util.Collections.unmodifiableSet(
+                            new java.util.HashSet<String>(java.util.Arrays.asList(incompatibleWith)));
             this.mustPrecede = mustPrecede.length == 0
                     ? java.util.Collections.emptySet()
-                    : new java.util.HashSet<String>(java.util.Arrays.asList(mustPrecede));
+                    : java.util.Collections.unmodifiableSet(
+                            new java.util.HashSet<String>(java.util.Arrays.asList(mustPrecede)));
         }
 
         /** 兼容旧调用（无约束字段）的构造器 */
@@ -271,7 +273,7 @@ public final class JspObfuscationPipeline {
     /**
      * 根据前端传入的有序步骤 ID 列表构建自定义 pipeline，并做约束校验：
      * <ul>
-     *   <li>未知 ID 忽略（不抛异常）</li>
+     *   <li>未知、null 或空白 ID 立即抛出明确异常</li>
      *   <li>互斥步骤（{@link StepDescriptor#incompatibleWith}）同时出现时，后出现的被跳过并打印 warning</li>
      *   <li>顺序约束（{@link StepDescriptor#mustPrecede}）颠倒时打印 warning，但仍按用户指定顺序执行</li>
      * </ul>
@@ -284,12 +286,23 @@ public final class JspObfuscationPipeline {
             return builder().build();
         }
 
-        // 第一遍：过滤未知 ID，收集最终有效 ID 列表
+        // 第一遍：校验 ID 并收集标准化后的有效列表，避免配置看似成功但步骤被静默忽略。
         List<String> validIds = new ArrayList<String>();
+        List<String> invalidIds = new ArrayList<String>();
         for (String id : stepIds) {
-            if (id != null && STEP_REGISTRY.containsKey(id)) {
-                validIds.add(id);
+            if (id == null || id.trim().isEmpty()) {
+                invalidIds.add(String.valueOf(id));
+                continue;
             }
+            String normalized = id.trim();
+            if (!STEP_REGISTRY.containsKey(normalized)) {
+                invalidIds.add(normalized);
+                continue;
+            }
+            validIds.add(normalized);
+        }
+        if (!invalidIds.isEmpty()) {
+            throw new IllegalArgumentException("未知的 JSP 混淆步骤: " + invalidIds);
         }
 
         // 互斥检查：已接受的 ID 集合，遇到互斥对时跳过后者

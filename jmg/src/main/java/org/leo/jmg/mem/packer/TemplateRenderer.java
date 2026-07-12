@@ -3,6 +3,7 @@ package org.leo.jmg.mem.packer;
 import org.leo.core.util.request.ClassNameGenerator;
 
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -42,10 +43,15 @@ import java.util.regex.Pattern;
  *       对已渲染的字符串代码做后处理</li>
  * </ul>
  */
-public class TemplateRenderer {
+public final class TemplateRenderer {
 
     private static final Pattern VAR_PH = Pattern.compile("\\{\\{VAR:([\\w]+)\\}\\}");
     private static final Pattern CLS_PH = Pattern.compile("\\{\\{CLS:([\\w]+)\\}\\}");
+    private static final Pattern EXTRA_KEY = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern UNRESOLVED_PH = Pattern.compile("\\{\\{([^{}\\r\\n]+)\\}\\}");
+
+    private TemplateRenderer() {
+    }
 
     /**
      * 渲染模板：依次完成全局占位符替换、变量名随机化、内部类名随机化。
@@ -55,13 +61,8 @@ public class TemplateRenderer {
      * @return 渲染后的代码（变量名/类名已随机化）
      */
     public static String render(String template, ClassPackerConfig config) {
-        // 1. 全局占位符替换
-        String code = template
-                .replace("{{className}}", config.getClassName() != null ? config.getClassName() : "")
-                .replace("{{base64Str}}", config.getClassBytesBase64Str() != null
-                        ? config.getClassBytesBase64Str() : "");
-
-        return renderVarsAndCls(code);
+        String code = renderGlobalPlaceholders(template, config);
+        return finishRendering(code);
     }
 
     /**
@@ -75,23 +76,66 @@ public class TemplateRenderer {
      */
     public static String render(String template, ClassPackerConfig config,
                                 Map<String, String> extraPairs) {
-        String code = template
-                .replace("{{className}}", config.getClassName() != null ? config.getClassName() : "")
-                .replace("{{base64Str}}", config.getClassBytesBase64Str() != null
-                        ? config.getClassBytesBase64Str() : "");
+        String code = renderGlobalPlaceholders(template, config);
 
         if (extraPairs != null) {
             for (Map.Entry<String, String> entry : extraPairs.entrySet()) {
-                code = code.replace("{{" + entry.getKey() + "}}", entry.getValue());
+                String key = entry.getKey();
+                if (key == null || !EXTRA_KEY.matcher(key).matches()) {
+                    throw new IllegalArgumentException("额外占位符名称无效: " + key);
+                }
+                if (entry.getValue() == null) {
+                    throw new IllegalArgumentException("额外占位符值不能为空: " + key);
+                }
+                code = code.replace("{{" + key + "}}", entry.getValue());
             }
         }
 
-        return renderVarsAndCls(code);
+        return finishRendering(code);
     }
 
     // -----------------------------------------------------------------------
     // 内部实现
     // -----------------------------------------------------------------------
+
+    private static String renderGlobalPlaceholders(String template, ClassPackerConfig config) {
+        if (template == null) {
+            throw new IllegalArgumentException("template 不能为空");
+        }
+        if (config == null) {
+            throw new IllegalArgumentException("config 不能为空");
+        }
+
+        String code = template;
+        if (code.contains("{{className}}")) {
+            String className = config.getClassName();
+            if (className == null || className.trim().isEmpty()) {
+                throw new IllegalArgumentException("模板需要 className，但配置值为空");
+            }
+            code = code.replace("{{className}}", className);
+        }
+        if (code.contains("{{base64Str}}")) {
+            String base64 = config.getClassBytesBase64Str();
+            if (base64 == null || base64.isEmpty()) {
+                throw new IllegalArgumentException("模板需要 base64Str，但配置值为空");
+            }
+            code = code.replace("{{base64Str}}", base64);
+        }
+        return code;
+    }
+
+    private static String finishRendering(String code) {
+        String rendered = renderVarsAndCls(code);
+        Matcher matcher = UNRESOLVED_PH.matcher(rendered);
+        Set<String> unresolved = new LinkedHashSet<String>();
+        while (matcher.find()) {
+            unresolved.add("{{" + matcher.group(1) + "}}");
+        }
+        if (!unresolved.isEmpty()) {
+            throw new IllegalArgumentException("模板包含未解析占位符: " + unresolved);
+        }
+        return rendered;
+    }
 
     /**
      * 对代码中的 VAR / CLS 占位符做随机化替换。

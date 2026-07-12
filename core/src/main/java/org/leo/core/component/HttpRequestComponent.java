@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
@@ -41,6 +42,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
     private static final String DEFAULT_CHARSET = "UTF-8";
     private static final int DEFAULT_CONNECT_TIMEOUT = 10000;
     private static final int DEFAULT_READ_TIMEOUT = 30000;
+    private static final int MAX_TIMEOUT = 300000;
     private static final int MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
 
     private static volatile SSLSocketFactory trustAllSslSocketFactory;
@@ -79,10 +81,14 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (method == null || method.length() == 0) {
             method = "GET";
         }
-        method = method.toUpperCase();
+        method = method.toUpperCase(Locale.ENGLISH);
 
         int connectTimeout = getIntParam("connectTimeout", DEFAULT_CONNECT_TIMEOUT);
         int readTimeout = getIntParam("readTimeout", DEFAULT_READ_TIMEOUT);
+        if (connectTimeout <= 0) connectTimeout = DEFAULT_CONNECT_TIMEOUT;
+        if (readTimeout <= 0) readTimeout = DEFAULT_READ_TIMEOUT;
+        if (connectTimeout > MAX_TIMEOUT) connectTimeout = MAX_TIMEOUT;
+        if (readTimeout > MAX_TIMEOUT) readTimeout = MAX_TIMEOUT;
         boolean followRedirects = getBooleanParam("followRedirects", true);
 
         HttpURLConnection conn = null;
@@ -168,8 +174,11 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
                 }
 
                 if (is != null) {
-                    responseBody = readStream(is);
-                    is.close();
+                    try {
+                        responseBody = readStream(is);
+                    } finally {
+                        try { is.close(); } catch (Exception ignored) {}
+                    }
                 }
             }
 
@@ -233,14 +242,15 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         int totalRead = 0;
 
         while ((len = is.read(buffer)) != -1) {
-            totalRead += len;
-            if (totalRead > MAX_RESPONSE_SIZE) {
-                baos.write(buffer, 0, len);
+            int remaining = MAX_RESPONSE_SIZE - totalRead;
+            if (len > remaining) {
+                if (remaining > 0) baos.write(buffer, 0, remaining);
                 results.put("truncated", 1);
                 results.put("truncateReason", "Response exceeds " + (MAX_RESPONSE_SIZE / 1024 / 1024) + "MB limit");
                 break;
             }
             baos.write(buffer, 0, len);
+            totalRead += len;
         }
 
         return baos.toByteArray();

