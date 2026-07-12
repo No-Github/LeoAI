@@ -7,12 +7,11 @@ import org.springframework.stereotype.Service;
 
 import org.leo.dao.mapper.AuditLogMapper;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -26,7 +25,8 @@ import java.util.UUID;
 @Service
 public class AuditLogService {
     private final AuditLogMapper auditLogMapper;
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter DAY_KEY_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DAY_LABEL_FORMAT = DateTimeFormatter.ofPattern("MM-dd");
     private static final int RECENT_DAYS = 7;
@@ -49,7 +49,7 @@ public class AuditLogService {
             auditLog.setLogId(UUID.randomUUID().toString());
         }
         if (auditLog.getCreateTime() == null || auditLog.getCreateTime().isBlank()) {
-            auditLog.setCreateTime(DATE_FORMAT.format(new Date()));
+            auditLog.setCreateTime(DATE_TIME_FORMAT.format(LocalDateTime.now()));
         }
         if (auditLog.getStatus() == null || auditLog.getStatus().isBlank()) {
             auditLog.setStatus("SUCCESS");
@@ -90,7 +90,7 @@ public class AuditLogService {
      */
     public List<AuditLog> findAuditLogsBySessionId(String sessionId, Integer limit, Integer offset) {
         if (sessionId == null || sessionId.isBlank()) {
-            return new java.util.ArrayList();
+            return new ArrayList<>();
         }
         if (limit == null || limit <= 0) {
             limit = 500;
@@ -99,7 +99,7 @@ public class AuditLogService {
             offset = 0;
         }
         List<AuditLog> logs = auditLogMapper.findAuditLogsBySessionId(sessionId, limit, offset);
-        return logs != null ? logs : new java.util.ArrayList();
+        return logs != null ? logs : new ArrayList<>();
     }
 
     /**
@@ -125,7 +125,7 @@ public class AuditLogService {
             offset = 0;
         }
         List<AuditLog> logs = auditLogMapper.findAllAuditLogs(limit, offset);
-        return logs != null ? logs : new java.util.ArrayList();
+        return logs != null ? logs : new ArrayList<>();
     }
 
     public List<AuditLog> searchAuditLogs(AuditLogQuery query) {

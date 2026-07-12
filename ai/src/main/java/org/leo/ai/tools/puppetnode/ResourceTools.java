@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,7 +22,7 @@ public class ResourceTools {
         String cacheKey = "resource:" + resourcePath;
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cached instanceof Map<?, ?> cachedMap) {
-            return (Map<String, Object>) cachedMap;
+            return copyStringKeyMap(cachedMap);
         }
 
         ResourceCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ResourceCapable.class);
@@ -38,7 +39,7 @@ public class ResourceTools {
         String cacheKey = "spring-boot-config-resources";
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cached instanceof Map<?, ?> cachedMap) {
-            return (Map<String, Object>) cachedMap;
+            return copyStringKeyMap(cachedMap);
         }
 
         String[] candidates = new String[]{
@@ -63,7 +64,7 @@ public class ResourceTools {
         String cacheKey = "class-bytecode:" + className;
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cached instanceof Map<?, ?> cachedMap) {
-            return (Map<String, Object>) cachedMap;
+            return copyStringKeyMap(cachedMap);
         }
         ResourceCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ResourceCapable.class);
         Map<String, Object> results = node.getClassBytecode(className);
@@ -121,5 +122,15 @@ public class ResourceTools {
             return new String(bytes, StandardCharsets.UTF_8);
         }
         return data == null ? null : String.valueOf(data);
+    }
+
+    private Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) {
+                copy.put(stringKey, value);
+            }
+        });
+        return copy;
     }
 }

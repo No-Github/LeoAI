@@ -4,9 +4,9 @@ import org.leo.core.entity.Team;
 import org.leo.dao.mapper.TeamMapper;
 import org.springframework.stereotype.Service;
 
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -24,7 +24,8 @@ public class TeamService {
     /** 内置管理员团队名，禁止删除。 */
     public static final String ADMIN_TEAM_NAME = "系统管理员";
 
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final TeamMapper teamMapper;
 
@@ -59,7 +60,7 @@ public class TeamService {
 
     public boolean addTeam(Team team) {
         if (team == null) throw new IllegalArgumentException("team不能为空");
-        String now = DATE_FORMAT.format(new Date());
+        String now = DATE_FORMAT.format(LocalDateTime.now());
         return teamMapper.insertTeam(
                 team.getTeamId(),
                 team.getTeamName(),
@@ -75,7 +76,7 @@ public class TeamService {
         if (team == null || team.getTeamId() == null || team.getTeamId().isBlank()) {
             throw new IllegalArgumentException("teamId不能为空");
         }
-        String now = DATE_FORMAT.format(new Date());
+        String now = DATE_FORMAT.format(LocalDateTime.now());
         return teamMapper.updateTeamById(
                 team.getTeamId(),
                 team.getTeamName(),

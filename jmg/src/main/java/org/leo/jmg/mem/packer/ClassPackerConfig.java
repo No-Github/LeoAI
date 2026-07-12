@@ -1,5 +1,9 @@
 package org.leo.jmg.mem.packer;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 public class ClassPackerConfig {
     private String className;
     private byte[] classBytes;
@@ -9,7 +13,7 @@ public class ClassPackerConfig {
      * 用户自定义 JSP/JSPX 混淆步骤 ID 列表（有序）。
      * 为 null 或空时 JSP Packer 使用默认 preset；非空时按此顺序构建 pipeline。
      */
-    private java.util.List<String> jspObfuscationSteps;
+    private List<String> jspObfuscationSteps;
 
     /**
      * AI 生成的自定义 JSP 模板（含 {{VAR:}} / {{CLS:}} / {{base64Str}} 占位符）。
@@ -50,12 +54,14 @@ public class ClassPackerConfig {
         this.byPassJavaModule = byPassJavaModule;
     }
 
-    public java.util.List<String> getJspObfuscationSteps() {
+    public List<String> getJspObfuscationSteps() {
         return jspObfuscationSteps;
     }
 
-    public void setJspObfuscationSteps(java.util.List<String> jspObfuscationSteps) {
-        this.jspObfuscationSteps = jspObfuscationSteps;
+    public void setJspObfuscationSteps(List<String> jspObfuscationSteps) {
+        this.jspObfuscationSteps = jspObfuscationSteps == null
+                ? null
+                : Collections.unmodifiableList(new ArrayList<String>(jspObfuscationSteps));
     }
 
     public String getCustomTemplate() {

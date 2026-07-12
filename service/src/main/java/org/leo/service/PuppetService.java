@@ -5,9 +5,9 @@ import org.leo.dao.mapper.PuppetMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -18,7 +18,8 @@ import java.util.List;
 @Service
 public class PuppetService {
 
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final PuppetMapper puppetMapper;
 
@@ -61,7 +62,7 @@ public class PuppetService {
 
     public boolean insertPuppet(Puppet puppet) {
         if (puppet == null) throw new IllegalArgumentException("puppet参数不能为空");
-        String now = DATE_FORMAT.format(new Date());
+        String now = DATE_FORMAT.format(LocalDateTime.now());
         return puppetMapper.insertPuppet(
                 puppet.getPuppetId(),
                 puppet.getPuppetName(),
@@ -96,7 +97,7 @@ public class PuppetService {
         if (puppet == null || puppet.getPuppetId() == null || puppet.getPuppetId().isBlank()) {
             throw new IllegalArgumentException("puppetId不能为空");
         }
-        String now = DATE_FORMAT.format(new Date());
+        String now = DATE_FORMAT.format(LocalDateTime.now());
         return puppetMapper.updatePuppetById(
                 puppet.getPuppetId(),
                 puppet.getPuppetName(),
@@ -133,7 +134,7 @@ public class PuppetService {
      */
     public boolean updateLastHeartbeat(String puppetId) {
         if (puppetId == null || puppetId.isBlank()) return false;
-        String now = DATE_FORMAT.format(new Date());
+        String now = DATE_FORMAT.format(LocalDateTime.now());
         return puppetMapper.updateLastHeartbeat(puppetId.trim(), now, now);
     }
 

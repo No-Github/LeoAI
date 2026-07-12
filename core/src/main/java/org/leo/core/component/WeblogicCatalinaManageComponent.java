@@ -63,8 +63,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                 contextInfo.put("allServlet",getAllServlet(context));
                 contextInfo.put("allListener",getAllListener(context));
                 catalinaInfo.add(contextInfo);
-            }catch (Exception e){
-                e.printStackTrace();
+            } catch (Exception ignored) {
+                // 单个 Context 解析失败不影响其余上下文，也不向目标日志泄漏堆栈。
             }
         }
         return catalinaInfo;

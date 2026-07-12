@@ -7,6 +7,7 @@ import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.security.RoleAwareAdminEndpoint;
+import org.leo.web.security.PasswordPolicy;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -14,7 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -34,13 +37,19 @@ public class UserController {
 
     private static final String SESSION_USER = "user";
     private static final String USERNAME_ADMIN = "admin";
+    private static final int MAX_USERNAME_LENGTH = 100;
+    private static final int MAX_EMAIL_LENGTH = 100;
+    private static final int MAX_PHONE_LENGTH = 20;
 
     private final UserService userService;
     private final TeamService teamService;
+    private final PasswordPolicy passwordPolicy;
 
-    public UserController(UserService userService, TeamService teamService) {
+    public UserController(UserService userService, TeamService teamService,
+                          PasswordPolicy passwordPolicy) {
         this.userService = userService;
         this.teamService = teamService;
+        this.passwordPolicy = passwordPolicy;
     }
 
     // ── 用户查询 ─────────────────────────────────────────────────────────────────
@@ -99,9 +108,23 @@ public class UserController {
             return ApiResponse.badRequest("用户名不能为空");
         }
         targetName = targetName.trim();
+        if (targetName.length() > MAX_USERNAME_LENGTH) {
+            return ApiResponse.badRequest("用户名不能超过 " + MAX_USERNAME_LENGTH + " 个字符");
+        }
         user.setUserName(targetName);
         if (user.getPassword() == null || user.getPassword().isBlank()) {
             return ApiResponse.badRequest("密码不能为空");
+        }
+        try {
+            passwordPolicy.validate(user.getPassword());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
+        if (exceeds(user.getEmail(), MAX_EMAIL_LENGTH)) {
+            return ApiResponse.badRequest("邮箱不能超过 " + MAX_EMAIL_LENGTH + " 个字符");
+        }
+        if (exceeds(user.getPhone(), MAX_PHONE_LENGTH)) {
+            return ApiResponse.badRequest("手机号不能超过 " + MAX_PHONE_LENGTH + " 个字符");
         }
 
         // 确定目标角色
@@ -171,12 +194,20 @@ public class UserController {
         String newName = getString(params, "username");
         if (newName == null) newName = getString(params, "userName");
         if (newName != null && !newName.equals(target.getUserName())) {
+            if (newName.length() > MAX_USERNAME_LENGTH) {
+                return ApiResponse.badRequest("用户名不能超过 " + MAX_USERNAME_LENGTH + " 个字符");
+            }
             if (userService.getUserByName(newName) != null) return ApiResponse.badRequest("用户名已存在");
             target.setUserName(newName);
         }
 
         String newPwd = getString(params, "password");
         if (newPwd != null && !newPwd.isEmpty()) {
+            try {
+                passwordPolicy.validate(newPwd);
+            } catch (IllegalArgumentException e) {
+                return ApiResponse.badRequest(e.getMessage());
+            }
             target.setPassword(PasswordUtil.hash(newPwd));
         }
 
@@ -234,6 +265,11 @@ public class UserController {
 
         String newPassword = getString(params, "newPassword");
         if (newPassword == null || newPassword.isEmpty()) return ApiResponse.badRequest("新密码不能为空");
+        try {
+            passwordPolicy.validate(newPassword);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
 
         User target = userService.getUserById(userId);
         if (target == null) return ApiResponse.notFound("用户不存在");
@@ -289,17 +325,33 @@ public class UserController {
         return (User) request.getSession().getAttribute(SESSION_USER);
     }
 
-    private List<User> sanitize(List<User> users) {
+    private List<Map<String, Object>> sanitize(List<User> users) {
         if (users == null) return new ArrayList<>();
-        for (User u : users) {
-            if (u != null) u.setPassword("");
-        }
-        return users;
+        return users.stream().filter(java.util.Objects::nonNull).map(user -> {
+            Map<String, Object> view = new LinkedHashMap<>();
+            view.put("userId", user.getUserId());
+            view.put("userName", user.getUserName());
+            view.put("privilege", user.getPrivilege());
+            view.put("email", user.getEmail());
+            view.put("phone", user.getPhone());
+            view.put("status", user.getStatus());
+            view.put("lastLoginTime", user.getLastLoginTime());
+            view.put("loginCount", user.getLoginCount());
+            view.put("createTime", user.getCreateTime());
+            view.put("updateTime", user.getUpdateTime());
+            view.put("teamId", user.getTeamId());
+            view.put("remark", user.getRemark());
+            return view;
+        }).toList();
     }
 
     private String getString(HashMap<String, Object> params, String key) {
         Object val = params.get(key);
         return val == null ? null : val.toString().isBlank() ? null : val.toString().trim();
+    }
+
+    private boolean exceeds(String value, int maxLength) {
+        return value != null && value.length() > maxLength;
     }
 
     private String normalizePrivilege(String privilege) {

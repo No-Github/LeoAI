@@ -50,8 +50,8 @@ public class LeoStruct2ActionTpl {
                     response.getOutputStream().write(byteArrayOutputStream.toByteArray());
                 }
             }
-        } catch (Throwable e) {
-            e.printStackTrace();
+        } catch (Throwable ignored) {
+            // 模板运行失败时保持静默，避免向目标应用日志泄漏实现细节。
         }
     }
 

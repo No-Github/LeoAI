@@ -3,7 +3,6 @@ package org.leo.core.component;
 import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.Driver;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
@@ -24,23 +23,21 @@ import java.util.Set;
 public class DatabaseComponent implements Runnable {
 
     
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
 
     /**
      * 组件执行入口
      */
-    @SuppressWarnings("unchecked")
-
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = copyStringObjectMap(h.invoke(null, null, null));
+            results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage());
         }
@@ -64,15 +61,15 @@ public class DatabaseComponent implements Runnable {
         if (url == null || url.trim().isEmpty() || sql == null || sql.trim().isEmpty()) {
             results.put("code", 400);
             results.put("msg", "缺少必填参数: url 或 sql");
-            results.put("columns", new ArrayList<HashMap>());
-            results.put("rows", new ArrayList<HashMap>());
+            results.put("columns", new ArrayList<HashMap<String, Object>>());
+            results.put("rows", new ArrayList<HashMap<String, Object>>());
             results.put("rowCount", null);
             results.put("updateCount", 0);
             return;
         }
 
-        ArrayList<HashMap> columns = new ArrayList();
-        ArrayList<HashMap> rows = new ArrayList();
+        ArrayList<HashMap<String, Object>> columns = new ArrayList<HashMap<String, Object>>();
+        ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
         int updateCount = 0;
         Connection conn = null;
         Statement stmt = null;
@@ -86,7 +83,7 @@ public class DatabaseComponent implements Runnable {
                 ResultSetMetaData metaData = rs.getMetaData();
                 int columnCount = metaData.getColumnCount();
                 for (int i = 1; i <= columnCount; i++) {
-                    HashMap column = new HashMap();
+                    HashMap<String, Object> column = new HashMap<String, Object>();
                     column.put("name", metaData.getColumnName(i));
                     column.put("label", metaData.getColumnLabel(i));
                     column.put("type", metaData.getColumnTypeName(i));
@@ -94,7 +91,7 @@ public class DatabaseComponent implements Runnable {
                     columns.add(column);
                 }
                 while (rs.next()) {
-                    HashMap row = new HashMap();
+                    HashMap<String, Object> row = new HashMap<String, Object>();
                     for (int i = 1; i <= columnCount; i++) {
                         row.put(metaData.getColumnLabel(i), rs.getObject(i));
                     }
@@ -148,17 +145,17 @@ public class DatabaseComponent implements Runnable {
      *   <li>system ClassLoader</li>
      *   <li>所有 Tomcat WebappClassLoader（通过 JMX 查 {@code Catalina:j2eeType=WebModule,*}）</li>
      * </ol>
-     * 找到 driver 类后用 {@code newInstance()} 注册到 DriverManager，
+     * 找到 driver 类后通过无参构造器实例化，
      * 然后用 {@code Driver.connect(url, props)} 直连——绕开 DriverManager 的 CL 检查。
      */
     private Connection openConnection(String driver, String url, String user, String password) throws Exception {
-        Class driverClass = loadDriverClass(driver);
+        Class<?> driverClass = loadDriverClass(driver);
         if (driverClass == null) {
             throw new ClassNotFoundException(
                     "JDBC driver not found: " + driver
                     + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
         }
-        Object driverInstance = driverClass.newInstance();
+        Object driverInstance = driverClass.getDeclaredConstructor().newInstance();
 
         // 直接用 Driver.connect(url, props) 而不是 DriverManager.getConnection()
         // —— DriverManager 会检查 Driver 是否由调用类的 CL 加载，跨 CL 会失败
@@ -173,9 +170,9 @@ public class DatabaseComponent implements Runnable {
     }
 
     /** 在多个 ClassLoader 里尝试加载 driver 类，返回第一个成功的。 */
-    private Class loadDriverClass(String driver) {
+    private Class<?> loadDriverClass(String driver) {
         // 1. 当前线程 contextClassLoader
-        Class c = tryLoad(Thread.currentThread().getContextClassLoader(), driver);
+        Class<?> c = tryLoad(Thread.currentThread().getContextClassLoader(), driver);
         if (c != null) return c;
 
         // 2. system ClassLoader
@@ -184,10 +181,10 @@ public class DatabaseComponent implements Runnable {
 
         // 3. 兜底：所有 Tomcat WebappClassLoader
         try {
-            HashSet webappLoaders = collectWebappClassLoaders();
-            Iterator iter = webappLoaders.iterator();
+            HashSet<ClassLoader> webappLoaders = collectWebappClassLoaders();
+            Iterator<ClassLoader> iter = webappLoaders.iterator();
             while (iter.hasNext()) {
-                ClassLoader cl = (ClassLoader) iter.next();
+                ClassLoader cl = iter.next();
                 c = tryLoad(cl, driver);
                 if (c != null) return c;
             }
@@ -196,7 +193,7 @@ public class DatabaseComponent implements Runnable {
         return null;
     }
 
-    private Class tryLoad(ClassLoader cl, String name) {
+    private Class<?> tryLoad(ClassLoader cl, String name) {
         if (cl == null) return null;
         try {
             return Class.forName(name, true, cl);
@@ -209,19 +206,21 @@ public class DatabaseComponent implements Runnable {
      * 通过 PlatformMBeanServer 找所有 Tomcat WebappClassLoader。
      * 复用 {@link ResourceComponent} 同款实现的简化版。
      */
-    private HashSet collectWebappClassLoaders() throws Throwable {
-        HashSet result = new HashSet();
-        Class mfClass = Class.forName("java.lang.management.ManagementFactory");
+    private HashSet<ClassLoader> collectWebappClassLoaders() throws Throwable {
+        HashSet<ClassLoader> result = new HashSet<ClassLoader>();
+        Class<?> mfClass = Class.forName("java.lang.management.ManagementFactory");
         Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
-        Class onClass = Class.forName("javax.management.ObjectName");
+        Class<?> onClass = Class.forName("javax.management.ObjectName");
         Object pattern = onClass.getConstructor(String.class)
                 .newInstance("Catalina:j2eeType=WebModule,*");
         Method queryNames = mbs.getClass().getMethod("queryNames", onClass,
                 Class.forName("javax.management.QueryExp"));
-        Set names = (Set) queryNames.invoke(mbs, pattern, null);
+        Object queriedNames = queryNames.invoke(mbs, pattern, null);
+        if (!(queriedNames instanceof Set)) return result;
+        Set<?> names = (Set<?>) queriedNames;
         if (names == null || names.isEmpty()) return result;
         Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
-        Iterator iter = names.iterator();
+        Iterator<?> iter = names.iterator();
         while (iter.hasNext()) {
             try {
                 Object on = iter.next();
@@ -233,11 +232,25 @@ public class DatabaseComponent implements Runnable {
                 Method getClassLoader = loader.getClass().getMethod("getClassLoader");
                 Object cl = getClassLoader.invoke(loader);
                 if (cl instanceof ClassLoader) {
-                    result.add(cl);
+                    result.add((ClassLoader) cl);
                 }
             } catch (Throwable ignored) {
             }
         }
         return result;
+    }
+
+    private static HashMap<String, Object> copyStringObjectMap(Object value) {
+        HashMap<String, Object> copy = new HashMap<String, Object>();
+        if (!(value instanceof java.util.Map)) {
+            return copy;
+        }
+        java.util.Map<?, ?> source = (java.util.Map<?, ?>) value;
+        for (java.util.Map.Entry<?, ?> entry : source.entrySet()) {
+            if (entry.getKey() instanceof String) {
+                copy.put((String) entry.getKey(), entry.getValue());
+            }
+        }
+        return copy;
     }
 }

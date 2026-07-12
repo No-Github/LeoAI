@@ -310,8 +310,8 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     currentContainer = null;
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Exception ignored) {
+            // Valve 枚举为尽力而为，避免向目标容器日志写入堆栈。
         }
         return valveInfoList;
     }
@@ -433,9 +433,8 @@ public class TomcatCatalinaManageComponent implements Runnable {
                 info.put("category", category);
                 sink.add(info);
             }
-        } catch (Exception e) {
-            // 单个 getter 失败不影响另一个
-            e.printStackTrace();
+        } catch (Exception ignored) {
+            // 单个 getter 失败不影响另一个，也不污染目标容器日志。
         }
     }
 

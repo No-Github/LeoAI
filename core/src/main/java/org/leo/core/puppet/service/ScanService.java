@@ -53,7 +53,7 @@ public class ScanService extends ComponentService {
         return invokeComponent("PortScanComponent", componentParams);
     }
 
-    public Map<String, Object> scanReachableHost(ArrayList scanHostsList, int scanTimeout) throws Exception {
+    public Map<String, Object> scanReachableHost(ArrayList<String> scanHostsList, int scanTimeout) throws Exception {
         HashMap<String, Object> componentParams = new HashMap<String, Object>();
         componentParams.put("scanHosts", scanHostsList);
         componentParams.put("scanTimeout", scanTimeout);

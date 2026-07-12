@@ -14,7 +14,7 @@ import java.util.List;
 @Mapper
 public interface UserMapper {
 
-    @Select("SELECT * FROM users WHERE user_name = #{userName}")
+    @Select("SELECT * FROM users WHERE user_name = #{userName} COLLATE NOCASE")
     User findUserByUsername(@Param("userName") String userName);
 
     @Select("SELECT * FROM users WHERE user_id = #{userId}")
@@ -57,4 +57,12 @@ public interface UserMapper {
                           @Param("teamId") String teamId,
                           @Param("remark") String remark,
                           @Param("userId") String userId);
+
+    @Update("UPDATE users SET password=COALESCE(#{password}, password), "
+            + "last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
+            + "update_time=#{updateTime} WHERE user_id=#{userId}")
+    boolean recordSuccessfulLogin(@Param("userId") String userId,
+                                  @Param("password") String password,
+                                  @Param("lastLoginTime") String lastLoginTime,
+                                  @Param("updateTime") String updateTime);
 }

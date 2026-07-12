@@ -9,6 +9,7 @@ import org.leo.service.disguise.DisguiseService.ImportResult;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.web.util.ControllerUtil;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -40,6 +41,7 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/add-disguise", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> addDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             disguiseService.addDisguise(params, getCurrentUser(request));
@@ -52,6 +54,7 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/del-disguise", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> delDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             disguiseService.deleteDisguise(ControllerUtil.getRequiredStringParam(params, "disguiseId"), getCurrentUser(request));
@@ -70,6 +73,7 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/update-disguises", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> updateDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             disguiseService.updateDisguise(params, getCurrentUser(request));
@@ -92,6 +96,7 @@ public class DisguiseManagerController {
     }
 
     @RequestMapping(value = "/test-disguises", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> testDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         if (getCurrentUser(request) == null) {
             return ApiResponse.unauthorized("用户未登录");
@@ -117,6 +122,7 @@ public class DisguiseManagerController {
      * 防止未授权用户利用编译/执行能力。
      */
     @RequestMapping(value = "/preview", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> previewDisguise(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         if (getCurrentUser(request) == null) {
             return ApiResponse.unauthorized("用户未登录");
@@ -128,8 +134,10 @@ public class DisguiseManagerController {
             // 用户自定义测试参数，默认使用标准测试数据
             Object customParams = params.get("testParams");
             java.util.HashMap<String, Object> testInput = new java.util.HashMap<>();
-            if (customParams instanceof java.util.Map) {
-                testInput.putAll((java.util.Map<String, Object>) customParams);
+            if (customParams instanceof java.util.Map<?, ?> customMap) {
+                customMap.forEach((key, value) -> {
+                    if (key instanceof String stringKey) testInput.put(stringKey, value);
+                });
             } else {
                 testInput.put("testKey", "hello_world");
                 testInput.put("sessionId", "preview-session");
@@ -251,6 +259,7 @@ public class DisguiseManagerController {
      * 响应：{ results: [{disguiseId, disguiseName, status, message}] }
      */
     @RequestMapping(value = "/disguises/import", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> importDisguises(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy,

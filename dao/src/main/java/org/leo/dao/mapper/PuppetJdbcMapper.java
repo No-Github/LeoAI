@@ -38,6 +38,10 @@ public interface PuppetJdbcMapper {
     @Update("UPDATE puppet_jdbc SET conn_name=#{connName}, puppet_id=#{puppetId}, db_type=#{dbType}, host=#{host}, port=#{port}, database_name=#{databaseName}, username=#{username}, password=#{password}, url_template=#{urlTemplate}, jdbc_url=#{jdbcUrl}, driver_class=#{driverClass}, connection_params=#{connectionParams}, status=#{status}, test_status=#{testStatus}, last_test_time=#{lastTestTime}, last_test_message=#{lastTestMessage}, max_connections=#{maxConnections}, timeout_seconds=#{timeoutSeconds}, team_id=#{teamId}, is_public=#{isPublic}, update_time=#{updateTime}, description=#{description}, remark=#{remark} WHERE conn_id=#{connId}")
     int update(PuppetJdbc connection);
 
+    /** 仅更新加密后的连接密码，供历史数据迁移使用。 */
+    @Update("UPDATE puppet_jdbc SET password=#{password}, update_time=datetime('now') WHERE conn_id=#{connId}")
+    int updatePassword(@Param("connId") String connId, @Param("password") String password);
+
     /**
      * 根据ID删除数据库连接
      *

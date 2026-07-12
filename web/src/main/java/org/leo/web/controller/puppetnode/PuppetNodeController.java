@@ -121,8 +121,8 @@ public class PuppetNodeController {
 
         if (session != null && results != null && results.containsKey("BasicInfo")) {
             Object basicInfoObj = results.get("BasicInfo");
-            if (basicInfoObj instanceof Map) {
-                Map<String, Object> basicInfo = (Map<String, Object>) basicInfoObj;
+            if (basicInfoObj instanceof Map<?, ?> basicInfoMap) {
+                Map<String, Object> basicInfo = copyStringKeyMap(basicInfoMap);
                 String hostId = session.getCurrentHostId();
                 if (hostId != null) {
                     session.setBasicInfo(hostId, basicInfo);
@@ -131,6 +131,14 @@ public class PuppetNodeController {
             }
         }
         return ApiResponse.success(results != null ? results : new HashMap<>());
+    }
+
+    private static Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new HashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) copy.put(stringKey, value);
+        });
+        return copy;
     }
 
     /**

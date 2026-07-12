@@ -7,12 +7,12 @@ CREATE TABLE IF NOT EXISTS users (
     user_id VARCHAR(50) PRIMARY KEY,
     user_name VARCHAR(100) NOT NULL,
     password VARCHAR(255) NOT NULL,
-    privilege VARCHAR(20) NOT NULL DEFAULT 'normal',
+    privilege VARCHAR(20) NOT NULL DEFAULT 'normal' CHECK (privilege IN ('admin', 'leader', 'normal')),
     email VARCHAR(100),
     phone VARCHAR(20),
-    status INTEGER DEFAULT 1, -- 1:启用 0:禁用
+    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
     last_login_time DATETIME,
-    login_count INTEGER DEFAULT 0,
+    login_count INTEGER DEFAULT 0 CHECK (login_count >= 0),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     team_id VARCHAR(50),
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS teams (
     team_name VARCHAR(100) NOT NULL,
     leader_id VARCHAR(50) NOT NULL,
     description TEXT,
-    status INTEGER DEFAULT 1, -- 1:启用 0:禁用
+    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     remark TEXT
@@ -39,19 +39,19 @@ CREATE TABLE IF NOT EXISTS puppets (
     create_by_user_id VARCHAR(50) NOT NULL,
     team_id VARCHAR(50),
     conn_link TEXT NOT NULL,
-    protocol VARCHAR(20) DEFAULT 'http', -- http, httpChunked, websocket
+    protocol VARCHAR(20) DEFAULT 'http' CHECK (protocol IN ('http', 'httpChunked', 'websocket')), -- http, httpChunked, websocket
     headers TEXT,
     req_disguise_id VARCHAR(100) NOT NULL,
     resp_disguise_id VARCHAR(100) NOT NULL,
-    proxy_enabled INTEGER DEFAULT 0, -- 0:禁用 1:启用
+    proxy_enabled INTEGER DEFAULT 0 CHECK (proxy_enabled IN (0, 1)), -- 0:禁用 1:启用
     proxy_type VARCHAR(20), -- http, socks
     proxy_host VARCHAR(255),
     proxy_port INTEGER,
-    balance_enabled INTEGER DEFAULT 0, -- 0:禁用 1:启用（负载均衡稳定功能）
-    max_req_count INTEGER DEFAULT 0,
-    permission VARCHAR(20) DEFAULT 'private', -- private, team, public（兼容旧值 protected）
+    balance_enabled INTEGER DEFAULT 0 CHECK (balance_enabled IN (0, 1)), -- 0:禁用 1:启用（负载均衡稳定功能）
+    max_req_count INTEGER DEFAULT 0 CHECK (max_req_count >= 0),
+    permission VARCHAR(20) DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public', 'protected')), -- private, team, public（兼容旧值 protected）
     last_heartbeat DATETIME,
-    heartbeat_interval INTEGER DEFAULT 30000, -- 心跳间隔(毫秒)
+    heartbeat_interval INTEGER DEFAULT 30000 CHECK (heartbeat_interval > 0), -- 心跳间隔(毫秒)
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     remark TEXT,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id VARCHAR(50) NOT NULL,
     puppet_id VARCHAR(50) NOT NULL,
     session_data TEXT, -- JSON格式存储会话数据
-    status INTEGER DEFAULT 1, -- 1:活跃 0:过期
+    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:活跃 0:过期
     create_time DATETIME NOT NULL,
     last_access_time DATETIME NOT NULL,
     expire_time DATETIME
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS puppet_jdbc (
     puppet_id VARCHAR(50) NOT NULL, -- 所属的puppet ID
     db_type VARCHAR(20) NOT NULL, -- mysql, postgresql, sqlserver, oracle, sqlite
     host VARCHAR(255) NOT NULL,
-    port INTEGER NOT NULL,
+    port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
     database_name VARCHAR(100), -- 数据库名、服务名或文件路径
     username VARCHAR(100),
     password VARCHAR(255), -- 加密存储
@@ -106,20 +106,32 @@ CREATE TABLE IF NOT EXISTS puppet_jdbc (
     jdbc_url TEXT, -- 完整的JDBC连接字符串
     driver_class VARCHAR(255), -- JDBC驱动类名
     connection_params TEXT, -- JSON格式存储额外连接参数
-    status INTEGER DEFAULT 1, -- 1:启用 0:禁用
-    test_status INTEGER DEFAULT 0, -- 0:未测试 1:连接成功 2:连接失败
+    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
+    test_status INTEGER DEFAULT 0 CHECK (test_status IN (0, 1, 2)), -- 0:未测试 1:连接成功 2:连接失败
     last_test_time DATETIME,
     last_test_message TEXT, -- 最后一次测试的结果信息
-    max_connections INTEGER DEFAULT 10, -- 最大连接数
-    timeout_seconds INTEGER DEFAULT 30, -- 连接超时时间(秒)
+    max_connections INTEGER DEFAULT 10 CHECK (max_connections > 0), -- 最大连接数
+    timeout_seconds INTEGER DEFAULT 30 CHECK (timeout_seconds > 0), -- 连接超时时间(秒)
     create_user_id VARCHAR(50) NOT NULL,
     team_id VARCHAR(50), -- 所属团队，NULL表示个人连接
-    is_public INTEGER DEFAULT 0, -- 0:私有 1:团队内共享
+    is_public INTEGER DEFAULT 0 CHECK (is_public IN (0, 1)), -- 0:私有 1:团队内共享
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     description TEXT,
     remark TEXT
 );
+
+-- 高频关联查询索引。业务唯一索引由 DatabaseInitializer 在兼容历史数据的前提下创建。
+CREATE INDEX IF NOT EXISTS idx_teams_leader_id ON teams(leader_id);
+CREATE INDEX IF NOT EXISTS idx_puppets_parent_id ON puppets(parent_puppet_id);
+CREATE INDEX IF NOT EXISTS idx_puppets_create_user_id ON puppets(create_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
+CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_create_user_id ON puppet_jdbc(create_user_id);
+CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_puppet_id ON puppet_jdbc(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_team_id ON puppet_jdbc(team_id);
 
 -- 12. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -160,7 +172,7 @@ CREATE TABLE IF NOT EXISTS ai_providers (
     protocol VARCHAR(32) NOT NULL DEFAULT 'chat_completions',
     completions_path VARCHAR(255) NOT NULL DEFAULT '/v1/chat/completions',
     headers_json TEXT,
-    enabled INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     remark TEXT
@@ -177,8 +189,8 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     model VARCHAR(255) NOT NULL,
     protocol VARCHAR(32) NOT NULL DEFAULT 'chat_completions',
     completions_path VARCHAR(255) NOT NULL DEFAULT '/v1/chat/completions',
-    is_active INTEGER NOT NULL DEFAULT 0,
-    enabled INTEGER NOT NULL DEFAULT 1,
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     fallback_model_id INTEGER,
     max_output_tokens INTEGER,
     thinking_enabled INTEGER,
@@ -188,7 +200,9 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     headers_json TEXT,
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
-    remark TEXT
+    remark TEXT,
+    FOREIGN KEY (provider_id) REFERENCES ai_providers(id) ON DELETE SET NULL,
+    FOREIGN KEY (fallback_model_id) REFERENCES ai_model_configs(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS ai_model_capabilities (
@@ -276,7 +290,8 @@ CREATE TABLE IF NOT EXISTS ai_threads (
     profile VARCHAR(64) NOT NULL DEFAULT 'default',
     mode VARCHAR(16) NOT NULL DEFAULT 'auto',
     context_summary TEXT,
-    root_plan_id VARCHAR(64)
+    root_plan_id VARCHAR(64),
+    FOREIGN KEY (parent_thread_id) REFERENCES ai_threads(thread_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_threads_scope
@@ -295,7 +310,8 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     thinking_logs_json TEXT,
     tool_calls_json TEXT,
     review_json TEXT,
-    plan_json TEXT
+    plan_json TEXT,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_messages_thread_time
@@ -314,7 +330,8 @@ CREATE TABLE IF NOT EXISTS ai_runs (
     output TEXT,
     error_message TEXT,
     tool_call_count INTEGER,
-    runtime_json TEXT
+    runtime_json TEXT,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_runs_thread_time
@@ -328,7 +345,9 @@ CREATE TABLE IF NOT EXISTS ai_events (
     event_seq INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
     name VARCHAR(64) NOT NULL,
-    data_json TEXT
+    data_json TEXT,
+    FOREIGN KEY (run_id) REFERENCES ai_runs(run_id) ON DELETE CASCADE,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
@@ -349,7 +368,10 @@ CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
     summary TEXT,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL,
-    completed_at INTEGER
+    completed_at INTEGER,
+    FOREIGN KEY (parent_thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_message_id) REFERENCES ai_messages(message_id) ON DELETE SET NULL,
+    FOREIGN KEY (child_thread_id) REFERENCES ai_threads(thread_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_subagent_parent

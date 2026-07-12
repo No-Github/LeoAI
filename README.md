@@ -220,7 +220,7 @@ http://localhost:8082
 2. 创建默认管理员账户
 3. 初始化基础配置
 
-**初始账号密码**：`admin` / `54ikun`，首次登录后请立即修改密码。
+**初始账号**：`admin`。可通过环境变量 `LEO_ADMIN_INITIAL_PASSWORD` 指定首次登录密码；未指定时系统会生成随机密码并保存到运行目录下的 `.leo/initial-admin-password`（仅当前用户可读）。首次登录后请立即修改密码。
 
 ---
 
@@ -289,7 +289,7 @@ docker compose up -d --build
 http://localhost:8082
 ```
 
-**初始账号密码**：`admin` / `54ikun`，首次登录后请立即修改密码。
+**初始账号**：`admin`。在 `.env` 中设置 `LEO_ADMIN_INITIAL_PASSWORD`，或执行 `docker compose exec leoai cat /app/data/.leo/initial-admin-password` 查看自动生成的随机密码。首次登录后请立即修改密码。
 
 #### 常用命令速查
 
@@ -593,7 +593,7 @@ java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 
 **Q：如何重置管理员密码**
 
-停止应用 → 删除（或备份）`data.db` → 重新启动 → 使用初始账号密码 `admin` / `54ikun` 登录。
+停止应用 → 删除（或备份）`data.db` 和旧的 `.leo/initial-admin-password` → 重新启动 → 使用账号 `admin` 和新生成的引导密码登录。也可以在启动前设置 `LEO_ADMIN_INITIAL_PASSWORD`。
 
 ---
 

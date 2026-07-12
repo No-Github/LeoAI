@@ -9,8 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 @RestController
 @RequestMapping("/puppet-node/port-scan")
@@ -20,13 +20,9 @@ public class PortScanController {
     public HashMap<String, Object> startScan(@RequestBody HashMap<String, Object> params) {
         try {
             String scanHost = ControllerUtil.getRequiredStringParam(params, "scanHost");
-            ArrayList<Object> scanPortsList = (ArrayList<Object>) params.get("scanPorts");
-            int[] scanPorts = new int[scanPortsList.size()];
-            for (int i = 0; i < scanPortsList.size(); i++) {
-                scanPorts[i] = (int) scanPortsList.get(i);
-            }
-            int scanTimeout = (int) params.get("scanTimeout");
-            int threadsNum = (int) params.get("threadsNum");
+            int[] scanPorts = getPorts(params.get("scanPorts"));
+            int scanTimeout = getIntInRange(params.get("scanTimeout"), "scanTimeout", 1, 300000);
+            int threadsNum = getIntInRange(params.get("threadsNum"), "threadsNum", 1, 100);
             return ControllerUtil.handleCapabilityCall(params, ScanCapable.class, "启动端口扫描失败",
                     node -> node.startScanPort(scanHost, scanPorts, scanTimeout, threadsNum));
         } catch (IllegalArgumentException e) {
@@ -104,5 +100,34 @@ public class PortScanController {
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
         }
+    }
+
+    private int[] getPorts(Object value) {
+        if (!(value instanceof List<?> ports) || ports.isEmpty()) {
+            throw new IllegalArgumentException("scanPorts必须是非空端口数组");
+        }
+        int[] parsed = new int[ports.size()];
+        for (int i = 0; i < ports.size(); i++) {
+            parsed[i] = getIntInRange(ports.get(i), "scanPorts[" + i + "]", 1, 65535);
+        }
+        return parsed;
+    }
+
+    private int getIntInRange(Object value, String fieldName, int min, int max) {
+        if (value == null) {
+            throw new IllegalArgumentException(fieldName + "不能为空");
+        }
+        final int parsed;
+        try {
+            parsed = value instanceof Number number
+                    ? number.intValue()
+                    : Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(fieldName + "必须是整数", e);
+        }
+        if (parsed < min || parsed > max) {
+            throw new IllegalArgumentException(fieldName + "必须在" + min + "到" + max + "之间");
+        }
+        return parsed;
     }
 }

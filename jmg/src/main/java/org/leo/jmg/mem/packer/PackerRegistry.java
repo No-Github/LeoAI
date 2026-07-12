@@ -1,6 +1,13 @@
 package org.leo.jmg.mem.packer;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -27,6 +34,9 @@ public final class PackerRegistry {
     private static final Map<String, PackerMeta> META = new ConcurrentHashMap<>();
     /** 保留原始注册顺序的有序列表 */
     private static final List<PackerMeta> ORDERED = new ArrayList<>();
+    private static final Comparator<PackerMeta> META_ORDER =
+            Comparator.comparingInt(PackerMeta::order)
+                    .thenComparing(PackerMeta::name, String.CASE_INSENSITIVE_ORDER);
 
     static {
         loadFromClasspathScan();
@@ -45,14 +55,33 @@ public final class PackerRegistry {
      * 手动注册一个 Packer（用于测试或编程式注册）
      */
     public static void register(Packer packer) {
+        if (packer == null) {
+            throw new IllegalArgumentException("packer 不能为空");
+        }
         PackerMeta meta = packer.getClass().getAnnotation(PackerMeta.class);
         if (meta == null) {
             return;
         }
-        String key = meta.name().toLowerCase();
-        REGISTRY.put(key, packer);
-        META.put(key, meta);
+        String key = normalize(meta.name());
+        if (key.isEmpty()) {
+            throw new IllegalArgumentException("@PackerMeta.name 不能为空: " + packer.getClass().getName());
+        }
+
         synchronized (ORDERED) {
+            Packer existing = REGISTRY.get(key);
+            if (existing != null) {
+                if (!existing.getClass().equals(packer.getClass())) {
+                    throw new IllegalStateException("Packer 名称冲突 [" + meta.name() + "]: "
+                            + existing.getClass().getName() + " 与 " + packer.getClass().getName());
+                }
+                // 同一实现可能因重复 classpath 资源被扫描多次，只刷新实例，不重复写入元数据顺序。
+                REGISTRY.put(key, packer);
+                META.put(key, meta);
+                return;
+            }
+
+            REGISTRY.put(key, packer);
+            META.put(key, meta);
             ORDERED.add(meta);
         }
     }
@@ -67,7 +96,7 @@ public final class PackerRegistry {
         if (name == null || name.trim().isEmpty()) {
             return null;
         }
-        return REGISTRY.get(name.trim().toLowerCase());
+        return REGISTRY.get(normalize(name));
     }
 
     /**
@@ -95,7 +124,7 @@ public final class PackerRegistry {
         if (name == null || name.trim().isEmpty()) {
             return null;
         }
-        return META.get(name.trim().toLowerCase());
+        return META.get(normalize(name));
     }
 
     /**
@@ -110,11 +139,9 @@ public final class PackerRegistry {
      * 获取所有已注册的 Packer 名称列表
      */
     public static List<String> getAllNames() {
-        synchronized (ORDERED) {
-            return ORDERED.stream()
-                    .map(PackerMeta::name)
-                    .collect(Collectors.toList());
-        }
+        return getSortedMetadataSnapshot().stream()
+                .map(PackerMeta::name)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -130,14 +157,7 @@ public final class PackerRegistry {
         LinkedHashMap<String, List<String>> grouped = new LinkedHashMap<>();
         List<String> ungrouped = new ArrayList<>();
 
-        // 按 order 排序
-        List<PackerMeta> sorted;
-        synchronized (ORDERED) {
-            sorted = new ArrayList<>(ORDERED);
-        }
-        sorted.sort(Comparator.comparingInt(PackerMeta::order));
-
-        for (PackerMeta meta : sorted) {
+        for (PackerMeta meta : getSortedMetadataSnapshot()) {
             String group = meta.group();
             if (group == null || group.isEmpty()) {
                 ungrouped.add(meta.name());
@@ -179,12 +199,8 @@ public final class PackerRegistry {
      * 返回：packer 名称 -> 支持的步骤 ID 列表（空列表表示不支持混淆层配置）。
      */
     public static Map<String, List<String>> getPackerObfuscationStepsMap() {
-        List<PackerMeta> sorted;
-        synchronized (ORDERED) {
-            sorted = new ArrayList<>(ORDERED);
-        }
         Map<String, List<String>> result = new LinkedHashMap<>();
-        for (PackerMeta meta : sorted) {
+        for (PackerMeta meta : getSortedMetadataSnapshot()) {
             result.put(meta.name(),
                 meta.obfuscationSteps().length == 0
                     ? Collections.emptyList()
@@ -200,6 +216,19 @@ public final class PackerRegistry {
         if (name == null || name.trim().isEmpty()) {
             return false;
         }
-        return REGISTRY.containsKey(name.trim().toLowerCase());
+        return REGISTRY.containsKey(normalize(name));
+    }
+
+    private static List<PackerMeta> getSortedMetadataSnapshot() {
+        List<PackerMeta> sorted;
+        synchronized (ORDERED) {
+            sorted = new ArrayList<>(ORDERED);
+        }
+        sorted.sort(META_ORDER);
+        return sorted;
+    }
+
+    private static String normalize(String name) {
+        return name.trim().toLowerCase(Locale.ROOT);
     }
 }

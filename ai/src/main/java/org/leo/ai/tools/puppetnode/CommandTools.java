@@ -129,7 +129,7 @@ public class CommandTools {
         String cacheKey = SIMPLE_COMMAND_CACHE_PREFIX + cmd;
         Object cachedResult = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
         if (cachedResult instanceof Map<?, ?> cachedMap) {
-            return (Map<String, Object>) cachedMap;
+            return copyStringKeyMap(cachedMap);
         }
 
         CommandCapable commandNode = getCommandNode(sessionId);
@@ -259,7 +259,7 @@ public class CommandTools {
             String cacheKey = "env-vars";
             Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
             if (cached instanceof Map<?, ?> cachedMap) {
-                return (Map<String, Object>) cachedMap;
+                return copyStringKeyMap(cachedMap);
             }
             // 未缓存，执行后缓存
             Map<String, Object> results = execSync(sessionId, cmd, 0);
@@ -274,7 +274,7 @@ public class CommandTools {
             String cacheKey = "java-process-args";
             Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
             if (cached instanceof Map<?, ?> cachedMap) {
-                return (Map<String, Object>) cachedMap;
+                return copyStringKeyMap(cachedMap);
             }
             Map<String, Object> results = execSync(sessionId, cmd, 0);
             if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
@@ -284,6 +284,14 @@ public class CommandTools {
         }
 
         return null;
+    }
+
+    private static Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        HashMap<String, Object> copy = new HashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) copy.put(stringKey, value);
+        });
+        return copy;
     }
 
     /**

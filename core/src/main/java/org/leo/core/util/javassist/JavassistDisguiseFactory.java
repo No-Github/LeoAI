@@ -7,8 +7,14 @@ import javassist.CtNewMethod;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
-public class JavassistDisguiseFactory {
+public final class JavassistDisguiseFactory {
+
+    private static final AtomicLong CLASS_SEQUENCE = new AtomicLong();
+
+    private JavassistDisguiseFactory() {
+    }
 
     public static byte[] createDisguiseBytecode(String encodeBody, String decodeBody) throws Exception {
 
@@ -27,7 +33,7 @@ public class JavassistDisguiseFactory {
         cc.detach();
         return bytecode;
     }
-    public static Class createDisguiseClass(String encodeBody, String decodeBody) throws Exception {
+    public static Class<?> createDisguiseClass(String encodeBody, String decodeBody) throws Exception {
 
         ClassPool pool = ClassPool.getDefault();
 
@@ -41,8 +47,12 @@ public class JavassistDisguiseFactory {
         cc.addMethod(CtNewMethod.make(decodeBody, cc));
 
 
-        cc.detach();
-        return cc.toClass();
+        try {
+            // Java 17+ 使用同包 lookup 定义类，避免依赖非法反射或 --add-opens JVM 参数。
+            return cc.toClass(JavassistDisguiseFactory.class);
+        } finally {
+            cc.detach();
+        }
     }
     public static boolean testDisguise(String encodeBody, String decodeBody) throws Exception {
         HashMap<String, Object> testHashMap = new HashMap<String, Object>();
@@ -57,8 +67,13 @@ public class JavassistDisguiseFactory {
 
         // decode 方法
         cc.addMethod(CtNewMethod.make(decodeBody, cc));
-        Class tempClass = cc.toClass();
-        Object tempObject = tempClass.newInstance();
+        Class<?> tempClass;
+        try {
+            tempClass = cc.toClass(JavassistDisguiseFactory.class);
+        } finally {
+            cc.detach();
+        }
+        Object tempObject = tempClass.getDeclaredConstructor().newInstance();
 
         Method encode = tempClass.getMethod("encode", new Class[]{HashMap.class});
         Method decode = tempClass.getMethod("decode", new Class[]{byte[].class});
@@ -74,7 +89,8 @@ public class JavassistDisguiseFactory {
 
 
     private static String buildTempClassName() {
-        return "org.leo.disguise.dynamic." + System.currentTimeMillis();
+        return JavassistDisguiseFactory.class.getPackageName()
+                + ".GeneratedDisguise_" + CLASS_SEQUENCE.incrementAndGet();
     }
 
 }

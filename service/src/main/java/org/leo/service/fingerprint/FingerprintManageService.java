@@ -201,7 +201,11 @@ public class FingerprintManageService {
             return null;
         }
         String json = new String(Files.readAllBytes(fingerprintFile.toPath()), StandardCharsets.UTF_8);
-        return (HashMap<String, Object>) JsonUtil.fromJsonString(json, HashMap.class);
+        Object parsed = JsonUtil.fromJsonString(json, Object.class);
+        if (!(parsed instanceof Map<?, ?> parsedMap)) {
+            throw new IllegalArgumentException("指纹文件格式无效: " + safeFileName);
+        }
+        return new HashMap<>(copyStringKeyMap(parsedMap));
     }
 
     private File resolveFingerprintDir() {
@@ -496,7 +500,6 @@ public class FingerprintManageService {
         return v != null ? String.valueOf(v).trim() : null;
     }
 
-    @SuppressWarnings("unchecked")
     private List<Map<String, Object>> parseJson(byte[] bytes) throws Exception {
         String text = new String(bytes, StandardCharsets.UTF_8).trim();
         Object parsed = JsonUtil.fromJsonString(text, Object.class);
@@ -504,14 +507,22 @@ public class FingerprintManageService {
             List<Map<String, Object>> result = new ArrayList<>();
             for (Object item : list) {
                 if (item instanceof Map<?, ?> m) {
-                    result.add((Map<String, Object>) m);
+                    result.add(copyStringKeyMap(m));
                 }
             }
             return result;
         } else if (parsed instanceof Map<?, ?> m) {
-            return List.of((Map<String, Object>) m);
+            return List.of(copyStringKeyMap(m));
         }
         throw new IllegalArgumentException("JSON 格式无效：必须是对象或数组");
+    }
+
+    private static Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) copy.put(stringKey, value);
+        });
+        return copy;
     }
 
     private List<Map<String, Object>> parseZip(InputStream inputStream) throws Exception {

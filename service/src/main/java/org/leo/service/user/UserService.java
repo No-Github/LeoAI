@@ -4,9 +4,9 @@ import org.leo.core.entity.User;
 import org.leo.dao.mapper.UserMapper;
 import org.springframework.stereotype.Service;
 
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -26,7 +26,7 @@ public class UserService {
     public static final String PRIVILEGE_LEADER = "leader";
     public static final String PRIVILEGE_NORMAL = "normal";
 
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UserMapper userMapper;
 
@@ -65,7 +65,7 @@ public class UserService {
 
     public boolean addUser(User user) {
         if (user == null) throw new IllegalArgumentException("user不能为空");
-        String now = DATE_FORMAT.format(new Date());
+        String now = now();
         return userMapper.insertUser(
                 user.getUserId(),
                 user.getUserName(),
@@ -86,7 +86,7 @@ public class UserService {
         if (user == null || user.getUserId() == null || user.getUserId().isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
-        String now = DATE_FORMAT.format(new Date());
+        String now = now();
         return userMapper.updateUserById(
                 user.getUserName(),
                 user.getPassword(),
@@ -106,6 +106,16 @@ public class UserService {
     public boolean delUser(String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("userId不能为空");
         return userMapper.delUser(userId.trim());
+    }
+
+    /** Atomically records a successful login and optionally upgrades the password hash. */
+    public User recordSuccessfulLogin(String userId, String upgradedPasswordHash) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("userId不能为空");
+        }
+        String now = now();
+        userMapper.recordSuccessfulLogin(userId.trim(), upgradedPasswordHash, now, now);
+        return getUserById(userId);
     }
 
     // ── 权限校验 ─────────────────────────────────────────────────────────────────
@@ -167,5 +177,9 @@ public class UserService {
         return PRIVILEGE_ADMIN.equals(privilege)
                 || PRIVILEGE_LEADER.equals(privilege)
                 || PRIVILEGE_NORMAL.equals(privilege);
+    }
+
+    private static String now() {
+        return LocalDateTime.now().format(DATE_FORMAT);
     }
 }

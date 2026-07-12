@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +35,9 @@ import java.util.UUID;
 @RequestMapping("/platform/admin")
 @RoleAwareAdminEndpoint
 public class TeamController {
+
+    private static final int MAX_ID_LENGTH = 50;
+    private static final int MAX_TEAM_NAME_LENGTH = 100;
 
     private final TeamService teamService;
     private final UserService userService;
@@ -76,6 +80,7 @@ public class TeamController {
      * 若未传 teamId，则自动生成 UUID；leaderId 必填且对应用户须尚未加入任何团队。
      */
     @RequestMapping(value = "/teams", method = RequestMethod.POST)
+    @Transactional
     public Map<String, Object> addTeam(HttpServletRequest request, @RequestBody Team team) {
         requireAdmin(request);
         if (team == null) throw ApiException.badRequest("team参数不能为空");
@@ -85,6 +90,13 @@ public class TeamController {
         if (team.getTeamName() == null || team.getTeamName().isBlank()) {
             throw ApiException.badRequest("teamName不能为空");
         }
+
+        leaderId = leaderId.trim();
+        String teamName = team.getTeamName().trim();
+        if (leaderId.length() > MAX_ID_LENGTH) throw ApiException.badRequest("leaderId长度超出限制");
+        if (teamName.length() > MAX_TEAM_NAME_LENGTH) throw ApiException.badRequest("teamName长度超出限制");
+        team.setLeaderId(leaderId);
+        team.setTeamName(teamName);
 
         User leader = userService.getUserById(leaderId);
         if (leader == null) throw ApiException.notFound("用户不存在");
@@ -97,6 +109,11 @@ public class TeamController {
 
         if (team.getTeamId() == null || team.getTeamId().isBlank()) {
             team.setTeamId(UUID.randomUUID().toString());
+        } else {
+            team.setTeamId(team.getTeamId().trim());
+            if (team.getTeamId().length() > MAX_ID_LENGTH) {
+                throw ApiException.badRequest("teamId长度超出限制");
+            }
         }
 
         // 将 leader 加入该团队，同时升级为 leader 角色
@@ -104,7 +121,9 @@ public class TeamController {
         if (!UserService.PRIVILEGE_ADMIN.equals(leader.getPrivilege())) {
             leader.setPrivilege(UserService.PRIVILEGE_LEADER);
         }
-        userService.updateUser(leader);
+        if (!userService.updateUser(leader)) {
+            throw ApiException.serverError("更新团队负责人失败");
+        }
 
         boolean ok = teamService.addTeam(team);
         if (!ok) {
@@ -116,6 +135,7 @@ public class TeamController {
     // ── 删除 ─────────────────────────────────────────────────────────────────────
 
     @RequestMapping(value = "/teams/delete", method = RequestMethod.POST)
+    @Transactional
     public Map<String, Object> deleteTeam(HttpServletRequest request,
                                           @RequestBody DeleteTeamRequest body) {
         requireAdmin(request);
@@ -134,7 +154,9 @@ public class TeamController {
             if (UserService.PRIVILEGE_LEADER.equals(member.getPrivilege())) {
                 member.setPrivilege(UserService.PRIVILEGE_NORMAL);
             }
-            userService.updateUser(member);
+            if (!userService.updateUser(member)) {
+                throw ApiException.serverError("解除团队成员关系失败");
+            }
         }
 
         try {

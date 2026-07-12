@@ -23,36 +23,7 @@ INSERT OR REPLACE INTO teams (
     '系统初始化创建'
 );
 
--- 插入默认管理员用户
-INSERT OR REPLACE INTO users (
-    user_id,
-    user_name,
-    password,
-    privilege,
-    email,
-    phone,
-    status,
-    last_login_time,
-    login_count,
-    create_time,
-    update_time,
-    team_id,
-    remark
-) VALUES (
-    'admin',
-    'admin',
-    '052fb3c5d2d357ba01d068ff0303a076', -- 仅用于首次引导；ApplicationReady 时自动升级为 PBKDF2
-    'admin',
-    'admin@leospring.com',
-    '',
-    1,
-    datetime('now'),
-    0,
-    datetime('now'),
-    datetime('now'),
-    'system-admin',
-    '系统默认管理员账户'
-);
+-- 管理员用户由 DataInitializer 创建，以便使用环境变量或随机引导密码，避免固定口令。
 
 -- 插入系统配置
 INSERT OR REPLACE INTO system_configs (
@@ -72,6 +43,6 @@ INSERT OR REPLACE INTO system_configs (
 ('heartbeat.interval.ms', '30000', 'number', '心跳间隔(毫秒)', datetime('now'), datetime('now')),
 ('max.file.upload.size.mb', '100', 'number', '最大文件上传大小(MB)', datetime('now'), datetime('now')),
 ('max.concurrent.sessions', '10', 'number', '最大并发会话数', datetime('now'), datetime('now')),
-('security.password.min.length', '6', 'number', '密码最小长度', datetime('now'), datetime('now')),
+('security.password.min.length', '8', 'number', '密码最小长度', datetime('now'), datetime('now')),
 ('security.login.max.attempts', '5', 'number', '最大登录尝试次数', datetime('now'), datetime('now')),
 ('security.login.lock.seconds', '300', 'number', '登录失败锁定时长(秒)', datetime('now'), datetime('now'));

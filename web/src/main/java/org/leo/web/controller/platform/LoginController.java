@@ -11,6 +11,7 @@ import org.leo.web.dto.platform.user.LoginRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
+import org.leo.web.security.PasswordPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,16 +34,20 @@ public class LoginController {
     private static final Logger logger = LoggerFactory.getLogger(LoginController.class);
 
     private static final String SESSION_ATTR_USER  = "user";
+    private static final int MAX_USERNAME_LENGTH = 100;
+    private static final int MAX_PASSWORD_LENGTH = 256;
 
     private final UserService userService;
     private final PermissionService permissionService;
     private final LoginAttemptService loginAttemptService;
+    private final PasswordPolicy passwordPolicy;
 
     public LoginController(UserService userService, PermissionService permissionService,
-                           LoginAttemptService loginAttemptService) {
+                           LoginAttemptService loginAttemptService, PasswordPolicy passwordPolicy) {
         this.userService = userService;
         this.permissionService = permissionService;
         this.loginAttemptService = loginAttemptService;
+        this.passwordPolicy = passwordPolicy;
     }
 
     /**
@@ -53,6 +58,9 @@ public class LoginController {
                                      @RequestBody LoginRequest body) {
         String username = requireText(body != null ? body.username() : null, "username不能为空");
         String password = requireText(body != null ? body.password() : null, "password不能为空");
+        if (username.length() > MAX_USERNAME_LENGTH || password.length() > MAX_PASSWORD_LENGTH) {
+            throw ApiException.badRequest("用户名或密码长度超出限制");
+        }
         String remoteAddress = request.getRemoteAddr();
         long retryAfter = loginAttemptService.retryAfterSeconds(username, remoteAddress);
         if (retryAfter > 0L) {
@@ -65,12 +73,16 @@ public class LoginController {
             logger.warn("登录失败，用户名或密码错误: {}", username);
             throw ApiException.unauthorized("用户名或密码错误");
         }
-        loginAttemptService.recordSuccess(username, remoteAddress);
-
-        if (PasswordUtil.needsRehash(user.getPassword())) {
-            user.setPassword(PasswordUtil.hash(password));
-            userService.updateUser(user);
+        if (!Integer.valueOf(1).equals(user.getStatus())) {
+            loginAttemptService.recordFailure(username, remoteAddress);
+            throw ApiException.forbidden("账号已禁用，请联系管理员");
         }
+
+        String upgradedPassword = PasswordUtil.needsRehash(user.getPassword())
+                ? PasswordUtil.hash(password) : null;
+        User refreshed = userService.recordSuccessfulLogin(user.getUserId(), upgradedPassword);
+        if (refreshed != null) user = refreshed;
+        loginAttemptService.recordSuccess(username, remoteAddress);
 
         HttpSession session = request.getSession(true);
         request.changeSessionId();
@@ -121,6 +133,7 @@ public class LoginController {
         User sessionUser = permissionService.requireLogin(request);
         String oldPassword = requireText(body != null ? body.oldPassword() : null, "oldPassword不能为空");
         String newPassword = requireText(body != null ? body.newPassword() : null, "newPassword不能为空");
+        passwordPolicy.validate(newPassword);
 
         User user = userService.getUserById(sessionUser.getUserId());
         if (user == null || !PasswordUtil.verify(oldPassword, user.getPassword())) {

@@ -25,7 +25,7 @@ public interface TeamMapper {
     @Select("SELECT * FROM teams WHERE leader_id = #{leaderId}")
     List<Team> findTeamByLeader(@Param("leaderId") String leaderId);
 
-    @Select("SELECT * FROM teams WHERE team_name = #{teamName}")
+    @Select("SELECT * FROM teams WHERE team_name = #{teamName} COLLATE NOCASE")
     Team findTeamByName(@Param("teamName") String teamName);
 
     @Select("SELECT * FROM teams")

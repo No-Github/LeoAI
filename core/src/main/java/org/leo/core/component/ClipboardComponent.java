@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 剪贴板操作组件
@@ -24,8 +25,8 @@ import java.util.HashMap;
  */
 public class ClipboardComponent implements Runnable {
 
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
 
     // execCommand 工作线程通信字段（防止阻塞 HTTP 请求线程）
     private volatile boolean execCmdMode = false;
@@ -38,11 +39,11 @@ public class ClipboardComponent implements Runnable {
         if (execCmdMode) { execCmdWorker(); return; }
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = copyStringObjectMap(h.invoke(null, null, null));
+            results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage());
         }
@@ -76,7 +77,7 @@ public class ClipboardComponent implements Runnable {
         boolean isWindows = isWindowsOs();
         boolean isMac = isMacOs();
 
-        HashMap data = new HashMap();
+        HashMap<String, Object> data = new HashMap<String, Object>();
         data.put("os", isWindows ? "windows" : (isMac ? "macos" : "linux"));
 
         String content = null;
@@ -152,7 +153,7 @@ public class ClipboardComponent implements Runnable {
             success = writeLinux(content);
         }
 
-        HashMap data = new HashMap();
+        HashMap<String, Object> data = new HashMap<String, Object>();
         data.put("os", isWindows ? "windows" : (isMac ? "macos" : "linux"));
         data.put("written", Boolean.valueOf(success));
         data.put("length", Integer.valueOf(content.length()));
@@ -202,7 +203,7 @@ public class ClipboardComponent implements Runnable {
         int interval = getIntParam("interval", 1);
         if (interval < 1) interval = 1;
 
-        ArrayList snapshots = new ArrayList();
+        ArrayList<HashMap<String, Object>> snapshots = new ArrayList<HashMap<String, Object>>();
         String lastContent = null;
 
         long endTime = System.currentTimeMillis() + duration * 1000L;
@@ -217,7 +218,7 @@ public class ClipboardComponent implements Runnable {
 
             if (changed) {
                 seq++;
-                HashMap snap = new HashMap();
+                HashMap<String, Object> snap = new HashMap<String, Object>();
                 snap.put("seq", Integer.valueOf(seq));
                 snap.put("timestamp", Long.valueOf(System.currentTimeMillis()));
                 snap.put("content", truncate(current, 4096));
@@ -229,7 +230,7 @@ public class ClipboardComponent implements Runnable {
             try { Thread.sleep(interval * 1000L); } catch (Exception ignored) {}
         }
 
-        HashMap data = new HashMap();
+        HashMap<String, Object> data = new HashMap<String, Object>();
         data.put("duration", Integer.valueOf(duration));
         data.put("changes", Integer.valueOf(snapshots.size()));
         data.put("snapshots", snapshots);
@@ -244,6 +245,20 @@ public class ClipboardComponent implements Runnable {
         if (isWindowsOs()) return readWindows();
         if (isMacOs()) return readMac();
         return readLinux();
+    }
+
+    private static HashMap<String, Object> copyStringObjectMap(Object value) {
+        HashMap<String, Object> copy = new HashMap<String, Object>();
+        if (!(value instanceof Map)) {
+            return copy;
+        }
+        Map<?, ?> source = (Map<?, ?>) value;
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+            if (entry.getKey() instanceof String) {
+                copy.put((String) entry.getKey(), entry.getValue());
+            }
+        }
+        return copy;
     }
 
     // ==================== 工具方法 ====================

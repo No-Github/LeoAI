@@ -7,6 +7,7 @@ import org.leo.service.fingerprint.FingerprintManageService;
 import org.leo.service.fingerprint.FingerprintManageService.ConflictPolicy;
 import org.leo.service.fingerprint.FingerprintManageService.ImportResult;
 import org.leo.web.util.ControllerUtil;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -72,6 +73,7 @@ public class FingerprintManageController {
     }
 
     @RequestMapping(value = "/fingerprints/save", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> saveFingerprint(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             HashMap<String, Object> data = fingerprintManageService.saveFingerprint(params, getCurrentUser(request));
@@ -84,6 +86,7 @@ public class FingerprintManageController {
     }
 
     @RequestMapping(value = "/fingerprints/delete", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> deleteFingerprint(@RequestBody HashMap<String, Object> params, HttpServletRequest request) {
         try {
             String fingerprintId = ControllerUtil.getRequiredStringParam(params, "fingerprintId");
@@ -165,6 +168,7 @@ public class FingerprintManageController {
      * 响应：{ results: [{name, fingerprintId, status, message}] }
      */
     @RequestMapping(value = "/fingerprints/import", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> importFingerprints(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy,
@@ -215,4 +219,3 @@ public class FingerprintManageController {
         return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
     }
 }
-

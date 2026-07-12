@@ -43,7 +43,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/schema.sql"));
         }
         if (needsSeedData()) {
-            log.info("检测到无用户数据，写入默认团队与管理员账户...");
+            log.info("检测到无用户数据，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             try (Connection conn = dataSource.getConnection()) {
                 ScriptUtils.executeSqlScript(conn, new ClassPathResource("sql/data.sql"));
             }
@@ -71,6 +71,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         backfillAiProtocolColumns();
         normalizeAiModelConfigOptionalDefaults();
         ensureAiModelConfigIndexes();
+        ensureApplicationIndexes();
     }
 
     private void addColumnIfMissing(String table, String column, String typeDecl) {
@@ -105,6 +106,29 @@ public class DatabaseInitializer implements CommandLineRunner {
                 + "ON ai_model_configs(provider_id)");
         executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_ai_model_configs_fallback_model_id "
                 + "ON ai_model_configs(fallback_model_id)");
+    }
+
+    /**
+     * 为高频关联查询补齐索引，并在数据允许时建立大小写不敏感的业务唯一约束。
+     *
+     * <p>唯一索引单独执行：历史库若存在重复数据，只会记录迁移告警，不会阻断整个应用启动。
+     */
+    private void ensureApplicationIndexes() {
+        executeMigrationSql("CREATE UNIQUE INDEX IF NOT EXISTS uk_users_user_name_nocase "
+                + "ON users(user_name COLLATE NOCASE)");
+        executeMigrationSql("CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_team_name_nocase "
+                + "ON teams(team_name COLLATE NOCASE)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_teams_leader_id ON teams(leader_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppets_parent_id ON puppets(parent_puppet_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppets_create_user_id ON puppets(create_by_user_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_create_user_id "
+                + "ON puppet_jdbc(create_user_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_puppet_id ON puppet_jdbc(puppet_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_team_id ON puppet_jdbc(team_id)");
     }
 
     private void executeMigrationSql(String sql) {

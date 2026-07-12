@@ -27,4 +27,16 @@ class PasswordUtilTest {
         assertFalse(PasswordUtil.verify("wrong", legacy));
         assertTrue(PasswordUtil.needsRehash(legacy));
     }
+
+    @Test
+    void rejectsUnboundedOrMalformedPbkdf2Parameters() {
+        String tinySalt = "pbkdf2-sha256$210000$AA$AAAAAAAAAAAAAAAAAAAAAA";
+        String excessiveWork = "pbkdf2-sha256$2147483647$AAAAAAAAAAAAAAAAAAAAAA$"
+                + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+        assertFalse(PasswordUtil.verify("password", tinySalt));
+        assertFalse(PasswordUtil.verify("password", excessiveWork));
+        assertTrue(PasswordUtil.needsRehash(tinySalt));
+        assertTrue(PasswordUtil.needsRehash(excessiveWork));
+    }
 }

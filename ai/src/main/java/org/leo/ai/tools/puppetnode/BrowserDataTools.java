@@ -9,6 +9,7 @@ import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 /**
  * 浏览器数据提取工具
@@ -26,8 +27,8 @@ public class BrowserDataTools {
     public Map<String, Object> scanBrowserProfiles() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, CACHE_KEY_PROFILES);
-        if (cached instanceof Map) {
-            return (Map<String, Object>) cached;
+        if (cached instanceof Map<?, ?> cachedMap) {
+            return copyStringKeyMap(cachedMap);
         }
 
         BrowserDataCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, BrowserDataCapable.class);
@@ -64,5 +65,13 @@ public class BrowserDataTools {
         if (results == null) return false;
         Object code = results.get("code");
         return Integer.valueOf(200).equals(code);
+    }
+
+    private static Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) copy.put(stringKey, value);
+        });
+        return copy;
     }
 }

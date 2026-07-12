@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -45,9 +47,12 @@ public class HttpSenderController {
             boolean followRedirects = ControllerUtil.getBool(params, "followRedirects");
             int connectTimeout = ControllerUtil.getInt(params, "connectTimeout", 0);
             int readTimeout = ControllerUtil.getInt(params, "readTimeout", 0);
+            requireNonNegative(connectTimeout, "connectTimeout");
+            requireNonNegative(readTimeout, "readTimeout");
             if (targetPort <= 0) {
                 targetPort = useTls ? 443 : 80;
             }
+            requireValidPort(targetPort);
             int finalTargetPort = targetPort;
             return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "发送请求失败",
                     node -> node.sendRawHttp(rawHttp, targetHost, finalTargetPort, useTls, followRedirects, connectTimeout, readTimeout));
@@ -76,20 +81,21 @@ public class HttpSenderController {
     public HashMap<String, Object> startFuzz(@RequestBody HashMap<String, Object> params) {
         try {
             String rawHttp = ControllerUtil.getRequiredStringParam(params, "rawHttp");
-            Object payloadsObj = params.get("payloads");
-            if (payloadsObj == null) {
-                return ApiResponse.badRequest("缺少必需参数: payloads");
-            }
-            Map<String, List<String>> payloads = (Map<String, List<String>>) payloadsObj;
+            Map<String, List<String>> payloads = getPayloads(params.get("payloads"));
             String targetHost = ControllerUtil.getStr(params, "targetHost");
             int targetPort = ControllerUtil.getInt(params, "targetPort", 0);
             boolean useTls = ControllerUtil.getBool(params, "useTls");
             int threads = ControllerUtil.getInt(params, "threads", 5);
             int delayMs = ControllerUtil.getInt(params, "delayMs", 0);
-            Map<String, Object> matchRules = (Map<String, Object>) params.get("matchRules");
+            if (threads < 1 || threads > 100) {
+                throw new IllegalArgumentException("threads必须在1到100之间");
+            }
+            requireNonNegative(delayMs, "delayMs");
+            Map<String, Object> matchRules = getOptionalStringKeyMap(params.get("matchRules"), "matchRules");
             if (targetPort <= 0) {
                 targetPort = useTls ? 443 : 80;
             }
+            requireValidPort(targetPort);
             int finalTargetPort = targetPort;
             return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "启动 Fuzzer 失败",
                     node -> node.startFuzz(rawHttp, payloads, targetHost, finalTargetPort, useTls, threads, delayMs, matchRules));
@@ -129,6 +135,59 @@ public class HttpSenderController {
             return ControllerUtil.handleCapabilityCall(params, HttpSenderCapable.class, "停止 Fuzzer 任务失败", node -> node.stopFuzz(taskId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
+        }
+    }
+
+    private Map<String, List<String>> getPayloads(Object value) {
+        if (!(value instanceof Map<?, ?> payloadMap) || payloadMap.isEmpty()) {
+            throw new IllegalArgumentException("payloads必须是非空对象");
+        }
+        Map<String, List<String>> payloads = new LinkedHashMap<>();
+        payloadMap.forEach((key, rawValues) -> {
+            if (!(key instanceof String variableName) || variableName.isBlank()) {
+                throw new IllegalArgumentException("payloads变量名不能为空");
+            }
+            if (!(rawValues instanceof List<?> values)) {
+                throw new IllegalArgumentException("payloads." + variableName + "必须是字符串数组");
+            }
+            List<String> stringValues = new ArrayList<>();
+            for (Object rawValue : values) {
+                if (!(rawValue instanceof String stringValue)) {
+                    throw new IllegalArgumentException("payloads." + variableName + "必须是字符串数组");
+                }
+                stringValues.add(stringValue);
+            }
+            payloads.put(variableName.trim(), stringValues);
+        });
+        return payloads;
+    }
+
+    private Map<String, Object> getOptionalStringKeyMap(Object value, String fieldName) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Map<?, ?> source)) {
+            throw new IllegalArgumentException(fieldName + "必须是对象");
+        }
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, item) -> {
+            if (!(key instanceof String stringKey)) {
+                throw new IllegalArgumentException(fieldName + "只能包含字符串键");
+            }
+            copy.put(stringKey, item);
+        });
+        return copy;
+    }
+
+    private void requireValidPort(int port) {
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("targetPort必须在1到65535之间");
+        }
+    }
+
+    private void requireNonNegative(int value, String fieldName) {
+        if (value < 0) {
+            throw new IllegalArgumentException(fieldName + "不能为负数");
         }
     }
 }

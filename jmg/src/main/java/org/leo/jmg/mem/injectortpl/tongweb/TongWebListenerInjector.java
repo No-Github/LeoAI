@@ -105,7 +105,7 @@ public class TongWebListenerInjector {
     
     public void inject(Object context, Object listener) throws Exception {
         Object[] objects = (Object[]) invokeMethod(context, "getApplicationEventListeners", null, null);
-        List listeners = Arrays.asList(objects);
+        List<Object> listeners = Arrays.asList(objects);
         for (Object o : listeners) {
             if (o.getClass().getName().contains(shellClassName)) {
                 return;
@@ -115,14 +115,16 @@ public class TongWebListenerInjector {
         if (applicationEventListenersObjects != null) {
             Object[] appListeners = (Object[]) applicationEventListenersObjects;
             if (appListeners != null) {
-                List appListenerList = new ArrayList(Arrays.asList(appListeners));
+                List<Object> appListenerList = new ArrayList<Object>(Arrays.asList(appListeners));
                 appListenerList.add(listener);
                 setFieldValue(context, "applicationEventListenersObjects", appListenerList.toArray());
             }
-        } else if (getFieldValue(context, "applicationEventListenersList") != null) {
-            List<Object> appListeners = (List<Object>) getFieldValue(context, "applicationEventListenersList");
-            if (appListeners != null) {
+        } else {
+            Object existingListeners = getFieldValue(context, "applicationEventListenersList");
+            if (existingListeners instanceof List<?>) {
+                List<Object> appListeners = new ArrayList<Object>((List<?>) existingListeners);
                 appListeners.add(listener);
+                setFieldValue(context, "applicationEventListenersList", appListeners);
             }
         }
     }

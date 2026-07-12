@@ -6,6 +6,8 @@ import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
 import org.leo.web.security.RoleAwareAdminEndpoint;
+import org.leo.web.security.PermissionService;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.springframework.web.method.HandlerMethod;
 
 import java.io.PrintWriter;
@@ -19,7 +21,8 @@ import static org.mockito.Mockito.when;
 
 class LoginInterceptorTest {
 
-    private final LoginInterceptor interceptor = new LoginInterceptor();
+    private final PermissionService permissionService = mock(PermissionService.class);
+    private final LoginInterceptor interceptor = new LoginInterceptor(permissionService);
 
     @Test
     void rejectsNormalUserReadingAdminModelConfiguration() throws Exception {
@@ -51,13 +54,34 @@ class LoginInterceptorTest {
     }
 
     @Test
-    void allowsNormalUserReadingSanitizedModelCatalog() {
+    void allowsNormalUserReadingSanitizedModelCatalog() throws Exception {
         User user = normalUser();
 
         assertTrue(interceptor.preHandle(
                 requestFor(user, "/platform/ai/models"),
                 mock(HttpServletResponse.class),
-                mock(HandlerMethod.class)));
+                handlerFor(DefaultAdminHandler.class)));
+    }
+
+    @Test
+    void rejectsNormalUserOnExplicitAdminOnlyEndpoint() throws Exception {
+        User user = normalUser();
+
+        assertFalse(interceptor.preHandle(
+                requestFor(user, "/platform/disguise-manager/preview"),
+                responseWithWriter(),
+                handlerFor(AdminOnlyHandler.class)));
+    }
+
+    @Test
+    void allowsAdminOnExplicitAdminOnlyEndpoint() throws Exception {
+        User user = new User();
+        user.setPrivilege("admin");
+
+        assertTrue(interceptor.preHandle(
+                requestFor(user, "/platform/disguise-manager/preview"),
+                mock(HttpServletResponse.class),
+                handlerFor(AdminOnlyHandler.class)));
     }
 
     private static User normalUser() {
@@ -79,7 +103,7 @@ class LoginInterceptorTest {
         }
     }
 
-    private static HttpServletRequest requestFor(User user, String uri) {
+    private HttpServletRequest requestFor(User user, String uri) {
         HttpSession session = mock(HttpSession.class);
         when(session.getAttribute("user")).thenReturn(user);
         HttpServletRequest request = mock(HttpServletRequest.class);
@@ -87,6 +111,7 @@ class LoginInterceptorTest {
         when(request.getContextPath()).thenReturn("");
         when(request.getRequestURI()).thenReturn(uri);
         when(request.getSession()).thenReturn(session);
+        when(permissionService.getCurrentUser(request)).thenReturn(user);
         return request;
     }
 
@@ -103,6 +128,12 @@ class LoginInterceptorTest {
 
     @RoleAwareAdminEndpoint
     private static class RoleAwareHandler {
+        public void handle() {
+        }
+    }
+
+    @AdminOnlyEndpoint
+    private static class AdminOnlyHandler {
         public void handle() {
         }
     }

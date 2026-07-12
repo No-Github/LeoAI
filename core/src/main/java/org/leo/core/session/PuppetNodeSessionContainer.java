@@ -90,7 +90,7 @@ public class PuppetNodeSessionContainer {
             try { session.close(); } catch (Exception ignored) {}
             fireSessionDestroyed(sessionId);
         }
-        return true;
+        return session != null;
     }
 
     /**
@@ -111,7 +111,7 @@ public class PuppetNodeSessionContainer {
      * 获取所有会话
      */
     public static Map<String, PuppetNodeSession> getAllSession() {
-        return sessionMap;
+        return Map.copyOf(sessionMap);
     }
 
     /**
@@ -125,9 +125,12 @@ public class PuppetNodeSessionContainer {
      * 清空所有会话
      */
     public static void clearAllSessions() {
-        List<String> sessionIds = new ArrayList<>(sessionMap.keySet());
+        Map<String, PuppetNodeSession> sessions = Map.copyOf(sessionMap);
         sessionMap.clear();
-        for (String id : sessionIds) fireSessionDestroyed(id);
+        for (Map.Entry<String, PuppetNodeSession> entry : sessions.entrySet()) {
+            try { entry.getValue().close(); } catch (Exception ignored) {}
+            fireSessionDestroyed(entry.getKey());
+        }
     }
 
     /**

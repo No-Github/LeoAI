@@ -1,5 +1,7 @@
 package org.leo.core.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Date;
 import java.util.Map;
 
@@ -171,6 +173,7 @@ public class PuppetJdbc {
         this.username = username;
     }
 
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     public String getPassword() {
         return password;
     }

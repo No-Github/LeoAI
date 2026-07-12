@@ -98,11 +98,11 @@ public class ControllerUtil {
      */
     public static String getRequiredStringParam(Map<String, Object> params, String paramName) {
         if (params == null) {
-            throw ApiException.badRequest("params不能为空");
+            throw new IllegalArgumentException("params不能为空");
         }
         Object paramObj = params.get(paramName);
         if (paramObj == null || paramObj.toString().isBlank()) {
-            throw ApiException.badRequest(paramName + "不能为空");
+            throw new IllegalArgumentException(paramName + "不能为空");
         }
         String value = paramObj.toString();
         return value;

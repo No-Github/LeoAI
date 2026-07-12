@@ -2,6 +2,7 @@ package org.leo.core.component;
 
 import java.io.*;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -20,8 +21,8 @@ public class CompressComponent implements Runnable {
     private static final int BUFFER_SIZE = 8192;
 
     
-    private HashMap params;
-    private HashMap results;
+    private HashMap<String, Object> params;
+    private HashMap<String, Object> results;
     
     
     // 排除模式（正则表达式）
@@ -33,11 +34,11 @@ public class CompressComponent implements Runnable {
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (java.util.HashMap) h.invoke(null, null, null);
-            results = new java.util.HashMap();
+            params = copyStringObjectMap(h.invoke(null, null, null));
+            results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap();
+            if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
             results.put("msg", t.getMessage());
         }
@@ -228,5 +229,19 @@ public class CompressComponent implements Runnable {
             results.put("msg", e.getMessage());
             throw e;
         }
+    }
+
+    private static HashMap<String, Object> copyStringObjectMap(Object value) {
+        HashMap<String, Object> copy = new HashMap<String, Object>();
+        if (!(value instanceof Map)) {
+            return copy;
+        }
+        Map<?, ?> source = (Map<?, ?>) value;
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+            if (entry.getKey() instanceof String) {
+                copy.put((String) entry.getKey(), entry.getValue());
+            }
+        }
+        return copy;
     }
 }

@@ -3,6 +3,7 @@ package org.leo.web.controller.puppetnode.component;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.ComponentManageCapable;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.exception.ApiException;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,6 +39,8 @@ public class ComponentController {
             data.put("loadedCount", loadedList.size());
             data.put("availableCount", availableList.size());
             return ApiResponse.success(data);
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             return ApiResponse.error("获取已加载组件失败: " + e.getMessage());
         }
@@ -71,10 +74,12 @@ public class ComponentController {
         try {
             ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             String componentName = getComponentNameFromParams(params);
-            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.loadComponent(componentName);
-            return ApiResponse.success(results != null ? results : new HashMap());
+            Map<String, Object> results = componentNode.loadComponent(componentName);
+            return ApiResponse.success(results != null ? results : Collections.emptyMap());
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             return ApiResponse.error("重新加载组件失败: " + e.getMessage());
         }
@@ -89,8 +94,12 @@ public class ComponentController {
             ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             HashMap<String, Object> componentParams = getComponentParams(params);
             String componentName = getComponentName(componentParams);
-            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.loadComponent(componentName);
-            return ApiResponse.success(results != null ? results : new HashMap());
+            Map<String, Object> results = componentNode.loadComponent(componentName);
+            return ApiResponse.success(results != null ? results : Collections.emptyMap());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            throw e;
         } catch (Exception e) {
             return ApiResponse.error("加载组件失败: " + e.getMessage());
         }
@@ -108,10 +117,18 @@ public class ComponentController {
             ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             HashMap<String, Object> componentParams = getComponentParams(params);
             componentName = getComponentName(componentParams);
-            HashMap<String, Object> results = (HashMap<String, Object>) componentNode.invokeComponent(componentName, componentParams);
+            Map<String, Object> results = componentNode.invokeComponent(componentName, componentParams);
             AuditLogUtil.logSuccess(javaPuppetNode, "COMPONENT_INVOKE", "调用组件", componentName, params,
                     ApiResponse.CODE_SUCCESS, "调用组件成功", AuditLogUtil.getClientIp());
-            return ApiResponse.success(results != null ? results : new HashMap());
+            return ApiResponse.success(results != null ? results : Collections.emptyMap());
+        } catch (IllegalArgumentException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "COMPONENT_INVOKE", "调用组件", componentName, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "COMPONENT_INVOKE", "调用组件", componentName, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "COMPONENT_INVOKE", "调用组件", componentName, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
@@ -124,43 +141,51 @@ public class ComponentController {
      * 获取组件参数
      */
     private HashMap<String, Object> getComponentParams(HashMap<String, Object> params) {
-        HashMap<String, Object> componentParams = (HashMap<String, Object>) params.get("params");
-        if (componentParams == null) {
+        if (params == null || !(params.get("params") instanceof Map<?, ?> componentParams)) {
             throw new IllegalArgumentException("params中的componentParams不能为空");
         }
-        return componentParams;
+        return copyStringKeyMap(componentParams);
     }
 
     /**
      * 获取类名
      */
     private String getComponentName(HashMap<String, Object> componentParams) {
-        String className = (String) componentParams.get("classname");
-        if (className == null || className.trim().equals("")) {
+        Object classNameValue = componentParams.get("classname");
+        if (!(classNameValue instanceof String className) || className.isBlank()) {
             throw new IllegalArgumentException("classname不能为空");
         }
-        return className;
+        return className.trim();
     }
 
     /**
      * 从请求参数中解析组件类名（支持 params.classname 或顶层 classname/componentName）
      */
     private String getComponentNameFromParams(HashMap<String, Object> params) {
-        HashMap<String, Object> componentParams = (HashMap<String, Object>) params.get("params");
-        if (componentParams != null) {
-            String className = (String) componentParams.get("classname");
-            if (className != null && !className.trim().isEmpty()) {
+        if (params != null && params.get("params") instanceof Map<?, ?> componentParams) {
+            Object classNameValue = componentParams.get("classname");
+            if (classNameValue instanceof String className && !className.isBlank()) {
                 return className.trim();
             }
         }
-        String topLevel = (String) params.get("classname");
-        if (topLevel != null && !topLevel.trim().isEmpty()) {
+        Object topLevelValue = params == null ? null : params.get("classname");
+        if (topLevelValue instanceof String topLevel && !topLevel.isBlank()) {
             return topLevel.trim();
         }
-        topLevel = (String) params.get("componentName");
-        if (topLevel != null && !topLevel.trim().isEmpty()) {
+        topLevelValue = params == null ? null : params.get("componentName");
+        if (topLevelValue instanceof String topLevel && !topLevel.isBlank()) {
             return topLevel.trim();
         }
         throw new IllegalArgumentException("请提供组件类名: params.classname、classname 或 componentName");
+    }
+
+    private HashMap<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        HashMap<String, Object> copy = new HashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) {
+                copy.put(stringKey, value);
+            }
+        });
+        return copy;
     }
 }

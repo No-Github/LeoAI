@@ -1,6 +1,7 @@
 package org.leo.web.security;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.session.PuppetNodeSession;
@@ -30,8 +31,17 @@ public class PermissionService {
         if (request == null) {
             return null;
         }
-        Object user = request.getSession().getAttribute(SESSION_ATTR_USER);
-        return user instanceof User ? (User) user : null;
+        HttpSession session = request.getSession(false);
+        if (session == null) return null;
+        Object cached = session.getAttribute(SESSION_ATTR_USER);
+        if (!(cached instanceof User user) || user.getUserId() == null) return null;
+        User fresh = userService.getUserById(user.getUserId());
+        if (fresh == null || !Integer.valueOf(1).equals(fresh.getStatus())) {
+            session.invalidate();
+            return null;
+        }
+        session.setAttribute(SESSION_ATTR_USER, fresh);
+        return fresh;
     }
 
     public User requireLogin(HttpServletRequest request) {

@@ -220,7 +220,7 @@ On first launch, the system automatically:
 2. Creates the default administrator account
 3. Initializes base configuration
 
-**Default credentials**: `admin` / `54ikun` — change the password immediately after first login.
+**Initial account**: `admin`. Set `LEO_ADMIN_INITIAL_PASSWORD` to choose the bootstrap password. If omitted, a random password is written to `.leo/initial-admin-password` in the working directory with owner-only permissions. Change it immediately after first login.
 
 ---
 
@@ -287,7 +287,7 @@ The first launch pulls the base image, downloads the JAR, and installs runtime d
 http://localhost:8082
 ```
 
-**Default credentials**: `admin` / `54ikun` — change the password immediately after first login.
+**Initial account**: `admin`. Set `LEO_ADMIN_INITIAL_PASSWORD` in `.env`, or run `docker compose exec leoai cat /app/data/.leo/initial-admin-password` to read the generated password. Change it immediately after first login.
 
 #### Common Commands
 
@@ -591,7 +591,7 @@ Troubleshoot in order:
 
 **Q: How to reset the admin password**
 
-Stop the application → delete (or back up) `data.db` → restart → log in with the default credentials `admin` / `54ikun`.
+Stop the application → delete (or back up) `data.db` and the old `.leo/initial-admin-password` → restart → log in as `admin` with the newly generated bootstrap password. You can also set `LEO_ADMIN_INITIAL_PASSWORD` before startup.
 
 ---
 

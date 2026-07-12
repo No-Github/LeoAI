@@ -6,6 +6,7 @@ import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -58,6 +59,9 @@ public class FingerprintController {
             int threads = threadsObj instanceof Number
                     ? ((Number) threadsObj).intValue()
                     : Integer.parseInt(String.valueOf(threadsObj));
+            if (threads < 1 || threads > 100) {
+                throw new IllegalArgumentException("threads必须在1到100之间");
+            }
 
             String safeName = getSafeFileName(fingerprintId);
             HashMap<String, Object> fingerprint = loadFingerprint(safeName);
@@ -85,7 +89,7 @@ public class FingerprintController {
 
             Object code = results.get("code");
             if (code != null && !Integer.valueOf(200).equals(code)) {
-                String errorMsg = (String) results.get("msg");
+                String errorMsg = stringValue(results.get("msg"));
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_START", "启动指纹扫描", fingerprintId, params,
                         errorMsg != null ? errorMsg : "启动扫描失败", AuditLogUtil.getClientIp());
                 return ApiResponse.error("启动指纹扫描失败: " + errorMsg);
@@ -99,6 +103,10 @@ public class FingerprintController {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_START", "启动指纹扫描", fingerprintId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_START", "启动指纹扫描", fingerprintId, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_START", "启动指纹扫描", fingerprintId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
@@ -120,8 +128,8 @@ public class FingerprintController {
         String json = new String(Files.readAllBytes(fingerprintFile.toPath()), StandardCharsets.UTF_8);
         Object parsed = JsonUtil.fromJsonString(json, HashMap.class);
         Object normalized = normalizeJson(parsed);
-        if (normalized instanceof HashMap) {
-            return (HashMap<String, Object>) normalized;
+        if (normalized instanceof Map<?, ?> normalizedMap) {
+            return copyStringKeyMap(normalizedMap);
         }
         return null;
     }
@@ -131,18 +139,17 @@ public class FingerprintController {
      * puppet 侧不依赖 fastjson，含 JSONObject 的对象图通过 Java 序列化发过去后
      * 反序列化会抛 ClassNotFoundException: com.alibaba.fastjson.JSONObject。
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private Object normalizeJson(Object obj) {
-        if (obj instanceof Map) {
+        if (obj instanceof Map<?, ?> map) {
             HashMap<String, Object> out = new HashMap<>();
-            for (Map.Entry e : ((Map<?, ?>) obj).entrySet()) {
+            for (Map.Entry<?, ?> e : map.entrySet()) {
                 out.put(String.valueOf(e.getKey()), normalizeJson(e.getValue()));
             }
             return out;
         }
-        if (obj instanceof java.util.List) {
+        if (obj instanceof java.util.List<?> list) {
             java.util.ArrayList<Object> out = new java.util.ArrayList<>();
-            for (Object item : (java.util.List<?>) obj) {
+            for (Object item : list) {
                 out.add(normalizeJson(item));
             }
             return out;
@@ -192,7 +199,7 @@ public class FingerprintController {
 
             Object code = results.get("code");
             if (code != null && !Integer.valueOf(200).equals(code)) {
-                String errorMsg = (String) results.get("msg");
+                String errorMsg = stringValue(results.get("msg"));
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_QUERY", "查询指纹扫描结果", taskId, params,
                         errorMsg != null ? errorMsg : "查询结果失败", AuditLogUtil.getClientIp());
                 return ApiResponse.error("查询指纹扫描结果失败: " + errorMsg);
@@ -206,6 +213,10 @@ public class FingerprintController {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_QUERY", "查询指纹扫描结果", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_QUERY", "查询指纹扫描结果", taskId, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_QUERY", "查询指纹扫描结果", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
@@ -242,7 +253,7 @@ public class FingerprintController {
 
             Object code = results.get("code");
             if (code != null && !Integer.valueOf(200).equals(code)) {
-                String errorMsg = (String) results.get("msg");
+                String errorMsg = stringValue(results.get("msg"));
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_PAUSE", "暂停指纹扫描", taskId, params,
                         errorMsg != null ? errorMsg : "暂停失败", AuditLogUtil.getClientIp());
                 return ApiResponse.error("暂停指纹扫描失败: " + errorMsg);
@@ -256,6 +267,10 @@ public class FingerprintController {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_PAUSE", "暂停指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_PAUSE", "暂停指纹扫描", taskId, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_PAUSE", "暂停指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
@@ -292,7 +307,7 @@ public class FingerprintController {
 
             Object code = results.get("code");
             if (code != null && !Integer.valueOf(200).equals(code)) {
-                String errorMsg = (String) results.get("msg");
+                String errorMsg = stringValue(results.get("msg"));
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_RESUME", "继续指纹扫描", taskId, params,
                         errorMsg != null ? errorMsg : "继续失败", AuditLogUtil.getClientIp());
                 return ApiResponse.error("继续指纹扫描失败: " + errorMsg);
@@ -306,6 +321,10 @@ public class FingerprintController {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_RESUME", "继续指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_RESUME", "继续指纹扫描", taskId, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_RESUME", "继续指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
@@ -342,7 +361,7 @@ public class FingerprintController {
 
             Object code = results.get("code");
             if (code != null && !Integer.valueOf(200).equals(code)) {
-                String errorMsg = (String) results.get("msg");
+                String errorMsg = stringValue(results.get("msg"));
                 AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_STOP", "终止指纹扫描", taskId, params,
                         errorMsg != null ? errorMsg : "终止失败", AuditLogUtil.getClientIp());
                 return ApiResponse.error("终止指纹扫描失败: " + errorMsg);
@@ -356,10 +375,24 @@ public class FingerprintController {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_STOP", "终止指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.badRequest(e.getMessage());
+        } catch (ApiException e) {
+            AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_STOP", "终止指纹扫描", taskId, params,
+                    e.getMessage(), AuditLogUtil.getClientIp());
+            throw e;
         } catch (Exception e) {
             AuditLogUtil.logFailure(javaPuppetNode, "FINGERPRINT_STOP", "终止指纹扫描", taskId, params,
                     e.getMessage(), AuditLogUtil.getClientIp());
             return ApiResponse.error("终止指纹扫描失败: " + e.getMessage());
         }
+    }
+
+    private HashMap<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        HashMap<String, Object> copy = new HashMap<>();
+        source.forEach((key, value) -> copy.put(String.valueOf(key), value));
+        return copy;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 }

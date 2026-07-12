@@ -10,6 +10,7 @@ import org.leo.core.util.decompiler.DecompilerUtil;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.aes.AesUtil;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -116,6 +117,7 @@ public class PluginManageController {
     }
     
     @RequestMapping(value = "/plugins", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> addPlugin(@RequestBody HashMap<String, Object> params, HttpServletRequest request) throws Exception {
         if (params == null) {
             return ApiResponse.badRequest("params参数不能为空");
@@ -218,6 +220,7 @@ public class PluginManageController {
         return true;
     }
     @RequestMapping(value = "/plugins/delete", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> delPlugin(@RequestBody HashMap<String, Object> params) {
         if (params == null) {
             return ApiResponse.badRequest("params参数不能为空");
@@ -244,6 +247,7 @@ public class PluginManageController {
     }
 
     @RequestMapping(value = "/plugins/update", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> updatePlugin(@RequestBody HashMap<String, Object> params, HttpServletRequest request) throws Exception {
         if (params == null) {
             return ApiResponse.badRequest("params参数不能为空");
@@ -380,6 +384,7 @@ public class PluginManageController {
      * 响应：{ results: [{pluginId, pluginName, status, message}] }
      */
     @RequestMapping(value = "/plugins/import", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> importPlugins(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "conflictPolicy", required = false) String conflictPolicy,

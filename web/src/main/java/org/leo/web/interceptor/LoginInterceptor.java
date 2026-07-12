@@ -5,6 +5,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.entity.User;
 import org.leo.web.security.PermissionPolicy;
+import org.leo.web.security.PermissionService;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.leo.web.security.RoleAwareAdminEndpoint;
 import org.leo.core.util.ApiResponse;
 import org.slf4j.Logger;
@@ -23,6 +25,11 @@ import java.io.IOException;
 public class LoginInterceptor implements HandlerInterceptor {
     private static final Logger logger = LoggerFactory.getLogger(LoginInterceptor.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private final PermissionService permissionService;
+
+    public LoginInterceptor(PermissionService permissionService) {
+        this.permissionService = permissionService;
+    }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -35,7 +42,7 @@ public class LoginInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        User user = (User) request.getSession().getAttribute("user");
+        User user = permissionService.getCurrentUser(request);
         if (user == null) {
             writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, ApiResponse.unauthorized("用户未登录"));
             return false;
@@ -51,6 +58,14 @@ public class LoginInterceptor implements HandlerInterceptor {
                 writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.forbidden("管理员权限不足"));
                 return false;
             }
+        }
+
+        boolean adminOnlyEndpoint = handlerMethod.hasMethodAnnotation(AdminOnlyEndpoint.class)
+                || handlerMethod.getBeanType().isAnnotationPresent(AdminOnlyEndpoint.class);
+        if (adminOnlyEndpoint && !PermissionPolicy.isAdmin(user)) {
+            writeJsonError(response, HttpServletResponse.SC_FORBIDDEN,
+                    ApiResponse.forbidden("管理员权限不足"));
+            return false;
         }
 
         return true;

@@ -9,6 +9,7 @@ import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -41,8 +42,8 @@ public class CredentialHarvestTools {
         CredentialHarvestCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CredentialHarvestCapable.class);
         String cacheKey = CACHE_KEY_ALL + (filter != null && !filter.isBlank() ? ":" + filter : "");
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
-        if (cached instanceof Map) {
-            return (Map<String, Object>) cached;
+        if (cached instanceof Map<?, ?> cachedMap) {
+            return copyStringKeyMap(cachedMap);
         }
 
         Map<String, Object> results = node.harvestCredentials(filter);
@@ -57,5 +58,15 @@ public class CredentialHarvestTools {
         if (results == null) return false;
         Object code = results.get("code");
         return Integer.valueOf(200).equals(code);
+    }
+
+    private Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        source.forEach((key, value) -> {
+            if (key instanceof String stringKey) {
+                copy.put(stringKey, value);
+            }
+        });
+        return copy;
     }
 }

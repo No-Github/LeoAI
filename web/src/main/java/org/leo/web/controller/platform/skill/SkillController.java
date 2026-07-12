@@ -11,6 +11,7 @@ import org.leo.ai.service.SkillFileService.SkillFileException;
 import org.leo.ai.service.SkillMeta;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.util.ApiResponse;
+import org.leo.web.security.AdminOnlyEndpoint;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -133,6 +134,7 @@ public class SkillController {
      * <p>请求体：{scope, name, content}
      */
     @RequestMapping(value = "/save", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> save(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -182,6 +184,7 @@ public class SkillController {
      * <p>请求体：{scope, name}
      */
     @RequestMapping(value = "/delete", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> delete(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -268,6 +271,7 @@ public class SkillController {
      * <p>请求体：{scope, name, enabled}
      */
     @RequestMapping(value = "/toggle", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> toggle(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -360,6 +364,7 @@ public class SkillController {
      * <p>请求体：{scope, name, path, content, encoding: "text"|"base64"}
      */
     @RequestMapping(value = "/file/save", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> saveFile(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -397,6 +402,7 @@ public class SkillController {
      * <p>请求体：{scope, name, path}
      */
     @RequestMapping(value = "/file/delete", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> deleteFile(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -429,6 +435,7 @@ public class SkillController {
      * <p>请求体：{scope, name, from, to}
      */
     @RequestMapping(value = "/file/move", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> moveFile(@RequestBody HashMap<String, Object> params) {
         if (params == null) return ApiResponse.badRequest("请求体不能为空");
 
@@ -573,6 +580,7 @@ public class SkillController {
      * <p>响应：{results: [{originalName, finalName, status, message}]}
      */
     @RequestMapping(value = "/import", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
     public HashMap<String, Object> importSkills(
             @RequestParam("file") MultipartFile file,
             @RequestParam(PARAM_SCOPE) String scope,
