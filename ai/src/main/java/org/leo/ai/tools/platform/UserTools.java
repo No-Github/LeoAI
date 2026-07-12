@@ -18,7 +18,7 @@ import java.util.UUID;
  *
  * <p>这些工具以平台管理员权限运行，不受前端角色限制。
  * 角色值：admin / leader / normal。
- * 密码以 MD5 形式存储，工具层自动处理哈希。
+ * 密码以 PBKDF2-SHA256 形式存储，工具层自动处理哈希。
  */
 @Component("platformUserTools")
 public class UserTools {
@@ -73,7 +73,7 @@ public class UserTools {
     }
 
     @Tool("创建平台用户。userName 和 password 必填；privilege 可选（admin/leader/normal，默认 normal）；"
-            + "未传 userId 会自动生成。密码明文传入，系统自动 MD5 存储。")
+            + "未传 userId 会自动生成。密码明文传入，系统自动 PBKDF2-SHA256 存储。")
     public Map<String, Object> addUser(String userName, String password, String privilege,
                                         String email, String phone, Integer status,
                                         String teamId, String remark, String userId) {
@@ -87,7 +87,7 @@ public class UserTools {
         User user = new User();
         user.setUserId(defaultIfBlank(userId, UUID.randomUUID().toString()));
         user.setUserName(name);
-        user.setPassword(PasswordUtil.md5(pwd));
+        user.setPassword(PasswordUtil.hash(pwd));
         user.setPrivilege(normalizePrivilege(privilege));
         user.setEmail(trimToNull(email));
         user.setPhone(trimToNull(phone));

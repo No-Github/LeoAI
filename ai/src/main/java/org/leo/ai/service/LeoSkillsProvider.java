@@ -2,13 +2,11 @@ package org.leo.ai.service;
 
 import dev.langchain4j.skills.FileSystemSkill;
 import dev.langchain4j.skills.FileSystemSkillLoader;
-import dev.langchain4j.skills.Skill;
 import dev.langchain4j.skills.Skills;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;

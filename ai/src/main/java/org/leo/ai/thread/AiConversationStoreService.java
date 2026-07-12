@@ -6,7 +6,6 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
-import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
