@@ -131,7 +131,12 @@ public class DynamicModelProvider {
     }
 
     public ModelRuntime buildRuntime(AiModelConfig config) {
-        return buildRuntime(config, false);
+        return buildRuntime(config, false, null);
+    }
+
+    /** 构建带有单次会话推理强度覆盖的运行时，不修改持久化模型配置。 */
+    public ModelRuntime buildRuntime(AiModelConfig config, String reasoningEffortOverride) {
+        return buildRuntime(config, false, normalizeReasoningEffortOverride(reasoningEffortOverride));
     }
 
     /**
@@ -139,17 +144,17 @@ public class DynamicModelProvider {
      * 不会改变已保存的模型配置或普通会话的推理策略。
      */
     public ModelRuntime buildProbeRuntime(AiModelConfig config, boolean forceReasoning) {
-        return buildRuntime(config, forceReasoning);
+        return buildRuntime(config, forceReasoning, null);
     }
 
-    private ModelRuntime buildRuntime(AiModelConfig config, boolean forceReasoning) {
+    private ModelRuntime buildRuntime(AiModelConfig config, boolean forceReasoning, String reasoningEffortOverride) {
         String apiKey = config.getApiKey();
         if (apiKey == null || apiKey.isEmpty()) {
             throw new IllegalArgumentException("模型配置 apiKey 为空，id=" + config.getId());
         }
         boolean responsesApi = useResponsesApi(config);
         String baseUrl = responsesApi ? resolveResponsesBaseUrl(config) : resolveChatCompletionsBaseUrl(config);
-        ModelPlan plan = plan(config, forceReasoning);
+        ModelPlan plan = plan(config, forceReasoning, reasoningEffortOverride);
         StreamingChatModel streaming = responsesApi
                 ? buildResponsesStreaming(apiKey, baseUrl, plan)
                 : buildChatStreaming(apiKey, baseUrl, plan);
@@ -197,10 +202,14 @@ public class DynamicModelProvider {
     }
 
     public String plannedRuntimeCacheKey(AiModelConfig config) {
+        return plannedRuntimeCacheKey(config, null);
+    }
+
+    public String plannedRuntimeCacheKey(AiModelConfig config, String reasoningEffortOverride) {
         if (config == null) return "";
         boolean responsesApi = useResponsesApi(config);
         String baseUrl = responsesApi ? resolveResponsesBaseUrl(config) : resolveChatCompletionsBaseUrl(config);
-        ModelPlan plan = plan(config);
+        ModelPlan plan = plan(config, false, normalizeReasoningEffortOverride(reasoningEffortOverride));
         return runtimeCacheKey(config,
                 resolveProtocol(config),
                 config.getProviderKey(),
@@ -269,6 +278,10 @@ public class DynamicModelProvider {
     }
 
     private ModelPlan plan(AiModelConfig config, boolean forceReasoning) {
+        return plan(config, forceReasoning, null);
+    }
+
+    private ModelPlan plan(AiModelConfig config, boolean forceReasoning, String reasoningEffortOverride) {
         String modelName = config.getModel();
         String providerKey = config.getProviderKey();
         ProviderCapabilities caps = configService.capabilitiesForModel(providerKey, modelName);
@@ -281,7 +294,9 @@ public class DynamicModelProvider {
 
         Boolean userIntent = toBoolean(config.getThinkingEnabled());
         Boolean modelDefault = ModelDefaults.defaultThinkingEnabled(providerKey, modelName);
-        String reasoningEffort = config.getReasoningEffort();
+        String reasoningEffort = reasoningEffortOverride != null
+                ? reasoningEffortOverride
+                : config.getReasoningEffort();
         boolean wantsReasoning;
         if (forceReasoning) {
             wantsReasoning = true;
@@ -322,6 +337,15 @@ public class DynamicModelProvider {
                 effectiveReasoningEffort, temperature, parseHeaders(config.getHeadersJson()),
                 customParameters, sendThinking, accumulateToolCallId,
                 caps.supportsFunctionCalling(), parallelToolCalls);
+    }
+
+    private static String normalizeReasoningEffortOverride(String value) {
+        if (value == null || value.isBlank() || "auto".equalsIgnoreCase(value)) return null;
+        String normalized = value.trim().toLowerCase();
+        return switch (normalized) {
+            case "low", "medium", "high", "xhigh" -> normalized;
+            default -> throw new IllegalArgumentException("reasoningEffort 只支持 auto/low/medium/high/xhigh");
+        };
     }
 
     // ── SDK builder ─────────────────────────────────────────────────────

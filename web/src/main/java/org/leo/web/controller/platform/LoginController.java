@@ -2,12 +2,15 @@ package org.leo.web.controller.platform;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+import org.leo.core.entity.Team;
 import org.leo.core.entity.User;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.PasswordUtil;
+import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.user.ChangePasswordRequest;
 import org.leo.web.dto.platform.user.LoginRequest;
+import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 用户登录控制器。
@@ -36,15 +40,22 @@ public class LoginController {
     private static final String SESSION_ATTR_USER  = "user";
     private static final int MAX_USERNAME_LENGTH = 100;
     private static final int MAX_PASSWORD_LENGTH = 256;
+    private static final int MAX_EMAIL_LENGTH = 100;
+    private static final int MAX_PHONE_LENGTH = 20;
+    private static final int MAX_REMARK_LENGTH = 500;
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final UserService userService;
+    private final TeamService teamService;
     private final PermissionService permissionService;
     private final LoginAttemptService loginAttemptService;
     private final PasswordPolicy passwordPolicy;
 
-    public LoginController(UserService userService, PermissionService permissionService,
+    public LoginController(UserService userService, TeamService teamService, PermissionService permissionService,
                            LoginAttemptService loginAttemptService, PasswordPolicy passwordPolicy) {
         this.userService = userService;
+        this.teamService = teamService;
         this.permissionService = permissionService;
         this.loginAttemptService = loginAttemptService;
         this.passwordPolicy = passwordPolicy;
@@ -124,6 +135,55 @@ public class LoginController {
         return ApiResponse.success(data);
     }
 
+    /** 获取当前用户的完整个人资料（不含密码）。 */
+    @GetMapping("/profile")
+    public Map<String, Object> profile(HttpServletRequest request) {
+        User sessionUser = permissionService.requireLogin(request);
+        User user = userService.getUserById(sessionUser.getUserId());
+        if (user == null) {
+            throw ApiException.notFound("用户不存在");
+        }
+        return ApiResponse.success(profileView(user));
+    }
+
+    /**
+     * 更新当前用户可自行维护的资料。
+     * 用户名、角色、团队和账号状态只能通过管理后台变更。
+     */
+    @PostMapping("/profile")
+    public Map<String, Object> updateProfile(HttpServletRequest request,
+                                             @RequestBody UpdateProfileRequest body) {
+        User sessionUser = permissionService.requireLogin(request);
+        if (body == null) {
+            throw ApiException.badRequest("个人资料不能为空");
+        }
+
+        String email = normalizeOptional(body.email());
+        String phone = normalizeOptional(body.phone());
+        String remark = normalizeOptional(body.remark());
+        validateLength(email, MAX_EMAIL_LENGTH, "邮箱");
+        validateLength(phone, MAX_PHONE_LENGTH, "手机号");
+        validateLength(remark, MAX_REMARK_LENGTH, "备注");
+        if (email != null && !EMAIL_PATTERN.matcher(email).matches()) {
+            throw ApiException.badRequest("邮箱格式不正确");
+        }
+
+        User user = userService.getUserById(sessionUser.getUserId());
+        if (user == null) {
+            throw ApiException.notFound("用户不存在");
+        }
+        user.setEmail(email);
+        user.setPhone(phone);
+        user.setRemark(remark);
+        if (!userService.updateUser(user)) {
+            throw ApiException.serverError("个人资料更新失败");
+        }
+
+        request.getSession().setAttribute(SESSION_ATTR_USER, user);
+        logger.info("个人资料更新成功，userId: {}", user.getUserId());
+        return ApiResponse.success(profileView(user));
+    }
+
     /**
      * 修改密码。oldPassword 为明文，newPassword 使用带盐 PBKDF2 保存。
      */
@@ -155,5 +215,36 @@ public class LoginController {
             throw ApiException.badRequest(message);
         }
         return value.trim();
+    }
+
+    private Map<String, Object> profileView(User user) {
+        HashMap<String, Object> data = new HashMap<>();
+        data.put("userId", user.getUserId());
+        data.put("userName", user.getUserName());
+        data.put("privilege", user.getPrivilege());
+        data.put("email", user.getEmail());
+        data.put("phone", user.getPhone());
+        data.put("status", user.getStatus());
+        data.put("teamId", user.getTeamId());
+        Team team = teamService.getTeamById(user.getTeamId());
+        data.put("teamName", team != null ? team.getTeamName() : null);
+        data.put("remark", user.getRemark());
+        data.put("lastLoginTime", user.getLastLoginTime());
+        data.put("loginCount", user.getLoginCount());
+        data.put("createTime", user.getCreateTime());
+        data.put("updateTime", user.getUpdateTime());
+        return data;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) return null;
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private void validateLength(String value, int maxLength, String label) {
+        if (value != null && value.length() > maxLength) {
+            throw ApiException.badRequest(label + "不能超过 " + maxLength + " 个字符");
+        }
     }
 }

@@ -3,8 +3,10 @@ package org.leo.web.controller.platform;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
+import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.user.LoginRequest;
+import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.security.LoginAttemptService;
@@ -14,6 +16,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -24,11 +27,12 @@ import static org.mockito.ArgumentMatchers.eq;
 class LoginControllerTest {
 
     private final UserService userService = mock(UserService.class);
+    private final TeamService teamService = mock(TeamService.class);
     private final PermissionService permissionService = mock(PermissionService.class);
     private final LoginAttemptService loginAttemptService = mock(LoginAttemptService.class);
     private final PasswordPolicy passwordPolicy = mock(PasswordPolicy.class);
     private final LoginController controller = new LoginController(
-            userService, permissionService, loginAttemptService, passwordPolicy);
+            userService, teamService, permissionService, loginAttemptService, passwordPolicy);
 
     @Test
     void upgradesLegacyPasswordAndRotatesSessionOnSuccessfulLogin() {
@@ -85,5 +89,64 @@ class LoginControllerTest {
 
         assertEquals(403, error.getCode());
         verify(loginAttemptService).recordFailure("disabled", "127.0.0.1");
+    }
+
+    @Test
+    void updatesOnlyEditableProfileFieldsAndRefreshesSession() {
+        User sessionUser = new User();
+        sessionUser.setUserId("user-1");
+        User storedUser = new User();
+        storedUser.setUserId("user-1");
+        storedUser.setUserName("alice");
+        storedUser.setPrivilege(UserService.PRIVILEGE_NORMAL);
+        storedUser.setTeamId("team-1");
+        storedUser.setStatus(1);
+        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(sessionUser);
+        when(userService.getUserById("user-1")).thenReturn(storedUser);
+        when(userService.updateUser(storedUser)).thenReturn(true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession(true).setAttribute("user", sessionUser);
+
+        var response = controller.updateProfile(request,
+                new UpdateProfileRequest(" alice@example.com ", " 13800138000 ", "  "));
+
+        assertEquals(200, response.get("code"));
+        assertEquals("alice@example.com", storedUser.getEmail());
+        assertEquals("13800138000", storedUser.getPhone());
+        assertNull(storedUser.getRemark());
+        assertEquals("alice", storedUser.getUserName());
+        assertEquals("team-1", storedUser.getTeamId());
+        assertSame(storedUser, request.getSession(false).getAttribute("user"));
+        verify(userService).updateUser(storedUser);
+    }
+
+    @Test
+    void rejectsProfileFieldsOverTheirLimits() {
+        User sessionUser = new User();
+        sessionUser.setUserId("user-1");
+        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(sessionUser);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> controller.updateProfile(new MockHttpServletRequest(),
+                        new UpdateProfileRequest("x".repeat(101), null, null)));
+
+        assertEquals(400, error.getCode());
+    }
+
+    @Test
+    void rejectsInvalidProfileEmail() {
+        User sessionUser = new User();
+        sessionUser.setUserId("user-1");
+        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(sessionUser);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> controller.updateProfile(new MockHttpServletRequest(),
+                        new UpdateProfileRequest("invalid-email", null, null)));
+
+        assertEquals(400, error.getCode());
+        assertEquals("邮箱格式不正确", error.getMessage());
     }
 }

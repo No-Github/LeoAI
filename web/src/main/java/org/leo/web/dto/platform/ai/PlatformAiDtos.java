@@ -1,6 +1,7 @@
 package org.leo.web.dto.platform.ai;
 
 import org.leo.core.entity.AiChatAuditEntry;
+import org.leo.web.dto.ai.AiFileAttachment;
 
 import java.util.List;
 
@@ -10,7 +11,9 @@ public final class PlatformAiDtos {
     }
 
     public record ChatRequest(String message,
-                              Integer configId) {
+                              Integer configId,
+                              String reasoningEffort,
+                              List<AiFileAttachment> attachments) {
     }
 
     public record AgentConfigRequest(Integer configId, String mode) {

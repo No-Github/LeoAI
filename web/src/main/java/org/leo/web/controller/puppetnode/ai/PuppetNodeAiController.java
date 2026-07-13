@@ -11,6 +11,7 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.ai.*;
 import org.leo.web.service.PuppetNodeAiThreadService;
+import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
@@ -120,7 +121,8 @@ public class PuppetNodeAiController {
                     message, false);
             auditLogStore.append(audit);
 
-            String guardedMessage = ControllerUtil.buildAiPolicyPrompt(policy, message);
+            String guardedMessage = AiAttachmentPrompt.appendTo(
+                    ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
             final String messageForAgent = resolution.restoredFromPersistence() && !resolution.hasPersistentCheckpoint()
                     ? aiThreadService.withPersistedHistoryContext(session, threadId, guardedMessage)
                     : guardedMessage;
@@ -129,7 +131,8 @@ public class PuppetNodeAiController {
             aiThreadService.persistMessage(session, threadId, "user", message);
 
             SSE_EXECUTOR.submit(() -> aiThreadService.executeChat(
-                    session, thread, threadId, messageForAgent, audit, emitter, startMs));
+                    session, thread, threadId, messageForAgent, audit, emitter, startMs,
+                    body.reasoningEffort()));
         } catch (RuntimeException e) {
             thread.clearExecuting();
             AiControllerUtil.safeSendError(emitter, "启动 AI 对话失败: " + e.getMessage());

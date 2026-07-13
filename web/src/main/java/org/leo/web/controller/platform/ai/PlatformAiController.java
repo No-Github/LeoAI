@@ -17,6 +17,7 @@ import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.PlatformAiService;
+import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
@@ -158,10 +159,12 @@ public class PlatformAiController {
             state.setExecutionPolicy(policy);
 
             AiChatAuditEntry audit = platformAiService.appendChatAudit(policy, message);
-            String guardedMessage = ControllerUtil.buildAiPolicyPrompt(policy, message);
+            String guardedMessage = AiAttachmentPrompt.appendTo(
+                    ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
 
             SSE_EXECUTOR.submit(() -> platformAiService.executeChat(
-                    state, request.getSession().getId(), message, guardedMessage, audit, emitter, startMs));
+                    state, request.getSession().getId(), message, guardedMessage, audit, emitter, startMs,
+                    body.reasoningEffort()));
         } catch (RuntimeException e) {
             state.clearExecuting();
             AiControllerUtil.safeSendError(emitter, "启动平台 AI 对话失败: " + e.getMessage());

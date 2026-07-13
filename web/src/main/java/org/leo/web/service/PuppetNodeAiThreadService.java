@@ -102,6 +102,17 @@ public class PuppetNodeAiThreadService {
                             AiChatAuditEntry audit,
                             SseEmitter emitter,
                             long startMs) {
+        executeChat(session, thread, threadId, messageForAgent, audit, emitter, startMs, null);
+    }
+
+    public void executeChat(PuppetNodeSession session,
+                            AiThread thread,
+                            String threadId,
+                            String messageForAgent,
+                            AiChatAuditEntry audit,
+                            SseEmitter emitter,
+                            long startMs,
+                            String reasoningEffort) {
         thread.markExecuting(Thread.currentThread());
         String memoryId = session.getSessionId() + ":" + threadId;
         String runId = null;
@@ -115,7 +126,7 @@ public class PuppetNodeAiThreadService {
             if (thread.isStopRequested()) {
                 throw new InterruptedException("已停止");
             }
-            CachedPuppetNodeAgent agentRuntime = threadAgent(session, thread);
+            CachedPuppetNodeAgent agentRuntime = threadAgent(session, thread, reasoningEffort);
             if (agentRuntime.failoverMessage() != null) {
                 sendRecordedEventSafely(thread, emitter, "warn", agentRuntime.failoverMessage());
             }
@@ -1171,6 +1182,10 @@ public class PuppetNodeAiThreadService {
     }
 
     private CachedPuppetNodeAgent threadAgent(PuppetNodeSession session, AiThread thread) {
+        return threadAgent(session, thread, null);
+    }
+
+    private CachedPuppetNodeAgent threadAgent(PuppetNodeSession session, AiThread thread, String reasoningEffort) {
         AiModelConfig requested = resolveChannel(thread != null ? thread.getAiConfigId() : null);
         if (thread != null && thread.getAiConfigId() == null) {
             thread.setAiConfigId(requested.getId());
@@ -1179,12 +1194,12 @@ public class PuppetNodeAiThreadService {
         AiModelConfig config = selection.effectiveConfig();
         String agentKey = agentCacheKey(session, thread != null ? thread.getThreadId() : null);
         String cacheKey = requested.getId() + "->" + config.getId() + ":"
-                + dynamicModelProvider.plannedRuntimeCacheKey(config);
+                + dynamicModelProvider.plannedRuntimeCacheKey(config, reasoningEffort);
         CachedPuppetNodeAgent cached = puppetNodeAgents.get(agentKey);
         if (cached != null && cacheKey.equals(cached.cacheKey())) {
             return cached;
         }
-        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
+        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config, reasoningEffort);
         PuppetNodeAgent agent = aiAgentFactory.createPuppetNodeAgent(
                 runtime.streamingModel(), runtime.chatModel(), runtime.supportsFunctionCalling(),
                 modelConfigService.getContextWindowTokens(config));

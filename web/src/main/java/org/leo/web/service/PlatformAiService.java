@@ -154,6 +154,17 @@ public class PlatformAiService {
                             AiChatAuditEntry audit,
                             SseEmitter emitter,
                             long startMs) {
+        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs, null);
+    }
+
+    public void executeChat(PlatformAiState state,
+                            String sessionId,
+                            String userMessage,
+                            String guardedMessage,
+                            AiChatAuditEntry audit,
+                            SseEmitter emitter,
+                            long startMs,
+                            String reasoningEffort) {
         AiTimelineRecorder recorder = new AiTimelineRecorder(
                 (name, data) -> sendRecordedEventSafely(state, emitter, name, data));
         List<AiSseEvent> eventLog = recorder.eventLog();
@@ -170,7 +181,7 @@ public class PlatformAiService {
             state.touchLastActiveAt();
             conversationStore.appendMessage(state.getStateId(), "user", userMessage);
             String messageForAgent = withPersistedHistoryContext(state, guardedMessage);
-            CachedPlatformAgent agentRuntime = threadAgent(state);
+            CachedPlatformAgent agentRuntime = threadAgent(state, reasoningEffort);
             if (agentRuntime.failoverMessage() != null) {
                 sendRecordedEventSafely(state, emitter, "warn", agentRuntime.failoverMessage());
             }
@@ -852,6 +863,10 @@ public class PlatformAiService {
     }
 
     private CachedPlatformAgent threadAgent(PlatformAiState state) {
+        return threadAgent(state, null);
+    }
+
+    private CachedPlatformAgent threadAgent(PlatformAiState state, String reasoningEffort) {
         AiModelConfig requested = resolveChannel(state != null ? state.getAiConfigId() : null);
         if (state != null && state.getAiConfigId() == null) {
             state.setAiConfigId(requested.getId());
@@ -860,12 +875,12 @@ public class PlatformAiService {
         AiModelConfig config = selection.effectiveConfig();
         String stateId = state != null ? state.getStateId() : "";
         String cacheKey = requested.getId() + "->" + config.getId() + ":"
-                + dynamicModelProvider.plannedRuntimeCacheKey(config);
+                + dynamicModelProvider.plannedRuntimeCacheKey(config, reasoningEffort);
         CachedPlatformAgent cached = platformAgents.get(stateId);
         if (cached != null && cacheKey.equals(cached.cacheKey())) {
             return cached;
         }
-        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
+        DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config, reasoningEffort);
         PlatformAgent agent = aiAgentFactory.createPlatformAgent(
                 runtime.streamingModel(), runtime.supportsFunctionCalling(),
                 modelConfigService.getContextWindowTokens(config), puppetAiBridgeTools);
