@@ -113,10 +113,14 @@ public class SessionManageController {
         Puppet puppet = session.getJavaPuppetNode().getPuppet();
         return new SessionInfo(
                 sessionId,
+                puppet.getPuppetId(),
                 puppet.getPuppetName(),
                 puppet.getConnLink(),
                 puppet.getParentPuppetId(),
-                session.getUpdateTime());
+                session.getUpdateTime(),
+                session.getLastActiveTime(),
+                session.isCacheMode(),
+                session.getCapabilities());
     }
 
     private List<ConnLinkItem> buildCacheModeChain(PuppetNodeSession session) {

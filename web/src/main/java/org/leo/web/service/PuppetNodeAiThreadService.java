@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
@@ -46,6 +47,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Puppet AI 线程生命周期和持久化服务。
@@ -604,6 +606,20 @@ public class PuppetNodeAiThreadService {
 
     public Map<String, Object> createThread(PuppetNodeSession session, String requestedTitle, Integer configId,
                                             String mode) {
+        return createThread(session, requestedTitle, configId, mode, null);
+    }
+
+    /** 创建由平台 AI 派发的隔离子线程。子线程不会出现在 Puppet AI 的普通线程列表中。 */
+    public Map<String, Object> createChildThread(PuppetNodeSession session, String requestedTitle,
+                                                  Integer configId, String mode, String parentThreadId) {
+        if (parentThreadId == null || parentThreadId.isBlank()) {
+            throw ApiException.badRequest("缺少 parentThreadId");
+        }
+        return createThread(session, requestedTitle, configId, mode, parentThreadId.trim());
+    }
+
+    private Map<String, Object> createThread(PuppetNodeSession session, String requestedTitle, Integer configId,
+                                             String mode, String parentThreadId) {
         String threadId = UUID.randomUUID().toString();
         String title = requestedTitle;
         if (title == null || title.isBlank()) {
@@ -616,6 +632,7 @@ public class PuppetNodeAiThreadService {
         AiThread thread = session.createAiThread(threadId, title);
         thread.setAiConfigId(resolvedConfigId);
         thread.setMode(mode);
+        thread.setParentThreadId(parentThreadId);
 
         // 异步预热：预填 basicInfo、OS 平台、环境变量缓存
         sessionWarmupService.warmupAsync(session.getSessionId());
@@ -631,8 +648,162 @@ public class PuppetNodeAiThreadService {
         info.put("title", title);
         info.put("configId", resolvedConfigId);
         info.put("mode", thread.getMode());
+        info.put("parentThreadId", parentThreadId);
         info.put("reconSummaryLoaded", session.hasReconSummary());
         return info;
+    }
+
+    /**
+     * 在调用线程内执行一次平台 AI 委派任务，并完整写入 Puppet AI 的线程、消息和运行记录。
+     * 同步执行保证工具返回给平台 Agent 时已经得到可用于继续推理的最终摘要。
+     */
+    public Map<String, Object> executeDelegatedChat(PuppetNodeSession session,
+                                                     AiThread thread,
+                                                     String userMessage,
+                                                     String messageForAgent,
+                                                     AiChatAuditEntry audit,
+                                                     String subagentInvocationId,
+                                                     Consumer<AiSseEvent> eventSink) {
+        if (session == null || thread == null) {
+            throw ApiException.badRequest("Puppet AI 会话或线程不存在");
+        }
+        if (!thread.claimExecution()) {
+            throw ApiException.badRequest("目标 Puppet AI 线程正在执行中");
+        }
+
+        long startMs = System.currentTimeMillis();
+        String threadId = thread.getThreadId();
+        String memoryId = session.getSessionId() + ":" + threadId;
+        String runId = null;
+        List<AiSseEvent> eventLog = new ArrayList<>();
+        AiTimelineRecorder recorder = new AiTimelineRecorder((name, data) ->
+                recordDelegatedEvent(thread, subagentInvocationId, name, data, eventLog, eventSink));
+        try {
+            thread.markExecuting(Thread.currentThread());
+            thread.touchLastActiveAt();
+            persistMessage(session, threadId, "user", userMessage);
+
+            CachedPuppetNodeAgent agentRuntime = threadAgent(session, thread);
+            if (agentRuntime.failoverMessage() != null) {
+                thread.offerSystemWarn(agentRuntime.failoverMessage());
+            }
+            runId = conversationStore.startRun(threadId, agentRuntime.effectiveConfigId(),
+                    messageForAgent, startMs, agentRuntime.runtimeJson());
+            conversationStore.updateRuntime(session.getSessionId(), thread);
+            recordDelegatedEvent(thread, subagentInvocationId, "status", AiThread.STATUS_RUNNING,
+                    eventLog, eventSink);
+
+            CompletableFuture<String> completion = new CompletableFuture<>();
+            AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
+            TokenStream stream = agentRuntime.agent().chat(memoryId, messageForAgent);
+            thread.setStopCallback(() -> {
+                StreamingHandle handle = handleRef.get();
+                if (handle != null) handle.cancel();
+            });
+            stream
+                    .onPartialThinking(thinking -> recorder.appendThinking(thinking.text()))
+                    .onPartialResponseWithContext((partial, ctx) -> {
+                        handleRef.compareAndSet(null, ctx.streamingHandle());
+                        recorder.appendVisibleDelta(partial.text());
+                        recorder.flushDelta();
+                    })
+                    .onPartialToolCall(partial -> {
+                        recorder.onBoundary();
+                        recordDelegatedEvent(thread, subagentInvocationId, "tool_delta",
+                                AiToolEventFactory.buildToolDeltaEventData(partial), eventLog, eventSink);
+                    })
+                    .beforeToolExecution(execution -> {
+                        recorder.onBoundary();
+                        if (thread.isStopRequested()) {
+                            throw new RuntimeException(new InterruptedException(
+                                    thread.getStopReason() != null ? thread.getStopReason() : "已停止"));
+                        }
+                        recordDelegatedEvent(thread, subagentInvocationId, "node",
+                                AiToolEventFactory.buildToolStartEventData(execution), eventLog, eventSink);
+                    })
+                    .onToolExecuted(execution -> {
+                        recorder.flushThinking();
+                        recordDelegatedEvent(thread, subagentInvocationId, "patch",
+                                AiToolEventFactory.buildToolEventData(execution), eventLog, eventSink);
+                        drainDelegatedQueuedEvents(thread, subagentInvocationId, eventLog, eventSink);
+                    })
+                    .onCompleteResponse(response -> {
+                        recorder.onBoundary();
+                        drainDelegatedQueuedEvents(thread, subagentInvocationId, eventLog, eventSink);
+                        completion.complete(recorder.reply());
+                    })
+                    .onError(completion::completeExceptionally)
+                    .start();
+
+            String output = completion.get();
+            failoverService.recordSuccess(agentRuntime.effectiveConfigId());
+            if (audit != null) {
+                audit.complete(output, 0, System.currentTimeMillis() - startMs);
+            }
+            finishRun(runId, AiThread.STATUS_COMPLETED, startMs, output, null, 0);
+            Map<String, Object> review = buildTurnReview(output, eventLog,
+                    System.currentTimeMillis() - startMs);
+            persistAssistantMessage(session, threadId, output, eventLog, review, thread.getCurrentPlan());
+            thread.markCompleted();
+            thread.touchLastActiveAt();
+            conversationStore.updateRuntime(session.getSessionId(), thread);
+            recordDelegatedEvent(thread, subagentInvocationId, "status", AiThread.STATUS_COMPLETED,
+                    eventLog, eventSink);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("sessionId", session.getSessionId());
+            result.put("threadId", threadId);
+            result.put("status", AiThread.STATUS_COMPLETED);
+            result.put("summary", output);
+            return result;
+        } catch (Throwable error) {
+            boolean cancelled = thread.isStopRequested() || Thread.currentThread().isInterrupted();
+            String status = cancelled ? AiThread.STATUS_CANCELLED : AiThread.STATUS_FAILED;
+            String message;
+            if (cancelled) {
+                message = thread.getStopReason() != null ? thread.getStopReason() : "已停止";
+                thread.stop(message);
+                thread.markCancelled();
+            } else {
+                AiErrorClassifier.Classification classification = aiErrorClassifier.classify(error);
+                message = classification.message();
+                failoverService.recordFailure(thread.getAiConfigId(), classification);
+                thread.markFailed();
+            }
+            if (audit != null) {
+                audit.fail(message, System.currentTimeMillis() - startMs);
+            }
+            finishRun(runId, status, startMs, null, message, 0);
+            conversationStore.updateRuntime(session.getSessionId(), thread);
+            recordDelegatedEvent(thread, subagentInvocationId, "status", status, eventLog, eventSink);
+            throw new IllegalStateException(message, error);
+        } finally {
+            thread.clearExecuting();
+        }
+    }
+
+    private void recordDelegatedEvent(AiThread thread,
+                                      String subagentInvocationId,
+                                      String name,
+                                      Object data,
+                                      List<AiSseEvent> eventLog,
+                                      Consumer<AiSseEvent> eventSink) {
+        AiSseEvent event = thread.recordSseEvent(name, data, subagentInvocationId);
+        eventLog.add(event);
+        if (eventSink != null) eventSink.accept(event);
+    }
+
+    private void drainDelegatedQueuedEvents(AiThread thread,
+                                            String subagentInvocationId,
+                                            List<AiSseEvent> eventLog,
+                                            Consumer<AiSseEvent> eventSink) {
+        AiSseEvent queued;
+        while ((queued = thread.getSseEventQueue().poll()) != null) {
+            AiSseEvent event = queued.subagentInvocationId() != null
+                    ? queued : queued.withSubagent(subagentInvocationId);
+            eventLog.add(event);
+            if (eventSink != null) eventSink.accept(event);
+        }
     }
 
     public void deleteThread(PuppetNodeSession session, String threadId) {

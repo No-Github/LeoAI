@@ -120,10 +120,89 @@ public class PuppetManageController {
         puppet.setPuppetId(id);
         boolean result = puppetService.insertPuppet(puppet);
         if (result) {
-            return ApiResponse.success();
+            return ApiResponse.success(Collections.singletonMap("puppetId", id));
         } else {
             return ApiResponse.error("添加Puppet失败");
         }
+    }
+
+    /**
+     * 导出指定 Puppet 及其完整祖先链。返回顺序始终为祖先在前、子节点在后，
+     * 便于客户端在导入时按依赖顺序重建父子关系。
+     */
+    @RequestMapping(value = "/puppets/export", method = RequestMethod.POST)
+    public HashMap<String, Object> exportPuppets(HttpServletRequest request,
+                                                  @RequestBody HashMap<String, Object> params) {
+        User user = getUserFromSession(request);
+        if (user == null || user.getUserId() == null) {
+            return ApiResponse.unauthorized("用户未登录");
+        }
+        Object rawIds = params != null ? params.get("puppetIds") : null;
+        if (!(rawIds instanceof Collection<?> values) || values.isEmpty()) {
+            return ApiResponse.badRequest("puppetIds不能为空");
+        }
+        if (values.size() > 200) {
+            return ApiResponse.badRequest("单次最多导出200台主机");
+        }
+
+        LinkedHashMap<String, Puppet> ordered = new LinkedHashMap<>();
+        List<String> requestedIds = new ArrayList<>();
+        for (Object value : values) {
+            String puppetId = value != null ? value.toString().trim() : "";
+            if (puppetId.isEmpty()) {
+                continue;
+            }
+            requestedIds.add(puppetId);
+            List<Puppet> chain = new ArrayList<>();
+            Set<String> visited = new HashSet<>();
+            Puppet current = puppetService.findPuppetById(puppetId);
+            if (current == null) {
+                return ApiResponse.notFound("Puppet不存在: " + puppetId);
+            }
+            while (current != null) {
+                if (!visited.add(current.getPuppetId())) {
+                    return ApiResponse.conflict("Puppet层级存在循环依赖");
+                }
+                if (!canViewPuppet(current, user)) {
+                    return ApiResponse.forbidden("无权限导出主机或其依赖");
+                }
+                chain.add(current);
+                String parentId = current.getParentPuppetId();
+                if (parentId == null || parentId.isBlank() || ROOT_PARENT_ID.equals(parentId)) {
+                    break;
+                }
+                current = puppetService.findPuppetById(parentId);
+                if (current == null) {
+                    return ApiResponse.conflict("Puppet缺少父主机依赖: " + parentId);
+                }
+            }
+            Collections.reverse(chain);
+            for (Puppet puppet : chain) {
+                ordered.putIfAbsent(puppet.getPuppetId(), puppet);
+            }
+        }
+
+        if (Boolean.TRUE.equals(params.get("includeDescendants"))) {
+            Deque<String> queue = new ArrayDeque<>(requestedIds);
+            Set<String> expanded = new HashSet<>();
+            while (!queue.isEmpty()) {
+                String parentId = queue.removeFirst();
+                if (!expanded.add(parentId)) {
+                    continue;
+                }
+                for (Puppet child : puppetService.findPuppetByParentPuppetId(parentId)) {
+                    if (!canViewPuppet(child, user)) {
+                        continue;
+                    }
+                    ordered.putIfAbsent(child.getPuppetId(), child);
+                    queue.addLast(child.getPuppetId());
+                    if (ordered.size() > 1000) {
+                        return ApiResponse.badRequest("单次分享最多包含1000台主机");
+                    }
+                }
+            }
+        }
+        return ApiResponse.success(new ArrayList<>(ordered.values()));
     }
     
     @RequestMapping(value = "/puppets/update", method = RequestMethod.POST)

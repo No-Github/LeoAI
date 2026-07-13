@@ -287,6 +287,12 @@ public class PlatformAiController {
         return ApiResponse.success(platformAiService.messages(request.getSession(), offset, limit));
     }
 
+    /** 加载当前平台 AI 线程派发过的 Puppet AI 子任务。 */
+    @PostMapping("/subagents")
+    public Map<String, Object> subagents(HttpServletRequest request) {
+        return ApiResponse.success(platformAiService.subagentInvocations(request.getSession()));
+    }
+
     /**
      * 获取当前平台 AI 会话的活跃任务计划。
      */

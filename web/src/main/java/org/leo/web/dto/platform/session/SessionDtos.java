@@ -23,10 +23,14 @@ public final class SessionDtos {
 
     public record SessionInfo(
             String sessionId,
+            String puppetId,
             String puppetName,
             String connLink,
             String parentPuppetId,
-            Long   updateTime
+            Long   updateTime,
+            Long   lastActiveTime,
+            boolean cacheMode,
+            List<String> capabilities
     ) {}
 
     public record ConnLinkItem(

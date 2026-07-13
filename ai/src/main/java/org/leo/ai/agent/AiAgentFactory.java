@@ -209,13 +209,33 @@ public class AiAgentFactory {
     public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
                                              boolean enableTools,
                                              int modelContextWindowTokens) {
+        return createPlatformAgent(streamingModel, enableTools, modelContextWindowTokens, null);
+    }
+
+    /**
+     * 创建平台 Agent，并按运行入口追加可选工具。
+     *
+     * <p>桥接 Puppet AI 的工具位于 web 模块，不能反向成为 ai 模块的固定依赖，
+     * 因此由 {@code PlatformAiService} 在构建线程运行时时注入。
+     */
+    public PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
+                                             boolean enableTools,
+                                             int modelContextWindowTokens,
+                                             Object additionalTools) {
         return createPlatformAgent(streamingModel, enableTools,
-                memoryProviderFactory.createPlatformProvider(modelContextWindowTokens));
+                memoryProviderFactory.createPlatformProvider(modelContextWindowTokens), additionalTools);
     }
 
     private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
                                               boolean enableTools,
                                               ChatMemoryProvider selectedMemoryProvider) {
+        return createPlatformAgent(streamingModel, enableTools, selectedMemoryProvider, null);
+    }
+
+    private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
+                                              boolean enableTools,
+                                              ChatMemoryProvider selectedMemoryProvider,
+                                              Object additionalTools) {
         var builder = AiServices.builder(PlatformAgent.class)
                 .streamingChatModel(streamingModel)
                 .chatMemoryProvider(selectedMemoryProvider)
@@ -225,6 +245,9 @@ public class AiAgentFactory {
             builder.tools(puppetTools, userTools, teamTools,
                     pluginTools, fingerprintTools, disguiseTools,
                     shellGeneratorTools, platformSkillActivationTools);
+            if (additionalTools != null) {
+                builder.tools(additionalTools);
+            }
         }
         return builder.build();
     }

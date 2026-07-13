@@ -64,6 +64,7 @@ public class PlatformAiService {
     private final AiErrorClassifier aiErrorClassifier;
     private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
+    private final PlatformPuppetAiBridgeTools puppetAiBridgeTools;
     private final ConcurrentMap<String, CachedPlatformAgent> platformAgents = new ConcurrentHashMap<>();
 
     public PlatformAiService(AiAgentFactory aiAgentFactory,
@@ -72,7 +73,8 @@ public class PlatformAiService {
                              AiModelFailoverService failoverService,
                              AiErrorClassifier aiErrorClassifier,
                              AiAuditLogStore auditLogStore,
-                             AiConversationStoreService conversationStore) {
+                             AiConversationStoreService conversationStore,
+                             PlatformPuppetAiBridgeTools puppetAiBridgeTools) {
         this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
@@ -80,6 +82,7 @@ public class PlatformAiService {
         this.aiErrorClassifier = aiErrorClassifier;
         this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
+        this.puppetAiBridgeTools = puppetAiBridgeTools;
     }
 
     public AgentInfoResponse createAgent(HttpSession httpSession, User user, Integer configId) {
@@ -487,6 +490,12 @@ public class PlatformAiService {
         return data;
     }
 
+    /** 返回当前平台 AI 线程派发过的 Puppet AI 子任务记录。 */
+    public List<org.leo.core.entity.AiSubagentInvocation> subagentInvocations(HttpSession httpSession) {
+        PlatformAiState state = requireState(httpSession, "AI 会话不存在");
+        return conversationStore.listSubagentInvocations(state.getStateId());
+    }
+
     private Map<String, Object> runtimeSnapshot(PlatformAiState state, long startMs) {
         HashMap<String, Object> payload = new HashMap<>();
         payload.put("status", state.getRunStatus());
@@ -712,7 +721,7 @@ public class PlatformAiService {
                     || ("node".equals(name) && ("thinking".equals(kind)
                             || "text".equals(kind)
                             || "plan".equals(kind) || "subtask".equals(kind)))
-                    || ("patch".equals(name) && "tool".equals(kind))) {
+                    || ("patch".equals(name) && ("tool".equals(kind) || "subtask".equals(kind)))) {
                 long seq = event.seq() > 0 ? event.seq() : (i + 1L);
                 nodes.add(withEventSeq(event, seq));
             }
@@ -859,7 +868,7 @@ public class PlatformAiService {
         DynamicModelProvider.ModelRuntime runtime = dynamicModelProvider.buildRuntime(config);
         PlatformAgent agent = aiAgentFactory.createPlatformAgent(
                 runtime.streamingModel(), runtime.supportsFunctionCalling(),
-                modelConfigService.getContextWindowTokens(config));
+                modelConfigService.getContextWindowTokens(config), puppetAiBridgeTools);
         CachedPlatformAgent created = new CachedPlatformAgent(cacheKey, agent,
                 DynamicModelProvider.runtimeSnapshotJson(config, runtime), config.getId(),
                 selection.failover() ? selection.message() : null);
