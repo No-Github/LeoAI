@@ -272,10 +272,6 @@ public class AiModelCapabilityProbeService {
         return failure(feature, (Throwable) error, unsupportedIsConclusive, System.currentTimeMillis());
     }
 
-    private ProbeItem failure(String feature, Throwable error, boolean unsupportedIsConclusive) {
-        return failure(feature, error, unsupportedIsConclusive, System.currentTimeMillis());
-    }
-
     private ProbeItem failure(String feature, Throwable error, boolean unsupportedIsConclusive, long startedAt) {
         AiErrorClassifier.Classification classification = errorClassifier.classify(error);
         long latency = Math.max(0L, System.currentTimeMillis() - startedAt);

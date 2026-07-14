@@ -19,6 +19,9 @@ public class DecompressComponent implements Runnable {
     
     // 缓冲区大小
     private static final int BUFFER_SIZE = 8192;
+    private static final int MAX_ENTRY_COUNT = 10000;
+    private static final long MAX_ENTRY_SIZE = 268435456L; // 256MB
+    private static final long MAX_TOTAL_SIZE = 1073741824L; // 1GB
 
     
     private HashMap params;
@@ -71,6 +74,7 @@ public class DecompressComponent implements Runnable {
         }
         
         int fileCount = 0;
+        int entryCount = 0;
         long totalSize = 0;
         
         ZipInputStream zis = null;
@@ -78,6 +82,14 @@ public class DecompressComponent implements Runnable {
             zis = new ZipInputStream(new FileInputStream(zipFile));
             ZipEntry zipEntry;
             while ((zipEntry = zis.getNextEntry()) != null) {
+                entryCount++;
+                if (entryCount > MAX_ENTRY_COUNT) {
+                    throw new IOException("归档条目数量超过安全上限: " + MAX_ENTRY_COUNT);
+                }
+                long declaredSize = zipEntry.getSize();
+                if (declaredSize > MAX_ENTRY_SIZE) {
+                    throw new IOException("归档条目超过 256MB 安全上限: " + zipEntry.getName());
+                }
                 File newFile = new File(outputFolder, zipEntry.getName());
                 
                 // 安全检查：防止路径遍历攻击
@@ -96,7 +108,7 @@ public class DecompressComponent implements Runnable {
                         }
                     }
                     
-                    long fileSize = writeFile(zis, newFile);
+                    long fileSize = writeFile(zis, newFile, totalSize);
                     totalSize += fileSize;
                     fileCount++;
                 }
@@ -146,6 +158,7 @@ public class DecompressComponent implements Runnable {
         FileOutputStream fos = null;
         long totalSize = 0;
         
+        boolean completed = false;
         try {
             gzis = new GZIPInputStream(new FileInputStream(gzipFile));
             fos = new FileOutputStream(outputFile);
@@ -155,10 +168,15 @@ public class DecompressComponent implements Runnable {
             while ((length = gzis.read(buffer)) > 0) {
                 fos.write(buffer, 0, length);
                 totalSize += length;
+                ensureExtractionLimit(totalSize, totalSize, outputFileObj.getName());
             }
+            completed = true;
         } finally {
             closeStream(gzis);
             closeStream(fos);
+            if (!completed && outputFileObj.exists()) {
+                outputFileObj.delete();
+            }
         }
         
         results.put("code", 200);
@@ -229,9 +247,10 @@ public class DecompressComponent implements Runnable {
     /**
      * 写入解压的文件（ZIP格式）
      */
-    private long writeFile(ZipInputStream zis, File newFile) throws IOException {
+    private long writeFile(ZipInputStream zis, File newFile, long currentTotal) throws IOException {
         long fileSize = 0;
         FileOutputStream fos = null;
+        boolean completed = false;
         try {
             fos = new FileOutputStream(newFile);
             byte[] buffer = new byte[BUFFER_SIZE];
@@ -239,11 +258,25 @@ public class DecompressComponent implements Runnable {
             while ((length = zis.read(buffer)) > 0) {
                 fos.write(buffer, 0, length);
                 fileSize += length;
+                ensureExtractionLimit(fileSize, currentTotal + fileSize, newFile.getName());
             }
+            completed = true;
         } finally {
             closeStream(fos);
+            if (!completed && newFile.exists()) {
+                newFile.delete();
+            }
         }
         return fileSize;
+    }
+
+    private void ensureExtractionLimit(long entrySize, long totalSize, String entryName) throws IOException {
+        if (entrySize > MAX_ENTRY_SIZE) {
+            throw new IOException("归档条目超过 256MB 安全上限: " + entryName);
+        }
+        if (totalSize > MAX_TOTAL_SIZE) {
+            throw new IOException("归档展开后超过 1GB 安全上限");
+        }
     }
 
     private void validateReadableFile(File file, String missingMessagePrefix, String path) throws IOException {
@@ -272,6 +305,7 @@ public class DecompressComponent implements Runnable {
     private long[] extractTarStream(InputStream in, File outDir) throws IOException {
         long fileCount = 0;
         long dirCount = 0;
+        long entryCount = 0;
         long totalSize = 0;
         byte[] header = new byte[512];
 
@@ -290,6 +324,17 @@ public class DecompressComponent implements Runnable {
             String entryName = parseTarName(header);
             long size = parseOctal(header, 124, 12);
             byte typeFlag = header[156];
+
+            entryCount++;
+            if (entryCount > MAX_ENTRY_COUNT) {
+                throw new IOException("归档条目数量超过安全上限: " + MAX_ENTRY_COUNT);
+            }
+            if (size < 0 || size > MAX_ENTRY_SIZE) {
+                throw new IOException("归档条目大小无效或超过 256MB 安全上限: " + entryName);
+            }
+            if ((typeFlag == '0' || typeFlag == 0) && totalSize > MAX_TOTAL_SIZE - size) {
+                throw new IOException("归档展开后超过 1GB 安全上限");
+            }
 
             if (entryName == null || entryName.length() == 0) {
                 skipTarEntry(in, size);
@@ -313,13 +358,18 @@ public class DecompressComponent implements Runnable {
                     }
                 }
                 FileOutputStream fos = null;
+                boolean completed = false;
                 try {
                     fos = new FileOutputStream(target);
                     long written = copyExact(in, fos, size);
                     totalSize += written;
                     fileCount++;
+                    completed = true;
                 } finally {
                     closeStream(fos);
+                    if (!completed && target.exists()) {
+                        target.delete();
+                    }
                 }
                 skipPadding(in, size);
             } else {

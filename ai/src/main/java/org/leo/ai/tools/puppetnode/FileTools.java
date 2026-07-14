@@ -265,7 +265,7 @@ public class FileTools {
     /** 构造跨平台搜索命令。 */
     private String buildSearchCommand(String directory, String pattern, String fileGlob, int limit, boolean isWin) {
         if (isWin) {
-            return buildWindowsSearchCmd(directory, pattern, fileGlob, limit);
+            return buildWindowsSearchCmd(directory, pattern, fileGlob);
         }
         return buildLinuxSearchCmd(directory, pattern, fileGlob, limit);
     }
@@ -287,7 +287,7 @@ public class FileTools {
         return sb.toString();
     }
 
-    private String buildWindowsSearchCmd(String directory, String pattern, String fileGlob, int limit) {
+    private String buildWindowsSearchCmd(String directory, String pattern, String fileGlob) {
         StringBuilder sb = new StringBuilder("findstr /s /i /n /c:\"");
         sb.append(escapeCmd(pattern)).append("\" ");
         String normalizedDir = directory.replace("/", "\\").replaceAll("\\\\$", "");

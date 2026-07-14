@@ -2,7 +2,9 @@
 # 用 Java 8 的 javac 以 -source 1.6 -target 1.6 编译所有 component 类
 # 生成 major version 50 (Java 6) 的 .payload 放入 src/main/resources/component/
 #
-# 用法: cd LeoAI/core && bash compile-components.sh
+# 用法:
+#   cd LeoAI/core && bash compile-components.sh          # 审计并更新 payload
+#   cd LeoAI/core && bash compile-components.sh --check  # 仅审计，不写 resources
 #
 # 要求 Java 8（Zulu 8 / OpenJDK 8 等）；脚本会优先使用 JAVA8_HOME，
 # 并在 macOS 上自动尝试 /usr/libexec/java_home -v 1.8。
@@ -11,6 +13,12 @@
 # CloneWithJavassist.setVersionToJava5() 运行时会进一步将版本号降为 49
 
 set -euo pipefail
+
+MODE="${1:-}"
+if [ -n "$MODE" ] && [ "$MODE" != "--check" ]; then
+    echo "用法: $0 [--check]" >&2
+    exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -106,6 +114,12 @@ echo "=== 检查 Java 6 API 兼容性 ==="
 "$REPO_DIR/mvnw" -q -f "$AUDIT_POM" \
     -Dcomponent.classes.dir="$TMP_DIR" \
     org.codehaus.mojo:animal-sniffer-maven-plugin:1.27:check
+
+if [ "$MODE" = "--check" ]; then
+    echo ""
+    echo "=== 检查完成: ${class_count} 个 Component 均通过，未更新 payload ==="
+    exit 0
+fi
 
 echo "=== 拷贝 .payload 文件 ==="
 mkdir -p "$OUT_DIR"

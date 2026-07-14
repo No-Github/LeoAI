@@ -3,6 +3,7 @@ package org.leo.web.util;
 import org.leo.web.dto.ai.AiFileAttachment;
 
 import java.util.List;
+import java.util.Map;
 
 public final class AiAttachmentPrompt {
     private static final int MAX_FILES = 10;
@@ -30,6 +31,18 @@ public final class AiAttachmentPrompt {
                     .append(content).append("\n--- 文件结束 ---\n");
         }
         return result.toString();
+    }
+
+    /** 仅保留 UI 恢复所需的安全元数据，不把文件正文写入消息表。 */
+    public static List<Map<String, Object>> metadata(List<AiFileAttachment> attachments) {
+        if (attachments == null || attachments.isEmpty()) return List.of();
+        return attachments.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(attachment -> Map.<String, Object>of(
+                        "name", safe(attachment.name()),
+                        "mimeType", safe(attachment.mimeType()),
+                        "size", attachment.size() == null ? 0L : Math.max(0L, attachment.size())))
+                .toList();
     }
 
     private static String safe(String value) {

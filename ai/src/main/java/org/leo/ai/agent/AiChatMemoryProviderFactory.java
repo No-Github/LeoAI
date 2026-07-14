@@ -51,7 +51,6 @@ public class AiChatMemoryProviderFactory {
             return new CompressingChatMemory(
                     memoryId,
                     MessageWindowChatMemory.builder().id(memoryId).maxMessages(maxMessages).build(),
-                    tokenEstimator,
                     compressionService,
                     effectiveWindow);
         };

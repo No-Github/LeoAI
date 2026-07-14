@@ -273,14 +273,6 @@ public class DynamicModelProvider {
 
     // ── 计划构造 ──────────────────────────────────────────────────────────
 
-    private ModelPlan plan(AiModelConfig config) {
-        return plan(config, false);
-    }
-
-    private ModelPlan plan(AiModelConfig config, boolean forceReasoning) {
-        return plan(config, forceReasoning, null);
-    }
-
     private ModelPlan plan(AiModelConfig config, boolean forceReasoning, String reasoningEffortOverride) {
         String modelName = config.getModel();
         String providerKey = config.getProviderKey();
@@ -472,7 +464,7 @@ public class DynamicModelProvider {
                                                             boolean doReasoning,
                                                             Boolean userIntent) {
         Map<String, Object> params = new LinkedHashMap<>();
-        if (usesDeepSeekThinkingBody(config.getProviderKey(), config.getModel())) {
+        if (usesDeepSeekThinkingBody(config.getModel())) {
             if (doReasoning) {
                 params.put("thinking", Map.of("type", "enabled"));
             } else if (Boolean.FALSE.equals(userIntent)) {
@@ -482,7 +474,7 @@ public class DynamicModelProvider {
         return params;
     }
 
-    private static boolean usesDeepSeekThinkingBody(String providerKey, String modelName) {
+    private static boolean usesDeepSeekThinkingBody(String modelName) {
         String model = modelName == null ? "" : modelName.toLowerCase();
         return model.contains("deepseek-v4");
     }

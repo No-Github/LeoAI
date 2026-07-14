@@ -15,7 +15,6 @@ import org.leo.web.dto.platform.ai.PlatformAiDtos.AgentConfigRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.ChatRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.EventsRequest;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
-import org.leo.web.exception.ApiException;
 import org.leo.web.service.PlatformAiService;
 import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
@@ -164,7 +163,7 @@ public class PlatformAiController {
 
             SSE_EXECUTOR.submit(() -> platformAiService.executeChat(
                     state, request.getSession().getId(), message, guardedMessage, audit, emitter, startMs,
-                    body.reasoningEffort()));
+                    body.reasoningEffort(), AiAttachmentPrompt.metadata(body.attachments())));
         } catch (RuntimeException e) {
             state.clearExecuting();
             AiControllerUtil.safeSendError(emitter, "启动平台 AI 对话失败: " + e.getMessage());
@@ -316,10 +315,4 @@ public class PlatformAiController {
         return ApiResponse.success(history);
     }
 
-    private String requireText(String value, String message) {
-        if (value == null || value.isBlank()) {
-            throw ApiException.badRequest(message);
-        }
-        return value.trim();
-    }
 }

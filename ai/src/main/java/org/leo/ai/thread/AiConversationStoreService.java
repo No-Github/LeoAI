@@ -164,19 +164,31 @@ public class AiConversationStoreService {
     }
 
     public void appendMessage(String threadId, String role, String content) {
-        appendMessage(threadId, role, content, null, null, null);
+        appendMessage(threadId, role, content, null, null, null, null);
+    }
+
+    public void appendMessage(String threadId, String role, String content, Object attachments) {
+        appendMessage(threadId, role, content, null, null, null, attachments);
     }
 
     public void appendMessage(String threadId, String role, String content,
                               List<Object> nodes,
                               Map<String, Object> review) {
-        appendMessage(threadId, role, content, nodes, review, null);
+        appendMessage(threadId, role, content, nodes, review, null, null);
     }
 
     public void appendMessage(String threadId, String role, String content,
                               List<Object> nodes,
                               Map<String, Object> review,
                               Object planSnapshot) {
+        appendMessage(threadId, role, content, nodes, review, planSnapshot, null);
+    }
+
+    private void appendMessage(String threadId, String role, String content,
+                               List<Object> nodes,
+                               Map<String, Object> review,
+                               Object planSnapshot,
+                               Object attachments) {
         long now = System.currentTimeMillis();
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageId(UUID.randomUUID().toString());
@@ -184,6 +196,7 @@ public class AiConversationStoreService {
         row.setRole(role);
         row.setContent(content);
         row.setTimestamp(now);
+        row.setAttachmentsJson(toJsonOrNull(attachments));
         row.setNodesJson(toJsonOrNull(nodes));
         row.setReviewJson(toJsonOrNull(review));
         row.setPlanJson(toJsonOrNull(planSnapshot));
@@ -284,6 +297,7 @@ public class AiConversationStoreService {
             item.put("role", record.getRole());
             item.put("content", record.getContent());
             item.put("timestamp", record.getTimestamp());
+            putJson(item, "attachments", record.getAttachmentsJson());
             putJson(item, "nodes", record.getNodesJson());
             putJson(item, "review", record.getReviewJson());
             putJson(item, "plan", record.getPlanJson());

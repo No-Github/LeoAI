@@ -165,10 +165,9 @@ public class ReconScanController {
 
     @RequestMapping(value = "/pause-scan", method = RequestMethod.POST)
     public HashMap<String, Object> pauseScan(@RequestBody HashMap<String, Object> params) {
-        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ControllerUtil.getAbstractPuppetNode(params);
             ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
@@ -196,10 +195,9 @@ public class ReconScanController {
 
     @RequestMapping(value = "/resume-scan", method = RequestMethod.POST)
     public HashMap<String, Object> resumeScan(@RequestBody HashMap<String, Object> params) {
-        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ControllerUtil.getAbstractPuppetNode(params);
             ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 
@@ -227,10 +225,9 @@ public class ReconScanController {
 
     @RequestMapping(value = "/stop-scan", method = RequestMethod.POST)
     public HashMap<String, Object> stopScan(@RequestBody HashMap<String, Object> params) {
-        AbstractPuppetNode javaPuppetNode = null;
         String taskId = null;
         try {
-            javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
+            ControllerUtil.getAbstractPuppetNode(params);
             ComponentInvokeCapable componentNode = ControllerUtil.requireCapability(params, ComponentInvokeCapable.class);
             taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
 

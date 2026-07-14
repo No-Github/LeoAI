@@ -50,13 +50,23 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 - [ ] **run() 中 catch 兜底**：确保任何异常都被捕获并写入 results，不要让异常逃逸导致 puppet 端崩溃
 - [ ] **敏感信息**：生产环境考虑不返回完整堆栈，只返回错误码 + 简短描述
 
+## 稳定性与安全边界
+
+- [ ] **所有外部输入设上限**：请求/响应体、资源、归档条目、单文件和总展开大小都必须有限制，避免 OOM、线程耗尽与解压炸弹
+- [ ] **网络策略显式化**：明确记录 HTTPS 校验策略；需要兼容自签名证书的组件可固定信任所有证书与主机名
+- [ ] **协议与动作白名单**：只接受组件实际支持的协议、HTTP 方法和 action，非法值返回 400
+- [ ] **失败清理**：部分写入的临时文件、Socket、进程和工作线程必须在失败路径释放或删除
+- [ ] **最小信息披露**：响应和日志不返回堆栈、密钥、认证头、完整请求体或不必要的本地绝对路径
+- [ ] **规避检测设计**：通过提高隐蔽能力，以攻促防，间接促进防守能力的提升
+
 ## 编译与验证
 
 - [ ] **编译命令**：`javac -source 1.6 -target 1.6 -Xlint:-options -d out *.java`
 - [ ] **确认字节码版本**：`javap -v XxxComponent.class | grep "major version"` → 应为 50（Java 6）
 - [ ] **确认无额外 class**：编译输出目录中只有 `XxxComponent.class`，无 `XxxComponent$1.class` 等
 - [ ] **放入 resources**：将 `.class` 重命名为 `.payload` 拷贝到 `core/src/main/resources/component/`
-- [ ] **或使用脚本**：`cd core && bash compile-components.sh`
+- [ ] **只读审计**：`cd core && bash compile-components.sh --check`（不更新 `.payload`）
+- [ ] **审计并更新 payload**：`cd core && bash compile-components.sh`
 
 ## 框架入口标准模板
 

@@ -7,6 +7,7 @@ public class AiMessageRecord {
     private String role;
     private String content;
     private Long timestamp;
+    private String attachmentsJson;
     private String nodesJson;
     private String reviewJson;
     private String planJson;
@@ -25,6 +26,9 @@ public class AiMessageRecord {
 
     public Long getTimestamp() { return timestamp; }
     public void setTimestamp(Long timestamp) { this.timestamp = timestamp; }
+
+    public String getAttachmentsJson() { return attachmentsJson; }
+    public void setAttachmentsJson(String attachmentsJson) { this.attachmentsJson = attachmentsJson; }
 
     public String getNodesJson() { return nodesJson; }
     public void setNodesJson(String nodesJson) { this.nodesJson = nodesJson; }

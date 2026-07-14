@@ -307,6 +307,7 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     role VARCHAR(32) NOT NULL,
     content TEXT,
     timestamp INTEGER NOT NULL,
+    attachments_json TEXT,
     thinking_logs_json TEXT,
     tool_calls_json TEXT,
     review_json TEXT,

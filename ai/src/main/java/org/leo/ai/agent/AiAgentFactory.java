@@ -8,6 +8,7 @@ import org.leo.ai.service.AutoReconAppendService;
 import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
 import org.leo.ai.tools.platform.PluginTools;
+import org.leo.ai.tools.platform.PlatformPlanTools;
 import org.leo.ai.tools.platform.PuppetTools;
 import org.leo.ai.tools.platform.ShellGeneratorTools;
 import org.leo.ai.tools.platform.SkillActivationTools;
@@ -76,6 +77,7 @@ public class AiAgentFactory {
     private final DisguiseTools disguiseTools;
     private final ShellGeneratorTools shellGeneratorTools;
     private final SkillActivationTools platformSkillActivationTools;
+    private final PlatformPlanTools platformPlanTools;
     private final ExecutorService aiToolExecutor;
 
     public AiAgentFactory(ChatMemoryProvider memoryProvider,
@@ -109,6 +111,7 @@ public class AiAgentFactory {
                           DisguiseTools disguiseTools,
                           ShellGeneratorTools shellGeneratorTools,
                           @Qualifier("platformSkillActivationTools") SkillActivationTools platformSkillActivationTools,
+                          PlatformPlanTools platformPlanTools,
                           ExecutorService aiToolExecutor) {
         this.memoryProvider = memoryProvider;
         this.memoryProviderFactory = memoryProviderFactory;
@@ -141,6 +144,7 @@ public class AiAgentFactory {
         this.disguiseTools = disguiseTools;
         this.shellGeneratorTools = shellGeneratorTools;
         this.platformSkillActivationTools = platformSkillActivationTools;
+        this.platformPlanTools = platformPlanTools;
         this.aiToolExecutor = aiToolExecutor;
     }
 
@@ -240,11 +244,17 @@ public class AiAgentFactory {
                 .streamingChatModel(streamingModel)
                 .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(platformSystemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(aiToolExecutor);
+                .executeToolsConcurrently(aiToolExecutor)
+                .beforeToolExecution(execution -> {
+                    if (execution != null && execution.invocationContext() != null) {
+                        AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
+                    }
+                })
+                .afterToolExecution(execution -> AiToolContext.clear());
         if (enableTools) {
             builder.tools(puppetTools, userTools, teamTools,
                     pluginTools, fingerprintTools, disguiseTools,
-                    shellGeneratorTools, platformSkillActivationTools);
+                    shellGeneratorTools, platformPlanTools, platformSkillActivationTools);
             if (additionalTools != null) {
                 builder.tools(additionalTools);
             }

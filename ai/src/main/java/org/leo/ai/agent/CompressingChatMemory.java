@@ -2,7 +2,6 @@ package org.leo.ai.agent;
 
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.memory.ChatMemory;
-import dev.langchain4j.model.TokenCountEstimator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,17 +21,14 @@ class CompressingChatMemory implements ChatMemory {
 
     private final Object memoryId;
     private final ChatMemory delegate;
-    private final TokenCountEstimator tokenEstimator;
     private final ContextCompressionService compressionService;
     private final int maxTokens;
 
     CompressingChatMemory(Object memoryId, ChatMemory delegate,
-                          TokenCountEstimator tokenEstimator,
                           ContextCompressionService compressionService,
                           int maxTokens) {
         this.memoryId = memoryId;
         this.delegate = delegate;
-        this.tokenEstimator = tokenEstimator;
         this.compressionService = compressionService;
         this.maxTokens = maxTokens;
     }

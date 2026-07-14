@@ -25,6 +25,7 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AiControllerUtil;
+import org.leo.web.util.AiStreamingCancellation;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -141,27 +142,37 @@ public class PuppetNodeAiThreadService {
             final String fRunId = runId;
             AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
             TokenStream stream = agentRuntime.agent().chat(memoryId, messageForAgent);
+            thread.setStopCallback(() -> AiStreamingCancellation.cancelCaptured(handleRef));
 
             stream
-                .onPartialThinking(thinking -> {
+                .onPartialThinkingWithContext((thinking, ctx) -> {
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), thread::isStopRequested);
                     if (!recorder.hasPendingThinking()) {
                         logger.info("[Thinking] 开始接收思考内容, memoryId={}", memoryId);
                     }
                     recorder.appendThinking(thinking.text());
                 })
                 .onPartialResponseWithContext((partial, ctx) -> {
-                    handleRef.compareAndSet(null, ctx.streamingHandle());
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), thread::isStopRequested);
                     // 收到正文 token 意味着思考阶段结束，flush thinking buffer
                     recorder.appendVisibleDelta(partial.text());
                     recorder.flushDelta();
                 })
-                .onPartialToolCall(partial -> {
+                .onPartialToolCallWithContext((partial, ctx) -> {
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), thread::isStopRequested);
                     recorder.onBoundary();
                     Map<String, Object> toolData = AiToolEventFactory.buildToolDeltaEventData(partial);
                     sendRecordedEventSafely(thread, emitter, "tool_delta", toolData);
                 })
                 .beforeToolExecution(execution -> {
                     recorder.onBoundary();
+                    if (thread.isStopRequested() || Thread.currentThread().isInterrupted()) {
+                        throw new RuntimeException(new InterruptedException(
+                                thread.getStopReason() != null ? thread.getStopReason() : "已停止"));
+                    }
                     Map<String, Object> toolData = AiToolEventFactory.buildToolStartEventData(execution);
                     sendRecordedEventSafely(thread, emitter, "node", toolData);
                     recorder.recordExternal("node", toolData);
@@ -250,14 +261,6 @@ public class PuppetNodeAiThreadService {
                     }
                 })
                 .start();
-
-            // 注册停止回调
-            thread.setStopCallback(() -> {
-                StreamingHandle handle = handleRef.get();
-                if (handle != null) {
-                    handle.cancel();
-                }
-            });
 
         } catch (Exception e) {
             if (thread.isStopRequested()) {
@@ -499,14 +502,6 @@ public class PuppetNodeAiThreadService {
         return 0L;
     }
 
-    private void sendEventSafely(SseEmitter emitter, String eventName, String data) {
-        try {
-            emitter.send(SseEmitter.event().name(eventName).data(data != null ? data : ""));
-        } catch (Exception e) {
-            // 客户端已断开连接，忽略
-        }
-    }
-
     private void sendRecordedStatusSafely(AiThread thread, SseEmitter emitter, String status) {
         thread.recordSseEvent("status", status);
         AiControllerUtil.safeSendStatus(emitter, status);
@@ -707,18 +702,22 @@ public class PuppetNodeAiThreadService {
             CompletableFuture<String> completion = new CompletableFuture<>();
             AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
             TokenStream stream = agentRuntime.agent().chat(memoryId, messageForAgent);
-            thread.setStopCallback(() -> {
-                StreamingHandle handle = handleRef.get();
-                if (handle != null) handle.cancel();
-            });
+            thread.setStopCallback(() -> AiStreamingCancellation.cancelCaptured(handleRef));
             stream
-                    .onPartialThinking(thinking -> recorder.appendThinking(thinking.text()))
+                    .onPartialThinkingWithContext((thinking, ctx) -> {
+                        AiStreamingCancellation.capture(
+                                handleRef, ctx.streamingHandle(), thread::isStopRequested);
+                        recorder.appendThinking(thinking.text());
+                    })
                     .onPartialResponseWithContext((partial, ctx) -> {
-                        handleRef.compareAndSet(null, ctx.streamingHandle());
+                        AiStreamingCancellation.capture(
+                                handleRef, ctx.streamingHandle(), thread::isStopRequested);
                         recorder.appendVisibleDelta(partial.text());
                         recorder.flushDelta();
                     })
-                    .onPartialToolCall(partial -> {
+                    .onPartialToolCallWithContext((partial, ctx) -> {
+                        AiStreamingCancellation.capture(
+                                handleRef, ctx.streamingHandle(), thread::isStopRequested);
                         recorder.onBoundary();
                         recordDelegatedEvent(thread, subagentInvocationId, "tool_delta",
                                 AiToolEventFactory.buildToolDeltaEventData(partial), eventLog, eventSink);
@@ -978,8 +977,13 @@ public class PuppetNodeAiThreadService {
     }
 
     public void persistMessage(PuppetNodeSession session, String threadId, String role, String content) {
+        persistMessage(session, threadId, role, content, null);
+    }
+
+    public void persistMessage(PuppetNodeSession session, String threadId, String role, String content,
+                               Object attachments) {
         try {
-            conversationStore.appendMessage(threadId, role, content);
+            conversationStore.appendMessage(threadId, role, content, attachments);
         } catch (Exception e) {
             logger.warn("持久化消息失败, threadId={}: {}", threadId, e.getMessage());
         }

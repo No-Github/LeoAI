@@ -42,8 +42,11 @@ import java.util.Set;
  */
 public class ResourceComponent implements Runnable {
 
+    private static final int MAX_RESOURCE_SIZE = 16 * 1024 * 1024;
+
     private HashMap params;
     private HashMap results;
+    private boolean resourceTooLarge;
 
     public void run() {
         InvocationHandler h = (InvocationHandler) Thread.currentThread().getContextClassLoader();
@@ -83,6 +86,11 @@ public class ResourceComponent implements Runnable {
         // 依次尝试所有可能持有该资源的 ClassLoader
         byte[] bytes = readResource(resourcePath);
         if (bytes == null) {
+            if (resourceTooLarge) {
+                results.put("code", Integer.valueOf(413));
+                results.put("msg", "资源超过 16MB 读取上限");
+                return;
+            }
             results.put("code", Integer.valueOf(404));
             results.put("msg", "找不到资源: " + resourcePath
                     + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
@@ -130,9 +138,13 @@ public class ResourceComponent implements Runnable {
             in = cl.getResourceAsStream(resourcePath);
             if (in == null) return null;
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
+            byte[] buffer = new byte[8192];
             int n;
             while ((n = in.read(buffer)) > 0) {
+                if (baos.size() > MAX_RESOURCE_SIZE - n) {
+                    resourceTooLarge = true;
+                    throw new java.io.IOException("资源超过最大允许大小");
+                }
                 baos.write(buffer, 0, n);
             }
             return baos.toByteArray();

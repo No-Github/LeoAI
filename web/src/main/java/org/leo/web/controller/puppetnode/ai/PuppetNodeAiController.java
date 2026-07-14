@@ -128,7 +128,8 @@ public class PuppetNodeAiController {
                     : guardedMessage;
 
             // 持久化 user 消息
-            aiThreadService.persistMessage(session, threadId, "user", message);
+            aiThreadService.persistMessage(session, threadId, "user", message,
+                    AiAttachmentPrompt.metadata(body.attachments()));
 
             SSE_EXECUTOR.submit(() -> aiThreadService.executeChat(
                     session, thread, threadId, messageForAgent, audit, emitter, startMs,

@@ -76,7 +76,6 @@ public class ResourceTools {
 
     @Tool("批量尝试读取多个 classpath 资源路径，返回成功读取的结果。")
     public Map<String, Object> readResourceCandidates(String[] resourcePaths) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
         HashMap<String, Object> result = new HashMap<>();
         List<Map<String, Object>> matches = new ArrayList<>();
         List<String> attempted = new ArrayList<>();

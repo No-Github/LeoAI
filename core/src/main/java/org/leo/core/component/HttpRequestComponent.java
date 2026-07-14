@@ -29,7 +29,8 @@ import javax.net.ssl.X509TrustManager;
  * 用于替代通过 execOnce("curl ...") 执行 HTTP 请求的场景，
  * 不依赖目标机器是否安装 curl，且提供结构化的响应结果。
  * <p>
- * 默认忽略 HTTPS 证书验证（内网自签名证书常见）。
+ * HTTPS 固定跳过证书与主机名校验，以兼容内网自签名证书。
+ * 未指定请求头时会补充常见浏览器请求头，调用方传入的同名请求头优先。
  * <p>
  * 兼容 Java 1.5+，仅使用 JDK 内置类。
  *
@@ -43,7 +44,14 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
     private static final int DEFAULT_CONNECT_TIMEOUT = 10000;
     private static final int DEFAULT_READ_TIMEOUT = 30000;
     private static final int MAX_TIMEOUT = 300000;
+    private static final int MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB
     private static final int MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
+    private static final String DEFAULT_BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    private static final String DEFAULT_BROWSER_ACCEPT =
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
+    private static final String DEFAULT_BROWSER_ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8";
 
     private static volatile SSLSocketFactory trustAllSslSocketFactory;
 
@@ -82,6 +90,19 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             method = "GET";
         }
         method = method.toUpperCase(Locale.ENGLISH);
+        if (!isAllowedMethod(method)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "unsupported HTTP method");
+            return;
+        }
+
+        URL targetUrl = new URL(url);
+        String protocol = targetUrl.getProtocol();
+        if (!("http".equalsIgnoreCase(protocol) || "https".equalsIgnoreCase(protocol))) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "only http and https URLs are supported");
+            return;
+        }
 
         int connectTimeout = getIntParam("connectTimeout", DEFAULT_CONNECT_TIMEOUT);
         int readTimeout = getIntParam("readTimeout", DEFAULT_READ_TIMEOUT);
@@ -94,9 +115,9 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         HttpURLConnection conn = null;
 
         try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = (HttpURLConnection) targetUrl.openConnection();
 
-            // HTTPS 忽略证书验证（内网自签名证书）
+            // HTTPS 固定信任所有证书与主机名，兼容内网自签名证书。
             if (conn instanceof HttpsURLConnection) {
                 HttpsURLConnection httpsConn = (HttpsURLConnection) conn;
                 httpsConn.setSSLSocketFactory(getTrustAllSslSocketFactory());
@@ -120,24 +141,31 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
                     conn.setRequestProperty(key, value);
                 }
             }
+            applyBrowserRequestHeaders(conn, requestHeaders);
 
-            // 设置默认 User-Agent（如果未指定）
-            if (conn.getRequestProperty("User-Agent") == null) {
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            }
-
-            // 写入请求体（POST/PUT）
+            // 写入请求体
             byte[] bodyBytes = getBodyBytes();
+            if (bodyBytes != null && bodyBytes.length > MAX_REQUEST_SIZE) {
+                results.put("code", Integer.valueOf(413));
+                results.put("msg", "request body exceeds 10MB limit");
+                return;
+            }
             if (bodyBytes != null && bodyBytes.length > 0
-                    && ("POST".equals(method) || "PUT".equals(method))) {
+                    && allowsRequestBody(method)) {
                 conn.setDoOutput(true);
                 if (conn.getRequestProperty("Content-Type") == null) {
                     conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
                 }
-                OutputStream os = conn.getOutputStream();
-                os.write(bodyBytes);
-                os.flush();
-                os.close();
+                OutputStream os = null;
+                try {
+                    os = conn.getOutputStream();
+                    os.write(bodyBytes);
+                    os.flush();
+                } finally {
+                    if (os != null) {
+                        try { os.close(); } catch (Exception ignored) {}
+                    }
+                }
             }
 
             // 读取响应
@@ -193,7 +221,12 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
                 String contentType = conn.getContentType();
                 if (isTextContent(contentType)) {
                     String charset = parseCharset(contentType);
-                    results.put("body", new String(responseBody, charset));
+                    try {
+                        results.put("body", new String(responseBody, charset));
+                    } catch (Exception unsupportedCharset) {
+                        results.put("body", new String(responseBody, DEFAULT_CHARSET));
+                        results.put("charsetFallback", DEFAULT_CHARSET);
+                    }
                     results.put("bodyType", "text");
                 } else {
                     results.put("body", responseBody);
@@ -210,6 +243,41 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
     }
 
     // ==================== 私有辅助方法 ====================
+
+    private boolean isAllowedMethod(String method) {
+        return "GET".equals(method) || "POST".equals(method)
+                || "PUT".equals(method) || "DELETE".equals(method)
+                || "HEAD".equals(method) || "OPTIONS".equals(method);
+    }
+
+    private boolean allowsRequestBody(String method) {
+        return "POST".equals(method) || "PUT".equals(method);
+    }
+
+    void applyBrowserRequestHeaders(HttpURLConnection conn, Map requestHeaders) {
+        setDefaultRequestHeader(conn, requestHeaders, "User-Agent", DEFAULT_BROWSER_USER_AGENT);
+        setDefaultRequestHeader(conn, requestHeaders, "Accept", DEFAULT_BROWSER_ACCEPT);
+        setDefaultRequestHeader(conn, requestHeaders, "Accept-Language", DEFAULT_BROWSER_ACCEPT_LANGUAGE);
+    }
+
+    private void setDefaultRequestHeader(HttpURLConnection conn, Map requestHeaders,
+                                         String name, String value) {
+        if (!containsHeader(requestHeaders, name)) {
+            conn.setRequestProperty(name, value);
+        }
+    }
+
+    private boolean containsHeader(Map requestHeaders, String expectedName) {
+        if (requestHeaders == null) {
+            return false;
+        }
+        for (Object key : requestHeaders.keySet()) {
+            if (key != null && expectedName.equalsIgnoreCase(String.valueOf(key))) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private SSLSocketFactory getTrustAllSslSocketFactory() throws Exception {
         SSLSocketFactory current = trustAllSslSocketFactory;

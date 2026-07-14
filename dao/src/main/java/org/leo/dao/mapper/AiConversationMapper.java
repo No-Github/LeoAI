@@ -87,9 +87,9 @@ public interface AiConversationMapper {
     @Delete("DELETE FROM ai_subagent_invocations WHERE parent_thread_id = #{threadId} OR child_thread_id = #{threadId}")
     int deleteSubagentInvocations(@Param("threadId") String threadId);
 
-    @Insert("INSERT INTO ai_messages (message_id, thread_id, role, content, timestamp, "
+    @Insert("INSERT INTO ai_messages (message_id, thread_id, role, content, timestamp, attachments_json, "
             + "nodes_json, review_json, plan_json) "
-            + "VALUES (#{messageId}, #{threadId}, #{role}, #{content}, #{timestamp}, "
+            + "VALUES (#{messageId}, #{threadId}, #{role}, #{content}, #{timestamp}, #{attachmentsJson}, "
             + "#{nodesJson}, #{reviewJson}, #{planJson})")
     int insertMessage(AiMessageRecord row);
 

@@ -24,6 +24,7 @@ import org.leo.core.entity.User;
 import org.leo.web.dto.platform.ai.PlatformAiDtos.AgentInfoResponse;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AiControllerUtil;
+import org.leo.web.util.AiStreamingCancellation;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.slf4j.Logger;
@@ -154,7 +155,7 @@ public class PlatformAiService {
                             AiChatAuditEntry audit,
                             SseEmitter emitter,
                             long startMs) {
-        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs, null);
+        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs, null, null);
     }
 
     public void executeChat(PlatformAiState state,
@@ -165,6 +166,19 @@ public class PlatformAiService {
                             SseEmitter emitter,
                             long startMs,
                             String reasoningEffort) {
+        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs,
+                reasoningEffort, null);
+    }
+
+    public void executeChat(PlatformAiState state,
+                            String sessionId,
+                            String userMessage,
+                            String guardedMessage,
+                            AiChatAuditEntry audit,
+                            SseEmitter emitter,
+                            long startMs,
+                            String reasoningEffort,
+                            Object attachments) {
         AiTimelineRecorder recorder = new AiTimelineRecorder(
                 (name, data) -> sendRecordedEventSafely(state, emitter, name, data));
         List<AiSseEvent> eventLog = recorder.eventLog();
@@ -179,7 +193,7 @@ public class PlatformAiService {
                 throw new InterruptedException("已停止");
             }
             state.touchLastActiveAt();
-            conversationStore.appendMessage(state.getStateId(), "user", userMessage);
+            conversationStore.appendMessage(state.getStateId(), "user", userMessage, attachments);
             String messageForAgent = withPersistedHistoryContext(state, guardedMessage);
             CachedPlatformAgent agentRuntime = threadAgent(state, reasoningEffort);
             if (agentRuntime.failoverMessage() != null) {
@@ -200,25 +214,27 @@ public class PlatformAiService {
             // handleRef 在第一个流式 token 到达时填充，此前调用时 handle 为 null，
             // 但 thread.interrupt() 仍会生效，工具执行前的 stopRequested 检查会拦截。
             state.setStopCallback(() -> {
-                StreamingHandle handle = handleRef.get();
-                if (handle != null) {
-                    handle.cancel();
-                }
+                AiStreamingCancellation.cancelCaptured(handleRef);
             });
 
             stream
-                .onPartialThinking(thinking -> {
+                .onPartialThinkingWithContext((thinking, ctx) -> {
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), state::isStopRequested);
                     if (!recorder.hasPendingThinking()) {
                         logger.info("[Thinking] 开始接收思考内容, stateId={}", state.getStateId());
                     }
                     recorder.appendThinking(thinking.text());
                 })
                 .onPartialResponseWithContext((partial, ctx) -> {
-                    handleRef.compareAndSet(null, ctx.streamingHandle());
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), state::isStopRequested);
                     recorder.appendVisibleDelta(partial.text());
                     recorder.flushDelta();
                 })
-                .onPartialToolCall(partial -> {
+                .onPartialToolCallWithContext((partial, ctx) -> {
+                    AiStreamingCancellation.capture(
+                            handleRef, ctx.streamingHandle(), state::isStopRequested);
                     recorder.onBoundary();
                     Map<String, Object> toolData = AiToolEventFactory.buildToolDeltaEventData(partial);
                     sendRecordedEventSafely(state, emitter, "tool_delta", toolData);
@@ -696,25 +712,11 @@ public class PlatformAiService {
         return 0L;
     }
 
-    private void sendEventSafely(SseEmitter emitter, String eventName, String data) {
-        try {
-            emitter.send(SseEmitter.event().name(eventName).data(data != null ? data : ""));
-        } catch (Exception e) {
-            // 客户端已断开连接，忽略
-        }
-    }
-
     private void finishRun(String runId, String status, long startMs, String output,
                            String errorMessage, int toolCallCount) {
         if (runId != null) {
             conversationStore.finishRun(runId, status, startMs, output, errorMessage, toolCallCount);
         }
-    }
-
-    private void persistAssistantMessage(PlatformAiState state, String content,
-                                         List<AiSseEvent> eventLog,
-                                         Map<String, Object> review) {
-        persistAssistantMessage(state, content, eventLog, review, null);
     }
 
     private void persistAssistantMessage(PlatformAiState state, String content,
@@ -860,10 +862,6 @@ public class PlatformAiService {
     private AiModelConfig resolveOptionalChannel(Integer configId) {
         if (configId == null) return null;
         return resolveChannel(configId);
-    }
-
-    private CachedPlatformAgent threadAgent(PlatformAiState state) {
-        return threadAgent(state, null);
     }
 
     private CachedPlatformAgent threadAgent(PlatformAiState state, String reasoningEffort) {
