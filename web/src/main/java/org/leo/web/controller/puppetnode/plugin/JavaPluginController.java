@@ -3,7 +3,7 @@ package org.leo.web.controller.puppetnode.plugin;
 
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.JavaPluginCapable;
-import org.leo.service.puppetnode.plugin.JavaPluginService;
+import org.leo.javacore.plugin.JavaPluginService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;

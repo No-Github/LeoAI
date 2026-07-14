@@ -2,7 +2,8 @@ package org.leo.ai.util;
 
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
+import org.leo.core.runtime.CapabilityStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 
@@ -14,10 +15,6 @@ public class PuppetNodeSessionUtils {
             throw new IllegalArgumentException("会话不存在: " + sessionId);
         }
         return session;
-    }
-
-    public static JavaPuppetNode getJavaPuppetNode(String sessionId) {
-        return getSession(sessionId).getJavaPuppetNode();
     }
 
     public static AbstractPuppetNode getPuppetNode(String sessionId) {
@@ -32,12 +29,17 @@ public class PuppetNodeSessionUtils {
         if (node == null) {
             throw new IllegalArgumentException("Puppet实体不存在: " + sessionId);
         }
-        if (capabilityType.isInstance(node)) {
+        if (PuppetNodeCapabilityRegistry.supports(node, capabilityType)) {
             return capabilityType.cast(node);
         }
         String nodeType = node.getPuppet() != null ? node.getPuppet().getType() : node.getClass().getSimpleName();
+        String capabilityName = PuppetNodeCapabilityRegistry.capabilityName(capabilityType);
+        CapabilityStatus status = capabilityName != null
+                ? PuppetNodeCapabilityRegistry.getStatus(node, capabilityName) : null;
+        String reason = status != null && status.getReason() != null && !status.getReason().isBlank()
+                ? ", reason=" + status.getReason() : "";
         throw new IllegalArgumentException("当前 Puppet 类型不支持能力: "
-                + capabilityType.getSimpleName() + " (type=" + nodeType + ")");
+                + capabilityType.getSimpleName() + " (type=" + nodeType + reason + ")");
     }
 
     public static Object getAiContextValue(String sessionId, String key) {

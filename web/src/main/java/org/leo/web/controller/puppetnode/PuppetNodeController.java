@@ -166,7 +166,11 @@ public class PuppetNodeController {
         result.put("sessionId", session.getSessionId());
         result.put("cacheMode", session.isCacheMode());
         result.put("capabilities", capabilities);
+        result.put("capabilityDetails", session.getCapabilityStatuses());
         result.put("capabilityCount", capabilities.size());
+        if (session.getRuntimeProfile() != null) {
+            result.put("runtimeProfile", session.getRuntimeProfile());
+        }
         if (node != null && node.getPuppet() != null) {
             result.put("puppetId", node.getPuppet().getPuppetId());
             result.put("puppetType", node.getPuppet().getType());

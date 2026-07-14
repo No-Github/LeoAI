@@ -32,6 +32,8 @@
     <modules>
 
         <module>core</module>
+        <module>javacore</module>
+        <module>phpcore</module>
         <module>dao</module>
         <module>web</module>
         <module>service</module>

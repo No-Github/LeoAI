@@ -42,9 +42,9 @@ import java.util.Map;
 @Component
 public class ShellGeneratorTools {
 
-    private static final String TEMPLATE_SHELL_JSP  = "/memshell-template/shell.jsp";
-    private static final String TEMPLATE_SHELL1_JSP = "/memshell-template/shell1.jsp";
-    private static final String TEMPLATE_SHELL2_JSP = "/memshell-template/shell2.jsp";
+    private static final String TEMPLATE_SHELL_JSP  = "/memshell-template/shell.jsp.txt";
+    private static final String TEMPLATE_SHELL1_JSP = "/memshell-template/shell1.jsp.txt";
+    private static final String TEMPLATE_SHELL2_JSP = "/memshell-template/shell2.jsp.txt";
 
     private static final String TEMPLATE_SYNTAX_GUIDE =
             "## JSP 模板占位符规则\n" +

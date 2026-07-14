@@ -3,8 +3,8 @@
 # 生成 major version 50 (Java 6) 的 .payload 放入 src/main/resources/component/
 #
 # 用法:
-#   cd LeoAI/core && bash compile-components.sh          # 审计并更新 payload
-#   cd LeoAI/core && bash compile-components.sh --check  # 仅审计，不写 resources
+#   cd LeoAI/javacore && bash compile-components.sh          # 审计并更新 payload
+#   cd LeoAI/javacore && bash compile-components.sh --check  # 仅审计，不写 resources
 #
 # 要求 Java 8（Zulu 8 / OpenJDK 8 等）；脚本会优先使用 JAVA8_HOME，
 # 并在 macOS 上自动尝试 /usr/libexec/java_home -v 1.8。

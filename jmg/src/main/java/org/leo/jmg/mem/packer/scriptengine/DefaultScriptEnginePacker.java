@@ -15,8 +15,8 @@ import org.leo.jmg.mem.packer.Util;
         requiredClasses = "javax.script.ScriptEngineManager"
 )
 public class DefaultScriptEnginePacker implements Packer {
-    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngine.js");
-    private final String jsBypassModuleTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBypassModule.js");
+    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngine.js.txt");
+    private final String jsBypassModuleTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBypassModule.js.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {

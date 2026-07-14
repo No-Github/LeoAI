@@ -2,6 +2,9 @@ package org.leo.core.puppet;
 
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
+import org.leo.core.runtime.CapabilitySet;
+import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.RuntimeProfile;
 
 import java.util.Map;
 import java.util.Set;
@@ -12,7 +15,7 @@ import java.util.Set;
  * 负责节点标识管理、组件管理接口、多语言插件调用接口
  * 具体通信、编码逻辑由子类实现
  */
-public abstract class AbstractPuppetNode {
+public abstract class AbstractPuppetNode implements AutoCloseable {
 
 
 
@@ -20,6 +23,9 @@ public abstract class AbstractPuppetNode {
     protected Puppet puppet;
 
     private User user;
+
+    /** Runtime facts learned during handshake; absent for legacy Java nodes. */
+    private volatile RuntimeProfile runtimeProfile;
 
 
 
@@ -45,6 +51,31 @@ public abstract class AbstractPuppetNode {
      */
     public Puppet getPuppet() {
         return puppet;
+    }
+
+    /** Stable runtime type used by factories, components, plugins and AI routing. */
+    public PuppetRuntime getRuntime() {
+        RuntimeProfile profile = runtimeProfile;
+        if (profile != null) {
+            return profile.getRuntime();
+        }
+        return PuppetRuntime.from(puppet != null ? puppet.getType() : null);
+    }
+
+    public RuntimeProfile getRuntimeProfile() {
+        RuntimeProfile profile = runtimeProfile;
+        return profile != null ? profile : RuntimeProfile.minimal(getRuntime());
+    }
+
+    public void setRuntimeProfile(RuntimeProfile runtimeProfile) {
+        if (runtimeProfile == null) {
+            throw new IllegalArgumentException("runtimeProfile不能为空");
+        }
+        this.runtimeProfile = runtimeProfile;
+    }
+
+    public CapabilitySet getCapabilitySet() {
+        return getRuntimeProfile().getCapabilities();
     }
 
     /**
@@ -80,4 +111,10 @@ public abstract class AbstractPuppetNode {
      * @throws Exception 卸载失败
      */
     public abstract void unloadComponent(String componentId) throws Exception;
+
+    /** Runtime-specific resources are released by concrete nodes. */
+    @Override
+    public void close() throws Exception {
+        // default no-op for stateless/request-scoped runtimes
+    }
 }

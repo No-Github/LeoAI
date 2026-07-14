@@ -22,8 +22,8 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class DefineClassJspPacker implements Packer {
 
-    private final String template = Util.loadTemplateFromResource("/memshell-template/shell1.jsp");
-    private final String bypassTemplate = Util.loadTemplateFromResource("/memshell-template/shell2.jsp");
+    private final String template = Util.loadTemplateFromResource("/memshell-template/shell1.jsp.txt");
+    private final String bypassTemplate = Util.loadTemplateFromResource("/memshell-template/shell2.jsp.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {

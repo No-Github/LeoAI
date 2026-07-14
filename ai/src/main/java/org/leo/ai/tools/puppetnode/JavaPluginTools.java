@@ -4,7 +4,7 @@ import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.entity.Plugin;
 import org.leo.core.puppet.capability.JavaPluginCapable;
-import org.leo.service.puppetnode.plugin.JavaPluginService;
+import org.leo.javacore.plugin.JavaPluginService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 

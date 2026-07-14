@@ -15,13 +15,13 @@ class GeneratedTemplateCompatibilityTest {
 
     @Test
     void jspTemplatesAvoidJava8ReflectionConvenienceMethods() {
-        assertNotContains("/memshell-template/shell1.jsp", ".getParameterCount(");
-        assertNotContains("/memshell-template/shell2.jsp", ".getParameterCount(");
+        assertNotContains("/memshell-template/shell1.jsp.txt", ".getParameterCount(");
+        assertNotContains("/memshell-template/shell2.jsp.txt", ".getParameterCount(");
     }
 
     @Test
     void scriptEngineBypassAvoidsJava9ReadAllBytes() {
-        assertNotContains("/memshell-template/ScriptEngineBypassModule.js", ".readAllBytes(");
+        assertNotContains("/memshell-template/ScriptEngineBypassModule.js.txt", ".readAllBytes(");
 
         ClassPackerConfig config = createConfig(true);
         String output = new DefaultScriptEnginePacker().pack(config);
@@ -31,10 +31,10 @@ class GeneratedTemplateCompatibilityTest {
 
     @Test
     void sourceTemplatesDoNotDirectlyLinkJava8Base64Api() {
-        assertNotContains("/memshell-template/shell.groovy", "java.util.Base64.getDecoder(");
-        assertNotContains("/memshell-template/shell.groovy", "java.util.Base64.Decoder");
-        assertNotContains("/memshell-template/XXL-Job-DefineClass.java", "import java.util.Base64");
-        assertNotContains("/memshell-template/XXL-Job-DefineClass.java", "Base64.getDecoder(");
+        assertNotContains("/memshell-template/shell.groovy.txt", "java.util.Base64.getDecoder(");
+        assertNotContains("/memshell-template/shell.groovy.txt", "java.util.Base64.Decoder");
+        assertNotContains("/memshell-template/XXL-Job-DefineClass.java.txt", "import java.util.Base64");
+        assertNotContains("/memshell-template/XXL-Job-DefineClass.java.txt", "Base64.getDecoder(");
     }
 
     @Test

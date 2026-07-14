@@ -33,6 +33,18 @@
         </dependency>
         <dependency>
             <groupId>org.leo</groupId>
+            <artifactId>javacore</artifactId>
+            <version>0.0.2-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.leo</groupId>
+            <artifactId>phpcore</artifactId>
+            <version>0.0.2-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.leo</groupId>
             <artifactId>dao</artifactId>
             <version>0.0.2-SNAPSHOT</version>
             <scope>compile</scope>

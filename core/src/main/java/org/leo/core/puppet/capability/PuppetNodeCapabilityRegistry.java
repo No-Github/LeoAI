@@ -1,6 +1,7 @@
 package org.leo.core.puppet.capability;
 
 import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.runtime.CapabilityStatus;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -63,7 +64,7 @@ public final class PuppetNodeCapabilityRegistry {
         }
         List<String> supported = new ArrayList<>();
         for (CapabilityDescriptor descriptor : DESCRIPTORS) {
-            if (descriptor.type().isInstance(node)) {
+            if (isSupported(node, descriptor)) {
                 supported.add(descriptor.name());
             }
         }
@@ -75,11 +76,70 @@ public final class PuppetNodeCapabilityRegistry {
             return false;
         }
         for (CapabilityDescriptor descriptor : DESCRIPTORS) {
-            if (descriptor.name().equals(capabilityName) && descriptor.type().isInstance(node)) {
-                return true;
+            if (descriptor.name().equals(capabilityName)) {
+                return isSupported(node, descriptor);
             }
         }
         return false;
+    }
+
+    public static boolean supports(AbstractPuppetNode node, Class<?> capabilityType) {
+        if (node == null || capabilityType == null) {
+            return false;
+        }
+        for (CapabilityDescriptor descriptor : DESCRIPTORS) {
+            if (descriptor.type().equals(capabilityType)) {
+                return isSupported(node, descriptor);
+            }
+        }
+        return capabilityType.isInstance(node);
+    }
+
+    public static CapabilityStatus getStatus(AbstractPuppetNode node, String capabilityName) {
+        if (node == null || capabilityName == null || capabilityName.isBlank()) {
+            return null;
+        }
+        for (CapabilityDescriptor descriptor : DESCRIPTORS) {
+            if (!descriptor.name().equals(capabilityName) || !descriptor.type().isInstance(node)) {
+                continue;
+            }
+            CapabilityStatus explicit = node.getCapabilitySet().get(capabilityName);
+            return explicit != null ? explicit : CapabilityStatus.available(capabilityName);
+        }
+        return null;
+    }
+
+    public static List<CapabilityStatus> listStatuses(AbstractPuppetNode node) {
+        if (node == null) {
+            return Collections.emptyList();
+        }
+        List<CapabilityStatus> statuses = new ArrayList<>();
+        for (CapabilityDescriptor descriptor : DESCRIPTORS) {
+            CapabilityStatus status = getStatus(node, descriptor.name());
+            if (status != null) {
+                statuses.add(status);
+            }
+        }
+        return statuses;
+    }
+
+    public static String capabilityName(Class<?> capabilityType) {
+        if (capabilityType == null) {
+            return null;
+        }
+        for (CapabilityDescriptor descriptor : DESCRIPTORS) {
+            if (descriptor.type().equals(capabilityType)) {
+                return descriptor.name();
+            }
+        }
+        return null;
+    }
+
+    private static boolean isSupported(AbstractPuppetNode node, CapabilityDescriptor descriptor) {
+        if (!descriptor.type().isInstance(node)) {
+            return false;
+        }
+        return node.getCapabilitySet().isAvailable(descriptor.name(), true);
     }
 
     private static CapabilityDescriptor descriptor(String name, Class<?> type) {

@@ -604,15 +604,15 @@ public final class PuppetNodeSessionWorkDirUtil {
 
     /**
      * 从 sessionId 解析 puppet 工作目录。
-     * 优先从 javaPuppetNode 取 puppetId；缓存模式下从 session.getPuppetId() 取；
+     * 优先从通用 PuppetNode 取 puppetId；缓存模式下从 session.getPuppetId() 取；
      * 均无法解析时降级返回 session 级目录（兼容）。
      */
     private static File resolvePuppetDirFromSession(String sessionId) {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         if (session != null) {
-            // 正常模式：从 javaPuppetNode 取 puppetId
-            if (session.getJavaPuppetNode() != null) {
-                Puppet puppet = session.getJavaPuppetNode().getPuppet();
+            // 正常模式：从通用 PuppetNode 取 puppetId
+            if (session.getPuppetNode() != null) {
+                Puppet puppet = session.getPuppetNode().getPuppet();
                 if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
                     return getPuppetWorkDir(session.getCreateByUser(), puppet.getPuppetId());
                 }
@@ -632,14 +632,7 @@ public final class PuppetNodeSessionWorkDirUtil {
      */
     public static String resolvePuppetId(PuppetNodeSession session) {
         if (session == null) return null;
-        if (session.getJavaPuppetNode() != null) {
-            Puppet puppet = session.getJavaPuppetNode().getPuppet();
-            if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
-                return puppet.getPuppetId();
-            }
-        }
-        String pId = session.getPuppetId();
-        return pId != null && !pId.isBlank() ? pId : null;
+        return session.resolvePuppetId();
     }
 
     private static void syncReconSummaryAcrossPuppetSessions(PuppetNodeSession source, String content) {

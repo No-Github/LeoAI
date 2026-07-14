@@ -9,7 +9,8 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.HostScopedCapable;
 import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.runtime.CapabilityStatus;
+import org.leo.core.runtime.RuntimeProfile;
 import org.leo.core.util.BoundedTtlCache;
 
 import java.io.File;
@@ -80,7 +81,7 @@ public class PuppetNodeSession {
     // ── 缓存模式 ──────────────────────────────────────────────────────────────
     /** 缓存模式标记：true 表示本 session 无实时连接，数据来自 puppet 级持久化目录。 */
     private volatile boolean cacheMode = false;
-    /** 缓存模式下关联的 puppetId（javaPuppetNode 为 null 时用于定位持久化目录）。 */
+    /** 缓存模式下关联的 puppetId（实时 puppetNode 为 null 时用于定位持久化目录）。 */
     private volatile String puppetId;
 
     // ── 会话级 AI 上下文缓存（跨线程共享）────────────────────────────────────
@@ -93,21 +94,6 @@ public class PuppetNodeSession {
     private volatile long lastActiveTime = System.currentTimeMillis();
 
     // ── 构造器 ────────────────────────────────────────────────────────────────
-
-    public PuppetNodeSession(String sessionId, JavaPuppetNode javaPuppetNode, Long updateTime) {
-        this.puppetNode = javaPuppetNode;
-        this.sessionId = sessionId;
-        this.updateTime = updateTime;
-        createSessionCacheDirectory(sessionId, null);
-    }
-
-    public PuppetNodeSession(String sessionId, JavaPuppetNode javaPuppetNode, Long updateTime, String createByUser) {
-        this.puppetNode = javaPuppetNode;
-        this.sessionId = sessionId;
-        this.updateTime = updateTime;
-        this.createByUser = createByUser;
-        createSessionCacheDirectory(sessionId, createByUser);
-    }
 
     public PuppetNodeSession(String sessionId, AbstractPuppetNode puppetNode, Long updateTime, String createByUser) {
         this.puppetNode = puppetNode;
@@ -287,14 +273,30 @@ public class PuppetNodeSession {
     public Long   getUpdateTime()                { return updateTime; }
     public void   setUpdateTime(Long updateTime) { this.updateTime = updateTime; }
 
-    public JavaPuppetNode getJavaPuppetNode()                        { return puppetNode instanceof JavaPuppetNode ? (JavaPuppetNode) puppetNode : null; }
-    public void           setJavaPuppetNode(JavaPuppetNode node)     { this.puppetNode = node; }
-
     public AbstractPuppetNode getPuppetNode()                        { return puppetNode; }
     public void               setPuppetNode(AbstractPuppetNode node) { this.puppetNode = node; }
 
     public List<String> getCapabilities() {
         return PuppetNodeCapabilityRegistry.listSupported(puppetNode);
+    }
+
+    public List<CapabilityStatus> getCapabilityStatuses() {
+        return PuppetNodeCapabilityRegistry.listStatuses(puppetNode);
+    }
+
+    public RuntimeProfile getRuntimeProfile() {
+        return puppetNode != null ? puppetNode.getRuntimeProfile() : null;
+    }
+
+    /** Resolve the persisted Puppet identity for both live and cache sessions. */
+    public String resolvePuppetId() {
+        if (puppetNode != null && puppetNode.getPuppet() != null) {
+            String livePuppetId = puppetNode.getPuppet().getPuppetId();
+            if (livePuppetId != null && !livePuppetId.isBlank()) {
+                return livePuppetId;
+            }
+        }
+        return puppetId != null && !puppetId.isBlank() ? puppetId : null;
     }
 
     // ── HostId 管理 ───────────────────────────────────────────────────────────
@@ -485,19 +487,7 @@ public class PuppetNodeSession {
 
         // 关闭底层通信连接
         if (puppetNode != null) {
-            org.leo.core.net.Communication comm = null;
-            if (puppetNode instanceof JavaPuppetNode) {
-                comm = ((JavaPuppetNode) puppetNode).getCommunication();
-            }
-            if (comm instanceof java.io.Closeable) {
-                try { ((java.io.Closeable) comm).close(); } catch (Exception ignored) {}
-            } else if (comm instanceof org.java_websocket.client.WebSocketClient) {
-                try { ((org.java_websocket.client.WebSocketClient) comm).close(); } catch (Exception ignored) {}
-            }
-            // 停止 SOCKS5 代理
-            if (puppetNode instanceof JavaPuppetNode) {
-                ((JavaPuppetNode) puppetNode).stopSocks5Proxy();
-            }
+            try { puppetNode.close(); } catch (Exception ignored) {}
         }
 
         // 清理缓存

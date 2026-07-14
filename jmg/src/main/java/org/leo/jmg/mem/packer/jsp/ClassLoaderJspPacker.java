@@ -22,7 +22,7 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class ClassLoaderJspPacker implements Packer {
 
-    private final String jspTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jsp");
+    private final String jspTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jsp.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {

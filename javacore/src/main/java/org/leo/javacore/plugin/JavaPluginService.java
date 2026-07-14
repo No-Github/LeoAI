@@ -1,4 +1,4 @@
-package org.leo.service.puppetnode.plugin;
+package org.leo.javacore.plugin;
 
 import org.leo.core.entity.Plugin;
 import org.leo.core.manager.PluginManager;

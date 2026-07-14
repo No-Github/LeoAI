@@ -92,7 +92,7 @@ public class SessionManageController {
         if (session.isCacheMode()) {
             chain = buildCacheModeChain(session);
         } else {
-            if (session.getJavaPuppetNode() == null || session.getJavaPuppetNode().getPuppet() == null) {
+            if (session.getPuppetNode() == null || session.getPuppetNode().getPuppet() == null) {
                 throw ApiException.badRequest("会话中不存在 Puppet 实体: " + sessionId);
             }
             chain = buildLiveChain(session);
@@ -105,12 +105,12 @@ public class SessionManageController {
 
     private boolean isValidSession(PuppetNodeSession session) {
         return session != null
-                && session.getJavaPuppetNode() != null
-                && session.getJavaPuppetNode().getPuppet() != null;
+                && session.getPuppetNode() != null
+                && session.getPuppetNode().getPuppet() != null;
     }
 
     private SessionInfo toSessionInfo(String sessionId, PuppetNodeSession session) {
-        Puppet puppet = session.getJavaPuppetNode().getPuppet();
+        Puppet puppet = session.getPuppetNode().getPuppet();
         return new SessionInfo(
                 sessionId,
                 puppet.getPuppetId(),

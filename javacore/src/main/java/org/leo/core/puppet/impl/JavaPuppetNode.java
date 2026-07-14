@@ -1531,4 +1531,14 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     public Map<String, Object> monitorClipboard(int duration, int interval) throws Exception {
         return clipboardService.monitor(duration, interval);
     }
+
+    @Override
+    public void close() throws Exception {
+        stopSocks5Proxy();
+        if (communication instanceof java.io.Closeable closeable) {
+            closeable.close();
+        } else if (communication instanceof org.java_websocket.client.WebSocketClient webSocketClient) {
+            webSocketClient.close();
+        }
+    }
 }

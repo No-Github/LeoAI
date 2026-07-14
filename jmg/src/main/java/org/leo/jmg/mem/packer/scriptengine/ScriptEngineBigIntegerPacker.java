@@ -20,7 +20,7 @@ import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scri
         requiredClasses = "javax.script.ScriptEngineManager"
 )
 public class ScriptEngineBigIntegerPacker implements Packer {
-    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBigInteger.js");
+    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBigInteger.js.txt");
 
     @Override
     public String pack(ClassPackerConfig config) throws Exception {

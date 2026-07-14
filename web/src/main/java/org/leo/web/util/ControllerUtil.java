@@ -4,7 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
-import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
+import org.leo.core.runtime.CapabilityStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
@@ -133,37 +134,6 @@ public class ControllerUtil {
     }
 
     /**
-     * 从参数中获取并验证Session和PuppetEntity
-     * 
-     * @param params 参数Map，必须包含sessionId
-     * @return PuppetEntity实例
-     * @throws IllegalArgumentException 如果参数无效或会话不存在
-     */
-    public static JavaPuppetNode getPuppetNode(Map<String, Object> params) {
-
-        PuppetNodeSession session = getPuppetNodeSession(params);
-        return getPuppetNode(session);
-    }
-
-    public static JavaPuppetNode getPuppetNode(String sessionId) {
-        return getPuppetNode(getPuppetNodeSession(sessionId));
-    }
-
-    private static JavaPuppetNode getPuppetNode(PuppetNodeSession session) {
-
-        JavaPuppetNode javaPuppetNode = session.getJavaPuppetNode();
-        if (javaPuppetNode == null) {
-            throw ApiException.notFound("Puppet实体不存在: " + session.getSessionId());
-        }
-        User currentUser = getCurrentUser();
-        if (currentUser != null) {
-            javaPuppetNode.setUser(currentUser);
-        }
-
-        return javaPuppetNode;
-    }
-
-    /**
      * 获取通用 PuppetNode，用于支持多类型节点的控制器。
      */
     public static AbstractPuppetNode getAbstractPuppetNode(Map<String, Object> params) {
@@ -190,12 +160,17 @@ public class ControllerUtil {
             throw ApiException.badRequest("capabilityType不能为空");
         }
         AbstractPuppetNode node = getAbstractPuppetNode(session);
-        if (capabilityType.isInstance(node)) {
+        if (PuppetNodeCapabilityRegistry.supports(node, capabilityType)) {
             return capabilityType.cast(node);
         }
         String nodeType = node.getPuppet() != null ? node.getPuppet().getType() : node.getClass().getSimpleName();
+        String capabilityName = PuppetNodeCapabilityRegistry.capabilityName(capabilityType);
+        CapabilityStatus status = capabilityName != null
+                ? PuppetNodeCapabilityRegistry.getStatus(node, capabilityName) : null;
+        String reason = status != null && status.getReason() != null && !status.getReason().isBlank()
+                ? ", reason=" + status.getReason() : "";
         throw ApiException.badRequest("当前 Puppet 类型不支持能力: " + capabilityType.getSimpleName()
-                + " (type=" + safeText(nodeType, "unknown") + ")");
+                + " (type=" + safeText(nodeType, "unknown") + reason + ")");
     }
 
     private static AbstractPuppetNode getAbstractPuppetNode(PuppetNodeSession session) {
@@ -326,12 +301,6 @@ public class ControllerUtil {
 
     // ==================== 控制器样板辅助 ====================
 
-    /** 函数式接口:供 handlePuppetCall 注入业务逻辑 */
-    @FunctionalInterface
-    public interface PuppetCall {
-        Map<String, Object> apply(JavaPuppetNode node) throws Exception;
-    }
-
     /** 函数式接口:供 handleCapabilityCall 注入能力逻辑 */
     @FunctionalInterface
     public interface CapabilityCall<T> {
@@ -419,94 +388,6 @@ public class ControllerUtil {
             String message = safeText(errorPrefix, "Puppet调用失败") + ": " + e.getMessage();
             if (auditEnabled && auditNode != null) {
                 AuditLogUtil.logError(auditNode, resolvedOperationType, resolvedOperationName,
-                        resolvedOperationPath, params, message, clientIp);
-            }
-            return ApiResponse.error(message);
-        }
-    }
-
-    /**
-     * 统一封装 puppet 调用样板:获取节点 → 执行回调 → 检查 code==200 → 返回 ApiResponse。
-     * 收敛所有 controller 中重复的 try/catch + null/code 检查模板。
-     *
-     * @param params      请求体参数(必含 sessionId)
-     * @param errorPrefix 失败消息前缀(如 "获取共享列表失败")
-     * @param call        业务回调,接收已校验的 JavaPuppetNode,返回 puppet 端结果 Map
-     */
-    public static HashMap<String, Object> handlePuppetCall(
-            Map<String, Object> params, String errorPrefix, PuppetCall call) {
-        String operationType = inferOperationTypeFromRequest();
-        return handlePuppetCall(params, operationType, null, null, errorPrefix, call,
-                shouldAuditGenericOperation(operationType));
-    }
-
-    /**
-     * 统一封装 puppet 调用样板，并附带审计日志记录。
-     */
-    public static HashMap<String, Object> handlePuppetCall(
-            Map<String, Object> params,
-            String operationType,
-            String operationName,
-            String operationPath,
-            String errorPrefix,
-            PuppetCall call) {
-        return handlePuppetCall(params, operationType, operationName, operationPath, errorPrefix, call, true);
-    }
-
-    private static HashMap<String, Object> handlePuppetCall(
-            Map<String, Object> params,
-            String operationType,
-            String operationName,
-            String operationPath,
-            String errorPrefix,
-            PuppetCall call,
-            boolean auditEnabled) {
-        JavaPuppetNode node = null;
-        String resolvedOperationType = safeText(operationType, inferOperationTypeFromRequest());
-        String resolvedOperationName = safeText(operationName, normalizeOperationName(errorPrefix, resolvedOperationType));
-        String resolvedOperationPath = safeText(operationPath, currentRequestPath());
-        String clientIp = AuditLogUtil.getClientIp();
-
-        try {
-            node = getPuppetNode(params);
-            Map<String, Object> result = call.apply(node);
-            if (result == null) {
-                String message = safeText(errorPrefix, "Puppet调用失败") + ": 返回为空";
-                if (auditEnabled) {
-                    AuditLogUtil.logFailure(node, resolvedOperationType, resolvedOperationName,
-                            resolvedOperationPath, params, message, clientIp);
-                }
-                return ApiResponse.error(message);
-            }
-
-            Integer responseCode = extractResponseCode(result);
-            String responseMessage = extractResponseMessage(result);
-            if (responseCode != null && responseCode.intValue() == ApiResponse.CODE_SUCCESS) {
-                if (auditEnabled) {
-                    AuditLogUtil.logSuccess(node, resolvedOperationType, resolvedOperationName,
-                            resolvedOperationPath, params, responseCode, responseMessage, clientIp);
-                }
-                return ApiResponse.success(result);
-            }
-
-            String message = safeText(responseMessage, safeText(errorPrefix, "Puppet调用失败") + ": 失败");
-            if (auditEnabled) {
-                AuditLogUtil.logOperation(node, resolvedOperationType, resolvedOperationName,
-                        resolvedOperationPath, params, responseCode, responseMessage, "FAILED", message, clientIp);
-            }
-            return ApiResponse.error(message);
-        } catch (ApiException ae) {
-            if (auditEnabled && node != null) {
-                AuditLogUtil.logOperation(node, resolvedOperationType, resolvedOperationName,
-                        resolvedOperationPath, params, ae.getCode(), ae.getMessage(), "FAILED",
-                        ae.getMessage(), clientIp);
-            }
-            // 参数/权限/未找到等明确异常,保留原状态码
-            throw ae;
-        } catch (Exception e) {
-            String message = safeText(errorPrefix, "Puppet调用失败") + ": " + e.getMessage();
-            if (auditEnabled && node != null) {
-                AuditLogUtil.logError(node, resolvedOperationType, resolvedOperationName,
                         resolvedOperationPath, params, message, clientIp);
             }
             return ApiResponse.error(message);

@@ -1,0 +1,92 @@
+package org.leo.javacore;
+
+import org.leo.core.entity.Puppet;
+import org.leo.core.entity.User;
+import org.leo.core.net.Communication;
+import org.leo.core.net.layer.HeaderNoiseStrategy;
+import org.leo.core.net.layer.PaddingStrategy;
+import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.puppet.AbstractPuppetNode;
+import org.leo.core.puppet.impl.JavaPuppetNode;
+import org.leo.core.runtime.PuppetNodeCreationContext;
+import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.runtime.PuppetRuntimeModule;
+import org.leo.core.util.json.JsonUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/** Java runtime module implementation; selected through the shared runtime SPI. */
+@Component
+public final class JavaCoreModule implements PuppetRuntimeModule {
+
+    private static final Logger logger = LoggerFactory.getLogger(JavaCoreModule.class);
+
+    @Override
+    public PuppetRuntime getRuntime() {
+        return PuppetRuntime.JAVA;
+    }
+
+    @Override
+    public AbstractPuppetNode createNode(Puppet puppet,
+                                         User user,
+                                         PuppetNodeCreationContext context) throws Exception {
+        Communication communication = context.createCommunication(puppet);
+        PuppetNodeCreationContext.TransportLayers layers = context.createTransportLayers(puppet);
+
+        JavaPuppetNode node = new JavaPuppetNode();
+        node.setPuppet(puppet);
+        node.setUser(user);
+        node.setRequestLayers(layers.getRequestLayers());
+        node.setResponseLayers(layers.getResponseLayers());
+        node.setCommunication(communication);
+        if (puppet.getMaxReqCount() != null && puppet.getMaxReqCount() > 0) {
+            node.setMaxReqCount(puppet.getMaxReqCount());
+        }
+        node.initService();
+        applyRuntimeStrategies(puppet, node);
+        return node;
+    }
+
+    private void applyRuntimeStrategies(Puppet puppet, JavaPuppetNode node) {
+        applyUrlStrategy(puppet, node);
+        applyPaddingStrategy(puppet, node);
+        applyHeaderNoiseStrategy(puppet, node);
+    }
+
+    private void applyUrlStrategy(Puppet puppet, JavaPuppetNode node) {
+        String json = puppet.getUrlStrategy();
+        if (json == null || json.isBlank()) return;
+        try {
+            UrlStrategy strategy = (UrlStrategy) JsonUtil.fromJsonString(json, UrlStrategy.class);
+            if (strategy != null) node.setUrlStrategy(strategy);
+        } catch (Exception e) {
+            logger.warn("解析 Java URL 随机化策略失败, puppetId={}: {}",
+                    puppet.getPuppetId(), e.getMessage());
+        }
+    }
+
+    private void applyPaddingStrategy(Puppet puppet, JavaPuppetNode node) {
+        String json = puppet.getPaddingStrategy();
+        if (json == null || json.isBlank()) return;
+        try {
+            PaddingStrategy strategy = (PaddingStrategy) JsonUtil.fromJsonString(json, PaddingStrategy.class);
+            if (strategy != null) node.setPaddingStrategy(strategy);
+        } catch (Exception e) {
+            logger.warn("解析 Java Padding 策略失败, puppetId={}: {}",
+                    puppet.getPuppetId(), e.getMessage());
+        }
+    }
+
+    private void applyHeaderNoiseStrategy(Puppet puppet, JavaPuppetNode node) {
+        String json = puppet.getHeaderNoiseStrategy();
+        if (json == null || json.isBlank()) return;
+        try {
+            HeaderNoiseStrategy strategy = (HeaderNoiseStrategy) JsonUtil.fromJsonString(json, HeaderNoiseStrategy.class);
+            if (strategy != null) node.setHeaderNoiseStrategy(strategy);
+        } catch (Exception e) {
+            logger.warn("解析 Java Header 噪声策略失败, puppetId={}: {}",
+                    puppet.getPuppetId(), e.getMessage());
+        }
+    }
+}

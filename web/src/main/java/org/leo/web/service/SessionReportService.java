@@ -66,9 +66,9 @@ public class SessionReportService {
         if (session.isCacheMode()) {
             String id = session.getPuppetId();
             if (id != null && !id.isBlank()) return id.trim();
-        } else if (session.getJavaPuppetNode() != null
-                && session.getJavaPuppetNode().getPuppet() != null) {
-            return session.getJavaPuppetNode().getPuppet().getPuppetId();
+        } else if (session.getPuppetNode() != null
+                && session.getPuppetNode().getPuppet() != null) {
+            return session.getPuppetNode().getPuppet().getPuppetId();
         }
         throw ApiException.badRequest("无法确定 puppetId，无法生成报告");
     }

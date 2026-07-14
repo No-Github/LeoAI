@@ -20,7 +20,7 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class JspxPacker implements Packer {
 
-    private final String jspxTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jspx");
+    private final String jspxTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jspx.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
