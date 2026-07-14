@@ -8,7 +8,6 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.Puppet;
-import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
@@ -244,6 +243,7 @@ public class ShellGeneratorTools {
         meta.put("coreClassName", config.getCoreClassName());
         meta.put("protocol",      config.getProtocol());
         meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+        meta.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
         meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
         meta.put("lines",         shell.split("\n").length);
         meta.put("chars",         shell.length());
@@ -321,12 +321,9 @@ public class ShellGeneratorTools {
         if (jspObfuscationSteps != null) builder.jspObfuscationSteps(jspObfuscationSteps);
         if (!isBlank(customJspTemplate)) builder.customJspTemplate(customJspTemplate.trim());
 
-        builder.coreClassName(isBlank(coreClassName)
-                ? ClassNameGenerator.generateServletStyleClassName() : coreClassName.trim());
-        builder.injectorClassName(isBlank(injectorClassName)
-                ? ClassNameGenerator.generateServletStyleClassName() : injectorClassName.trim());
-        builder.shellClassName(isBlank(shellClassName)
-                ? ClassNameGenerator.generateServletStyleClassName() : shellClassName.trim());
+        if (!isBlank(coreClassName)) builder.coreClassName(coreClassName.trim());
+        if (!isBlank(injectorClassName)) builder.injectorClassName(injectorClassName.trim());
+        if (!isBlank(shellClassName)) builder.shellClassName(shellClassName.trim());
 
         ShellGeneratorConfig config = builder.build();
         ShellGenerator generator = new ShellGenerator(config);
@@ -352,6 +349,7 @@ public class ShellGeneratorTools {
         meta.put("isAbstractTranslet", config.isAbstractTranslet());
         meta.put("byPassJavaModule",  config.isByPassJavaModule());
         meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+        meta.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
         meta.put("compatibilityWarnings", compatibilityWarnings);
         meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
         meta.put("headerConfig",      headerName + " : " + headerValue);

@@ -2,7 +2,6 @@ package org.leo.web.controller.platform.shell;
 
 import org.leo.core.entity.Disguise;
 import org.leo.core.manager.DisguiseManager;
-import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
@@ -129,6 +128,7 @@ public class ShellGeneratorController {
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
             String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
             String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
+            Long obfuscationSeed = getOptionalLongParam(params, "obfuscationSeed");
             Integer respCode = getOptionalIntegerParam(params, "respCode");
             if (respCode == null) {
                 respCode = 200;
@@ -147,6 +147,9 @@ public class ShellGeneratorController {
             }
             if (servletNamespace != null && !servletNamespace.isBlank()) {
                 configBuilder.servletNamespace(servletNamespace);
+            }
+            if (obfuscationSeed != null) {
+                configBuilder.obfuscationSeed(obfuscationSeed);
             }
 
             if (coreClassName != null && !coreClassName.isBlank()) {
@@ -177,6 +180,7 @@ public class ShellGeneratorController {
             data.put("protocol", config.getProtocol());
             data.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
             data.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
+            data.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
 
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
@@ -267,6 +271,10 @@ public class ShellGeneratorController {
             if (servletNamespace != null && !servletNamespace.isBlank()) {
                 configBuilder.servletNamespace(servletNamespace);
             }
+            Long obfuscationSeed = getOptionalLongParam(params, "obfuscationSeed");
+            if (obfuscationSeed != null) {
+                configBuilder.obfuscationSeed(obfuscationSeed);
+            }
 
             List<String> jspObfuscationSteps = getOptionalStringListParam(params, "jspObfuscationSteps");
             // null = 字段未发送（使用默认预设）；空列表 = 用户主动禁用全部，也需设置
@@ -276,18 +284,12 @@ public class ShellGeneratorController {
 
             if (coreClassName != null && !coreClassName.isBlank()) {
                 configBuilder.coreClassName(coreClassName);
-            }else {
-                configBuilder.coreClassName(ClassNameGenerator.generateServletStyleClassName());
             }
             if (injectorClassName != null && !injectorClassName.isBlank()) {
                 configBuilder.injectorClassName(injectorClassName);
-            }else {
-                configBuilder.injectorClassName(ClassNameGenerator.generateServletStyleClassName());
             }
             if (shellClassName != null && !shellClassName.isBlank()) {
                 configBuilder.shellClassName(shellClassName);
-            }else {
-                configBuilder.shellClassName(ClassNameGenerator.generateServletStyleClassName());
             }
 
             ShellGeneratorConfig config = configBuilder.build();
@@ -316,6 +318,7 @@ public class ShellGeneratorController {
             data.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
             data.put("compatibilityWarnings", compatibilityWarnings);
             data.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
+            data.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
             data.put("headerConfig",headerName+" : "+headerValue);
 
             return ApiResponse.success(data);
@@ -361,6 +364,24 @@ public class ShellGeneratorController {
             return Integer.parseInt(paramObj.toString());
         } catch (NumberFormatException e) {
             return null;
+        }
+    }
+
+    private Long getOptionalLongParam(HashMap<String, Object> params, String paramName) {
+        if (params == null) {
+            return null;
+        }
+        Object paramObj = params.get(paramName);
+        if (paramObj == null) {
+            return null;
+        }
+        if (paramObj instanceof Number) {
+            return ((Number) paramObj).longValue();
+        }
+        try {
+            return Long.parseLong(paramObj.toString());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(paramName + " 必须是 64 位整数");
         }
     }
 

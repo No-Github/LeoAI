@@ -1,8 +1,10 @@
 package org.leo.jmg.mem.packer.jsp;
 
+import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
+import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.TemplateRenderer;
 import org.leo.jmg.mem.packer.Util;
 
@@ -24,14 +26,21 @@ public class ClassLoaderJspPacker implements Packer {
 
     @Override
     public String pack(ClassPackerConfig config) {
-        // AI 生成的自定义模板优先；未提供时回退到内置模板
-        String tpl = (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty())
-                ? config.getCustomTemplate()
-                : jspTemplate;
-        String code = TemplateRenderer.render(tpl, config);
-        JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
-                ? JspObfuscationPipeline.fromStepIds(config.getJspObfuscationSteps())
-                : JspObfuscationPipeline.jspDefault();
-        return pipeline.apply(code);
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
+            // AI 生成的自定义模板优先；未提供时回退到内置模板
+            String tpl = (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty())
+                    ? config.getCustomTemplate()
+                    : jspTemplate;
+            String code = TemplateRenderer.render(tpl, config);
+            JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
+                    ? JspObfuscationPipeline.fromStepIds(
+                            config.getJspObfuscationSteps(),
+                            JspObfuscationPipeline.PlanContext.packer(
+                                    JspObfuscationPipeline.ArtifactFormat.JSP,
+                                    PackerRegistry.getSupportedObfuscationSteps("ClassLoaderJSP"),
+                                    config.getObfuscationSeed()))
+                    : JspObfuscationPipeline.jspDefault(config.getObfuscationSeed());
+            return pipeline.apply(code);
+        }
     }
 }

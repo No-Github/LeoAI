@@ -83,6 +83,17 @@ class ShellGeneratorConfigTest {
                 .getCompatibilityWarnings().size());
     }
 
+    @Test
+    void fixedSeedReproducesGeneratedNames() {
+        ShellGeneratorConfig first = builder().obfuscationSeed(42L).build();
+        ShellGeneratorConfig second = builder().obfuscationSeed(42L).build();
+
+        assertEquals(42L, first.getObfuscationSeed());
+        assertEquals(first.getCoreClassName(), second.getCoreClassName());
+        assertEquals(first.getMethodAction(), second.getMethodAction());
+        assertEquals(first.getFieldParams(), second.getFieldParams());
+    }
+
     private ShellGeneratorConfig.Builder builder() {
         return ShellGeneratorConfig.builder(new Disguise(), new Disguise());
     }

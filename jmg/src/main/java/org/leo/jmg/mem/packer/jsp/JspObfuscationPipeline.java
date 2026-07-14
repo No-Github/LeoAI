@@ -1,12 +1,17 @@
 package org.leo.jmg.mem.packer.jsp;
 
+import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.mem.packer.Util;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * JSP/JSPX 混淆流水线，将多个 {@link JspObfuscationStep} 串联执行。
@@ -61,6 +66,90 @@ import java.util.Map;
  * }</pre>
  */
 public final class JspObfuscationPipeline {
+
+    public enum ArtifactFormat {
+        JSP,
+        JSPX
+    }
+
+    public enum ArtifactRole {
+        WEBSHELL,
+        PACKER,
+        UNSPECIFIED
+    }
+
+    /**
+     * 流水线编译上下文。所有服务端入口都必须明确产物格式和用途，避免仅依赖前端过滤。
+     */
+    public static final class PlanContext {
+        private final ArtifactFormat format;
+        private final ArtifactRole role;
+        private final Set<String> allowedStepIds;
+        private final Long seed;
+
+        private PlanContext(ArtifactFormat format, ArtifactRole role,
+                            Set<String> allowedStepIds, Long seed) {
+            this.format = format;
+            this.role = role;
+            this.seed = seed;
+            this.allowedStepIds = allowedStepIds == null
+                    ? null
+                    : Collections.unmodifiableSet(new LinkedHashSet<String>(allowedStepIds));
+        }
+
+        public static PlanContext webShell(ArtifactFormat format) {
+            return webShell(format, ThreadLocalRandom.current().nextLong());
+        }
+
+        public static PlanContext webShell(ArtifactFormat format, long seed) {
+            return new PlanContext(format, ArtifactRole.WEBSHELL, null, seed);
+        }
+
+        public static PlanContext packer(ArtifactFormat format, List<String> allowedStepIds) {
+            return packer(format, allowedStepIds, ThreadLocalRandom.current().nextLong());
+        }
+
+        public static PlanContext packer(ArtifactFormat format, List<String> allowedStepIds,
+                                         long seed) {
+            return new PlanContext(format, ArtifactRole.PACKER,
+                    allowedStepIds == null ? Collections.<String>emptySet()
+                            : new LinkedHashSet<String>(allowedStepIds), seed);
+        }
+
+        static PlanContext unrestricted() {
+            return new PlanContext(null, ArtifactRole.UNSPECIFIED, null,
+                    ThreadLocalRandom.current().nextLong());
+        }
+    }
+
+    /** 已验证并排序后的执行计划，包含可返回给上层的结构化诊断。 */
+    public static final class CompiledPlan {
+        private final JspObfuscationPipeline pipeline;
+        private final List<String> requestedStepIds;
+        private final List<String> effectiveStepIds;
+        private final List<String> warnings;
+        private final long seed;
+
+        private CompiledPlan(JspObfuscationPipeline pipeline,
+                             List<String> requestedStepIds,
+                             List<String> effectiveStepIds,
+                             List<String> warnings,
+                             long seed) {
+            this.pipeline = pipeline;
+            this.requestedStepIds = Collections.unmodifiableList(
+                    new ArrayList<String>(requestedStepIds));
+            this.effectiveStepIds = Collections.unmodifiableList(
+                    new ArrayList<String>(effectiveStepIds));
+            this.warnings = Collections.unmodifiableList(new ArrayList<String>(warnings));
+            this.seed = seed;
+        }
+
+        public JspObfuscationPipeline getPipeline() { return pipeline; }
+        public List<String> getRequestedStepIds() { return requestedStepIds; }
+        public List<String> getEffectiveStepIds() { return effectiveStepIds; }
+        public List<String> getWarnings() { return warnings; }
+        public long getSeed() { return seed; }
+    }
 
     // -------------------------------------------------------------------------
     // 步骤元数据描述（供前端展示与配置使用）
@@ -208,15 +297,15 @@ public final class JspObfuscationPipeline {
         // ── 第五层：噪声注入（必须在 Unicode 编码之前） ─────────────────────────────
         m.put("INJECT_SCRIPTLET_NOISE", new StepDescriptor(
                 "INJECT_SCRIPTLET_NOISE", "Scriptlet 内噪声注入",
-                "在每个 scriptlet 块开头注入 1-2 条随机无副作用 Java 声明语句（如 int v=Runtime.getRuntime().availableProcessors()），" +
-                "使每次生成的 scriptlet 内容不同，打断基于 scriptlet 块内容哈希/签名的检测",
+                "在每个 scriptlet 块开头注入 1-2 条仅含常量表达式的 Java 声明；" +
+                "不读取系统属性、线程或类加载器状态，避免额外运行时行为",
                 true, true, true,
                 new String[0],
                 new String[]{"UNICODE_ENCODE_JSP", "UNICODE_ENCODE_JSPX"}));
         m.put("DEAD_BLOCK_INJECT", new StepDescriptor(
                 "DEAD_BLOCK_INJECT", "死代码块注入",
-                "在每个 scriptlet 块开头注入 1 条引用 Spring/Struts/JNDI/Servlet API 的死代码块（try-catch 或 if(false)），" +
-                "使 ML 分类器将其特征识别为普通 Servlet 代码，增加人工 audit 追踪成本；与 Scriptlet 内噪声注入正交",
+                "在每个 scriptlet 块开头注入 1 条由 if(false) 包裹的 Java 代码块；" +
+                "保证不会实际触发类初始化、JNDI 查询或系统状态读取",
                 true, true, true,
                 new String[0],
                 new String[]{"UNICODE_ENCODE_JSP", "UNICODE_ENCODE_JSPX"}));
@@ -282,13 +371,34 @@ public final class JspObfuscationPipeline {
      * @return 对应的 JspObfuscationPipeline
      */
     public static JspObfuscationPipeline fromStepIds(List<String> stepIds) {
+        return compile(stepIds, PlanContext.unrestricted()).getPipeline();
+    }
+
+    /**
+     * 使用明确的产物上下文编译流水线。未知、不兼容和互斥配置会失败关闭；
+     * 顺序约束通过稳定拓扑排序自动修正，并写入 warnings。
+     */
+    public static JspObfuscationPipeline fromStepIds(List<String> stepIds, PlanContext context) {
+        return compile(stepIds, context).getPipeline();
+    }
+
+    public static CompiledPlan compile(List<String> stepIds, PlanContext context) {
+        if (context == null) {
+            throw new IllegalArgumentException("混淆计划上下文不能为空");
+        }
         if (stepIds == null || stepIds.isEmpty()) {
-            return builder().build();
+            long seed = context.seed != null ? context.seed : ThreadLocalRandom.current().nextLong();
+            JspObfuscationPipeline empty = builder().seed(seed).build();
+            return new CompiledPlan(empty, Collections.<String>emptyList(),
+                    Collections.<String>emptyList(), Collections.<String>emptyList(), seed);
         }
 
         // 第一遍：校验 ID 并收集标准化后的有效列表，避免配置看似成功但步骤被静默忽略。
         List<String> validIds = new ArrayList<String>();
         List<String> invalidIds = new ArrayList<String>();
+        List<String> errors = new ArrayList<String>();
+        List<String> warnings = new ArrayList<String>();
+        Set<String> seen = new LinkedHashSet<String>();
         for (String id : stepIds) {
             if (id == null || id.trim().isEmpty()) {
                 invalidIds.add(String.valueOf(id));
@@ -299,52 +409,109 @@ public final class JspObfuscationPipeline {
                 invalidIds.add(normalized);
                 continue;
             }
+            if (!seen.add(normalized)) {
+                warnings.add("重复步骤已忽略: " + normalized);
+                continue;
+            }
             validIds.add(normalized);
         }
         if (!invalidIds.isEmpty()) {
-            throw new IllegalArgumentException("未知的 JSP 混淆步骤: " + invalidIds);
+            errors.add("未知的 JSP 混淆步骤: " + invalidIds);
         }
 
-        // 互斥检查：已接受的 ID 集合，遇到互斥对时跳过后者
-        java.util.Set<String> accepted = new java.util.LinkedHashSet<String>();
-        java.util.Set<String> skipped  = new java.util.HashSet<String>();
+        Set<String> selected = new LinkedHashSet<String>(validIds);
+        Set<String> reportedConflicts = new HashSet<String>();
         for (String id : validIds) {
-            if (skipped.contains(id)) {
-                System.err.println("[JspObfuscationPipeline] 步骤 " + id
-                        + " 与已接受步骤互斥，已跳过");
-                continue;
-            }
             StepDescriptor desc = STEP_REGISTRY.get(id);
-            accepted.add(id);
-            // 把与本步骤互斥的步骤加入 skipped 集合
+            if (context.format == ArtifactFormat.JSP && !desc.isJspCompatible()) {
+                errors.add("步骤 " + id + " 不支持 JSP");
+            }
+            if (context.format == ArtifactFormat.JSPX && !desc.isJspxCompatible()) {
+                errors.add("步骤 " + id + " 不支持 JSPX");
+            }
+            if (context.role == ArtifactRole.WEBSHELL && !desc.isWebshellCompatible()) {
+                errors.add("步骤 " + id + " 不适用于 WebShell");
+            }
+            if (context.allowedStepIds != null && !context.allowedStepIds.contains(id)) {
+                errors.add("当前 Packer 不支持步骤 " + id);
+            }
             for (String incompatible : desc.getIncompatibleWith()) {
-                skipped.add(incompatible);
-            }
-        }
-
-        // 顺序检查：A mustPrecede B，若 B 在 accepted 中出现在 A 之前则 warning
-        List<String> acceptedList = new ArrayList<String>(accepted);
-        for (int i = 0; i < acceptedList.size(); i++) {
-            String id = acceptedList.get(i);
-            StepDescriptor desc = STEP_REGISTRY.get(id);
-            for (String mustBeAfter : desc.getMustPrecede()) {
-                int laterIdx = acceptedList.indexOf(mustBeAfter);
-                if (laterIdx != -1 && laterIdx < i) {
-                    System.err.println("[JspObfuscationPipeline] 顺序警告：" + id
-                            + " 应在 " + mustBeAfter + " 之前执行，当前顺序可能导致混淆效果不正确");
+                if (selected.contains(incompatible)) {
+                    String first = id.compareTo(incompatible) <= 0 ? id : incompatible;
+                    String second = id.compareTo(incompatible) <= 0 ? incompatible : id;
+                    String pair = first + "\u0000" + second;
+                    if (reportedConflicts.add(pair)) {
+                        errors.add("步骤互斥: " + first + " 与 " + second);
+                    }
                 }
             }
         }
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException(joinMessages(errors));
+        }
+
+        List<String> acceptedList = stableTopologicalSort(validIds);
+        if (!acceptedList.equals(validIds)) {
+            warnings.add("步骤顺序已按依赖关系自动调整: " + acceptedList);
+        }
 
         // 按最终有序列表构建 pipeline
-        Builder builder = builder();
+        long seed = context.seed != null ? context.seed : ThreadLocalRandom.current().nextLong();
+        Builder builder = builder().seed(seed);
         for (String id : acceptedList) {
             JspObfuscationStep step = resolveStep(id);
             if (step != null) {
                 builder.add(step);
             }
         }
-        return builder.build();
+        JspObfuscationPipeline pipeline = builder.build();
+        return new CompiledPlan(pipeline, validIds, acceptedList, warnings, seed);
+    }
+
+    private static List<String> stableTopologicalSort(List<String> ids) {
+        Map<String, Set<String>> outgoing = new LinkedHashMap<String, Set<String>>();
+        Map<String, Integer> indegree = new LinkedHashMap<String, Integer>();
+        for (String id : ids) {
+            outgoing.put(id, new LinkedHashSet<String>());
+            indegree.put(id, 0);
+        }
+        for (String id : ids) {
+            for (String after : STEP_REGISTRY.get(id).getMustPrecede()) {
+                if (indegree.containsKey(after) && outgoing.get(id).add(after)) {
+                    indegree.put(after, indegree.get(after) + 1);
+                }
+            }
+        }
+
+        List<String> result = new ArrayList<String>();
+        Set<String> emitted = new HashSet<String>();
+        while (result.size() < ids.size()) {
+            String next = null;
+            for (String id : ids) {
+                if (!emitted.contains(id) && indegree.get(id) == 0) {
+                    next = id;
+                    break;
+                }
+            }
+            if (next == null) {
+                throw new IllegalArgumentException("混淆步骤依赖关系存在循环: " + ids);
+            }
+            emitted.add(next);
+            result.add(next);
+            for (String target : outgoing.get(next)) {
+                indegree.put(target, indegree.get(target) - 1);
+            }
+        }
+        return result;
+    }
+
+    private static String joinMessages(List<String> messages) {
+        StringBuilder sb = new StringBuilder("混淆计划无效: ");
+        for (int i = 0; i < messages.size(); i++) {
+            if (i > 0) sb.append("; ");
+            sb.append(messages.get(i));
+        }
+        return sb.toString();
     }
 
     /** 将步骤 ID 字符串解析为对应的 JspObfuscationStep 实例 */
@@ -474,9 +641,11 @@ public final class JspObfuscationPipeline {
     // -------------------------------------------------------------------------
 
     private final List<JspObfuscationStep> steps;
+    private final long seed;
 
-    private JspObfuscationPipeline(List<JspObfuscationStep> steps) {
+    private JspObfuscationPipeline(List<JspObfuscationStep> steps, long seed) {
         this.steps = steps;
+        this.seed = seed;
     }
 
     /**
@@ -486,8 +655,10 @@ public final class JspObfuscationPipeline {
      * @return 混淆后代码
      */
     public String apply(String code) {
-        for (JspObfuscationStep step : steps) {
-            code = step.apply(code);
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(seed)) {
+            for (JspObfuscationStep step : steps) {
+                code = step.apply(code);
+            }
         }
         return code;
     }
@@ -502,6 +673,7 @@ public final class JspObfuscationPipeline {
 
     public static final class Builder {
         private final List<JspObfuscationStep> steps = new ArrayList<JspObfuscationStep>();
+        private long seed = ThreadLocalRandom.current().nextLong();
 
         public Builder add(JspObfuscationStep step) {
             if (step != null) {
@@ -510,8 +682,13 @@ public final class JspObfuscationPipeline {
             return this;
         }
 
+        public Builder seed(long seed) {
+            this.seed = seed;
+            return this;
+        }
+
         public JspObfuscationPipeline build() {
-            return new JspObfuscationPipeline(new ArrayList<JspObfuscationStep>(steps));
+            return new JspObfuscationPipeline(new ArrayList<JspObfuscationStep>(steps), seed);
         }
     }
 
@@ -524,7 +701,11 @@ public final class JspObfuscationPipeline {
      * 变量名/类名随机化由 TemplateRenderer 在渲染阶段完成。
      */
     public static JspObfuscationPipeline jspDefault() {
-        return builder()
+        return jspDefault(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspDefault(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)
@@ -536,7 +717,11 @@ public final class JspObfuscationPipeline {
      * JSP Unicode 混淆：在标准基础上追加多 u Unicode 转义编码。
      */
     public static JspObfuscationPipeline jspUnicode() {
-        return builder()
+        return jspUnicode(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspUnicode(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)
@@ -549,7 +734,11 @@ public final class JspObfuscationPipeline {
      * JSP HTML 壳混淆：在标准基础上用 HTML + jQuery 注释包裹，伪装成普通 HTML 文件。
      */
     public static JspObfuscationPipeline jspHtmlWrapped() {
-        return builder()
+        return jspHtmlWrapped(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspHtmlWrapped(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)
@@ -563,7 +752,11 @@ public final class JspObfuscationPipeline {
      * 叠加所有展示性混淆策略，特征最少。变量名/类名随机化由 TemplateRenderer 完成。
      */
     public static JspObfuscationPipeline jspFullStealth() {
-        return builder()
+        return jspFullStealth(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspFullStealth(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)
@@ -578,7 +771,11 @@ public final class JspObfuscationPipeline {
      * 不含噪声标签注入和 HTML 壳（会破坏 XML 结构）。
      */
     public static JspObfuscationPipeline jspxDefault() {
-        return builder()
+        return jspxDefault(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspxDefault(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)
@@ -589,7 +786,11 @@ public final class JspObfuscationPipeline {
      * JSPX Unicode 混淆：在标准基础上追加 JSPX 模式 Unicode 编码。
      */
     public static JspObfuscationPipeline jspxUnicode() {
-        return builder()
+        return jspxUnicode(ThreadLocalRandom.current().nextLong());
+    }
+
+    public static JspObfuscationPipeline jspxUnicode(long seed) {
+        return builder().seed(seed)
                 .add(SPLIT_STRING_LITERALS)
                 .add(CHUNK_PAYLOAD)
                 .add(INJECT_SCRIPTLET_NOISE)

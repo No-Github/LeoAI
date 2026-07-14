@@ -3,6 +3,7 @@ package org.leo.jmg.mem.packer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class ClassPackerConfig {
     private String className;
@@ -14,6 +15,7 @@ public class ClassPackerConfig {
      * 为 null 或空时 JSP Packer 使用默认 preset；非空时按此顺序构建 pipeline。
      */
     private List<String> jspObfuscationSteps;
+    private long obfuscationSeed = ThreadLocalRandom.current().nextLong();
 
     /**
      * AI 生成的自定义 JSP 模板（含 {{VAR:}} / {{CLS:}} / {{base64Str}} 占位符）。
@@ -62,6 +64,14 @@ public class ClassPackerConfig {
         this.jspObfuscationSteps = jspObfuscationSteps == null
                 ? null
                 : Collections.unmodifiableList(new ArrayList<String>(jspObfuscationSteps));
+    }
+
+    public long getObfuscationSeed() {
+        return obfuscationSeed;
+    }
+
+    public void setObfuscationSeed(long obfuscationSeed) {
+        this.obfuscationSeed = obfuscationSeed;
     }
 
     public String getCustomTemplate() {

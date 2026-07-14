@@ -1,8 +1,8 @@
 package org.leo.core.util.request;
 
 import java.util.HashSet;
+import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 
 public class ClassNameGenerator {
 
@@ -14,7 +14,7 @@ public class ClassNameGenerator {
     private static final Set<String> generatedClassNames = new HashSet<String>();
 
     public static String generateServletStyleClassName() {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         String className;
         do {
             className = String.format("%s.%s.%s.%s.%s",
@@ -23,8 +23,10 @@ public class ClassNameGenerator {
                     PACKAGE_PART_3[random.nextInt(PACKAGE_PART_3.length)],
                     BASE_CLASS_NAMES[random.nextInt(BASE_CLASS_NAMES.length)],
                     LAMBDA_NAMES[random.nextInt(LAMBDA_NAMES.length)]);
-        } while (generatedClassNames.contains(className)); // 检查是否已存在
-        generatedClassNames.add(className); // 添加到已生成集合
+        } while (!GenerationRandom.isSeeded() && generatedClassNames.contains(className));
+        if (!GenerationRandom.isSeeded()) {
+            generatedClassNames.add(className);
+        }
         return className;
     }
 
@@ -45,7 +47,7 @@ public class ClassNameGenerator {
     };
 
     public static String randomMethodName() {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         String prefix = METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)];
         String suffix = METHOD_SUFFIXES[random.nextInt(METHOD_SUFFIXES.length)];
         // 小概率加第二段，让名字更自然：getTokenValue / processRequestData
@@ -94,7 +96,7 @@ public class ClassNameGenerator {
      * 生成像正常业务字段的随机名，如 requestMap、sessionCache、params、resultHolder
      */
     public static String randomFieldName() {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         // 25% 概率直接用单词
         if (random.nextInt(4) == 0) {
             return FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
@@ -128,7 +130,7 @@ public class ClassNameGenerator {
      * 用于 JSP 模板内部类名随机化，避免 ClassDefiner 固定特征。
      */
     public static String randomSimpleClassName(Set<String> used) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
+        Random random = GenerationRandom.current();
         String name;
         do {
             name = SIMPLE_CLASS_PREFIXES[random.nextInt(SIMPLE_CLASS_PREFIXES.length)]

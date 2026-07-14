@@ -150,6 +150,7 @@ class PackerRegistryTest {
     @Test
     void cachesInitializationFailureUntilExplicitInstanceRegistration() {
         FailingPacker.constructions = 0;
+        FailingPacker.failConstruction = true;
         PackerRegistry.registerClass(FailingPacker.class);
 
         IllegalStateException first = assertThrows(IllegalStateException.class,
@@ -165,6 +166,10 @@ class PackerRegistryTest {
                 .contains("broken constructor"));
         assertTrue(!PackerRegistry.evaluateCompatibility(
                 "FailingTest", TargetJavaVersion.AUTO, false).isSupported());
+
+        FailingPacker.failConstruction = false;
+        PackerRegistry.register(new FailingPacker());
+        assertEquals("available", availability("FailingTest").get("status"));
     }
 
     @Test
@@ -217,15 +222,28 @@ class PackerRegistryTest {
         public LazyPacker() {
             constructions++;
         }
+
+        @Override
+        public String pack(org.leo.jmg.mem.packer.ClassPackerConfig config) {
+            return "lazy";
+        }
     }
 
     @PackerMeta(name = "FailingTest")
     public static final class FailingPacker implements Packer {
         private static int constructions;
+        private static boolean failConstruction = true;
 
         public FailingPacker() {
             constructions++;
-            throw new IllegalStateException("broken constructor");
+            if (failConstruction) {
+                throw new IllegalStateException("broken constructor");
+            }
+        }
+
+        @Override
+        public String pack(org.leo.jmg.mem.packer.ClassPackerConfig config) {
+            return "recovered";
         }
     }
 
@@ -235,6 +253,11 @@ class PackerRegistryTest {
 
         public ConcurrentLazyPacker() {
             constructions++;
+        }
+
+        @Override
+        public String pack(org.leo.jmg.mem.packer.ClassPackerConfig config) {
+            return "concurrent";
         }
     }
 }

