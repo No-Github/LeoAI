@@ -3,9 +3,15 @@ package org.leo.jmg.mem.packer.aviator;
 import org.leo.core.util.ByteEncodeUtil;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
+import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 
-@PackerMeta(name = "Aviator", order = 100)
+@PackerMeta(
+        name = "Aviator",
+        order = 100,
+        requiredCapabilities = PackerCapability.JAVASCRIPT_ENGINE,
+        requiredClasses = "javax.script.ScriptEngineManager"
+)
 public class AviatorPacker implements Packer {
 
     @Override

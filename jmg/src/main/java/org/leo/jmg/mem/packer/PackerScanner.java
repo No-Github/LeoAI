@@ -10,6 +10,8 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 基于类路径扫描发现所有带 {@link PackerMeta} 注解的 {@link Packer} 实现。
@@ -25,9 +27,10 @@ final class PackerScanner {
     }
 
     /**
-     * 扫描 base package 下所有带 @PackerMeta 注解的 Packer 实现类并实例化
+     * 扫描 base package 下所有带 @PackerMeta 注解的 Packer 实现类。
+     * 仅加载类和读取注解，不执行构造函数。
      */
-    static List<Packer> scan() {
+    static ScanResult scan() {
         ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         if (classLoader == null) {
@@ -39,7 +42,7 @@ final class PackerScanner {
     /**
      * 使用指定资源解析器和类加载器执行扫描，便于在不同运行环境中复用和测试。
      */
-    static List<Packer> scan(ResourcePatternResolver resolver, ClassLoader classLoader) {
+    static ScanResult scan(ResourcePatternResolver resolver, ClassLoader classLoader) {
         if (resolver == null) {
             throw new IllegalArgumentException("resolver 不能为空");
         }
@@ -66,7 +69,8 @@ final class PackerScanner {
         List<String> classNames = new ArrayList<String>(uniqueClassNames);
         Collections.sort(classNames);
 
-        List<Packer> packers = new ArrayList<Packer>();
+        List<Class<? extends Packer>> packerTypes = new ArrayList<Class<? extends Packer>>();
+        Map<String, String> failures = new LinkedHashMap<String, String>();
         for (String className : classNames) {
             try {
                 Class<?> clazz = classLoader.loadClass(className);
@@ -80,14 +84,42 @@ final class PackerScanner {
                     continue;
                 }
 
-                Packer instance = (Packer) clazz.getDeclaredConstructor().newInstance();
-                packers.add(instance);
-            } catch (ReflectiveOperationException | LinkageError | SecurityException e) {
-                throw new IllegalStateException("加载 Packer 类失败: " + className, e);
+                @SuppressWarnings("unchecked")
+                Class<? extends Packer> packerType = (Class<? extends Packer>) clazz;
+                packerTypes.add(packerType);
+            } catch (ClassNotFoundException | LinkageError | SecurityException e) {
+                failures.put(className, failureMessage(e));
             }
         }
 
-        return packers;
+        return new ScanResult(packerTypes, failures);
+    }
+
+    private static String failureMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return throwable.getClass().getName()
+                + (message == null || message.trim().isEmpty() ? "" : ": " + message);
+    }
+
+    static final class ScanResult {
+        private final List<Class<? extends Packer>> packerTypes;
+        private final Map<String, String> failures;
+
+        private ScanResult(List<Class<? extends Packer>> packerTypes,
+                           Map<String, String> failures) {
+            this.packerTypes = Collections.unmodifiableList(
+                    new ArrayList<Class<? extends Packer>>(packerTypes));
+            this.failures = Collections.unmodifiableMap(
+                    new LinkedHashMap<String, String>(failures));
+        }
+
+        List<Class<? extends Packer>> getPackerTypes() {
+            return packerTypes;
+        }
+
+        Map<String, String> getFailures() {
+            return failures;
+        }
     }
 
     /**

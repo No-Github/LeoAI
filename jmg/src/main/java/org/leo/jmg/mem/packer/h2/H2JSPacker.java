@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "H2JS", group = "H2", order = 2)
+@PackerMeta(name = "H2JS", group = "H2", order = 2, dependencies = "DefaultScriptEngine")
 public class H2JSPacker implements Packer {
     String template = "jdbc:h2:mem:a;init=CREATE TRIGGER a BEFORE SELECT ON INFORMATION_SCHEMA.TABLES AS $$//javascript\n{{script}}$$";
 
@@ -15,4 +15,3 @@ public class H2JSPacker implements Packer {
         return template.replace("{{script}}", script.replaceAll(";", "\\\\;"));
     }
 }
-

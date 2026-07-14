@@ -263,6 +263,11 @@ public class ShellGenerator {
         if (packer == null) {
             throw new IllegalArgumentException("不支持的 packerType: " + packerType);
         }
+        PackerRegistry.validateCompatibility(
+                packerType,
+                config.getTargetJavaVersion(),
+                config.isByPassJavaModule()
+        );
 
         byte[] injectorClass = generateInjector();
         // generateInjector() 已将最终类名写回 config，直接读取，避免二次生成不同随机名
@@ -292,4 +297,3 @@ public class ShellGenerator {
         return config;
     }
 }
-

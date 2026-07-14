@@ -64,6 +64,8 @@ public class ShellGenerator {
                     JavassistUtil.addMethod(ctClass, "getResponseFromRequest", methodBody);
                 }
 
+                JavassistUtil.applyServletNamespace(ctClass, config.getEffectiveServletNamespace());
+
                 // 输出并做一次瘦身
                 byte[] bytes = ctClass.toBytecode();
                 return ClassFileMinimizer.transform(bytes);
@@ -100,4 +102,3 @@ public class ShellGenerator {
                 .replace("\n", "\\n");
     }
 }
-

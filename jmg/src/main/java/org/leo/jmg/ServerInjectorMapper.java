@@ -248,6 +248,15 @@ public class ServerInjectorMapper {
         return result;
     }
 
+    /** 支持的 Servlet API 命名空间模式。 */
+    public static List<String> getSupportedServletNamespaces() {
+        List<String> result = new ArrayList<String>();
+        for (ServletNamespace namespace : ServletNamespace.values()) {
+            result.add(namespace.getValue());
+        }
+        return result;
+    }
+
     /**
      * 打包器类型的层级结构，供前端分组展示。
      * <p>

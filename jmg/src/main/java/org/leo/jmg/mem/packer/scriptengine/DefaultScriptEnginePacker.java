@@ -2,11 +2,18 @@ package org.leo.jmg.mem.packer.scriptengine;
 
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
+import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.TemplateRenderer;
 import org.leo.jmg.mem.packer.Util;
 
-@PackerMeta(name = "DefaultScriptEngine", group = "ScriptEngine", order = 1)
+@PackerMeta(
+        name = "DefaultScriptEngine",
+        group = "ScriptEngine",
+        order = 1,
+        requiredCapabilities = PackerCapability.JAVASCRIPT_ENGINE,
+        requiredClasses = "javax.script.ScriptEngineManager"
+)
 public class DefaultScriptEnginePacker implements Packer {
     private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngine.js");
     private final String jsBypassModuleTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBypassModule.js");

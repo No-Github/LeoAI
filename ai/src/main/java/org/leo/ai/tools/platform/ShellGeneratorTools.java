@@ -12,7 +12,9 @@ import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
+import org.leo.jmg.TargetJavaVersion;
 import org.leo.jmg.mem.packer.PackerRegistry;
+import org.leo.jmg.mem.packer.PackerCompatibilityResult;
 import org.leo.jmg.mem.packer.Util;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.service.PuppetService;
@@ -87,13 +89,17 @@ public class ShellGeneratorTools {
     // ── 元数据查询 ──────────────────────────────────────────────────────────────
 
     @Tool("获取脚本生成器元数据：所有支持的服务器类型（serverType）、注入器形态（shellType）、" +
-          "打包器类型（packerType）及分组层级、各 Packer 支持的混淆步骤 ID，以及全量 JSP 混淆步骤描述列表。" +
+          "打包器类型（packerType）及分组层级、目标能力要求、Servlet 命名空间、各 Packer 支持的混淆步骤 ID，以及全量 JSP 混淆步骤描述列表。" +
           "生成 WebShell 或内存马前，调用此工具确认合法参数范围。")
     public Map<String, Object> getShellGeneratorMeta() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("serverInjectorTypes", ServerInjectorMapper.getAllServerInjectorMapAsString());
         data.put("packerTypes", ServerInjectorMapper.getSupportedPackerTypesHierarchy());
         data.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
+        data.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
+        data.put("packerAvailability", PackerRegistry.getAvailabilityMap());
+        data.put("targetJavaVersions", targetJavaVersions());
+        data.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
         data.put("obfuscationSteps", JspObfuscationPipeline.getStepDescriptors());
         return data;
     }
@@ -193,6 +199,8 @@ public class ShellGeneratorTools {
           "shellType：JSP 或 JSPX，必填。" +
           "coreClassName：核心类名，留空自动生成。" +
           "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
+          "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto。" +
+          "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）。" +
           "respCode：响应状态码，默认 200。" +
           "jspObfuscationSteps：混淆步骤 ID 有序列表，null 使用默认策略，空列表不混淆。")
     public Map<String, Object> generateWebShell(
@@ -201,6 +209,8 @@ public class ShellGeneratorTools {
             String shellType,
             String coreClassName,
             String protocol,
+            String targetJavaVersion,
+            String servletNamespace,
             Integer respCode,
             List<String> jspObfuscationSteps) throws Exception {
         Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
@@ -216,6 +226,8 @@ public class ShellGeneratorTools {
                 .respCode(respCode != null ? respCode : 200);
 
         if (!isBlank(protocol))      builder.protocol(protocol.trim());
+        if (!isBlank(targetJavaVersion)) builder.targetJavaVersion(targetJavaVersion.trim());
+        if (!isBlank(servletNamespace)) builder.servletNamespace(servletNamespace.trim());
         if (!isBlank(coreClassName)) builder.coreClassName(coreClassName.trim());
         if (jspObfuscationSteps != null) builder.jspObfuscationSteps(jspObfuscationSteps);
 
@@ -231,6 +243,8 @@ public class ShellGeneratorTools {
         meta.put("type",          shellTypeUpper);
         meta.put("coreClassName", config.getCoreClassName());
         meta.put("protocol",      config.getProtocol());
+        meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+        meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
         meta.put("lines",         shell.split("\n").length);
         meta.put("chars",         shell.length());
 
@@ -259,6 +273,8 @@ public class ShellGeneratorTools {
           "shellType：注入器形态，必填，可通过 getShellGeneratorMeta 获取。" +
           "packerType：打包器类型，必填，可通过 getShellGeneratorMeta 获取。" +
           "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
+          "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto；" +
+          "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）；" +
           "urlPattern：URL 映射模式，默认 /*。" +
           "coreClassName / injectorClassName / shellClassName：留空自动生成随机类名。" +
           "isAbstractTranslet：默认 false。byPassJavaModule：默认 false。respCode：默认 200。" +
@@ -273,6 +289,8 @@ public class ShellGeneratorTools {
             String shellType,
             String packerType,
             String protocol,
+            String targetJavaVersion,
+            String servletNamespace,
             String urlPattern,
             String coreClassName,
             String injectorClassName,
@@ -297,6 +315,8 @@ public class ShellGeneratorTools {
                 .respCode(respCode != null ? respCode : 200);
 
         if (!isBlank(protocol))          builder.protocol(protocol.trim());
+        if (!isBlank(targetJavaVersion)) builder.targetJavaVersion(targetJavaVersion.trim());
+        if (!isBlank(servletNamespace))  builder.servletNamespace(servletNamespace.trim());
         if (byPassJavaModule != null)    builder.byPassJavaModule(byPassJavaModule);
         if (jspObfuscationSteps != null) builder.jspObfuscationSteps(jspObfuscationSteps);
         if (!isBlank(customJspTemplate)) builder.customJspTemplate(customJspTemplate.trim());
@@ -311,6 +331,14 @@ public class ShellGeneratorTools {
         ShellGeneratorConfig config = builder.build();
         ShellGenerator generator = new ShellGenerator(config);
         String code = generator.generateFormattedInjector();
+        PackerCompatibilityResult compatibility = PackerRegistry.evaluateCompatibility(
+                config.getPackerType(),
+                config.getTargetJavaVersion(),
+                config.isByPassJavaModule()
+        );
+        java.util.ArrayList<String> compatibilityWarnings =
+                new java.util.ArrayList<String>(compatibility.getWarnings());
+        compatibilityWarnings.addAll(config.getCompatibilityWarnings());
 
         // 摘要（不含完整代码）
         Map<String, Object> meta = new LinkedHashMap<>();
@@ -323,6 +351,9 @@ public class ShellGeneratorTools {
         meta.put("urlPattern",        config.getUrlPattern());
         meta.put("isAbstractTranslet", config.isAbstractTranslet());
         meta.put("byPassJavaModule",  config.isByPassJavaModule());
+        meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+        meta.put("compatibilityWarnings", compatibilityWarnings);
+        meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
         meta.put("headerConfig",      headerName + " : " + headerValue);
         meta.put("templateMutated",   !isBlank(customJspTemplate));
         meta.put("lines",             code.split("\n").length);
@@ -412,5 +443,13 @@ public class ShellGeneratorTools {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private List<String> targetJavaVersions() {
+        java.util.ArrayList<String> values = new java.util.ArrayList<>();
+        for (TargetJavaVersion version : TargetJavaVersion.values()) {
+            values.add(version.getValue());
+        }
+        return values;
     }
 }

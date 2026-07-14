@@ -2,6 +2,7 @@ package org.leo.jmg.mem.packer.scriptengine;
 
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
+import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.TemplateRenderer;
@@ -11,7 +12,13 @@ import java.util.Collections;
 
 import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scriptToSingleLine;
 
-@PackerMeta(name = "ScriptEngineBigInteger", group = "ScriptEngine", order = 3)
+@PackerMeta(
+        name = "ScriptEngineBigInteger",
+        group = "ScriptEngine",
+        order = 3,
+        requiredCapabilities = PackerCapability.JAVASCRIPT_ENGINE,
+        requiredClasses = "javax.script.ScriptEngineManager"
+)
 public class ScriptEngineBigIntegerPacker implements Packer {
     private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBigInteger.js");
 

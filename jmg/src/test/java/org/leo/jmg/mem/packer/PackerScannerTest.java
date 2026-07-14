@@ -29,16 +29,17 @@ class PackerScannerTest {
 
     @Test
     void discoversAnnotatedTopLevelPackers() {
-        List<Packer> packers = PackerScanner.scan();
+        PackerScanner.ScanResult result = PackerScanner.scan();
 
         boolean found = false;
-        for (Packer packer : packers) {
-            if (packer instanceof DefaultBase64Packer) {
+        for (Class<? extends Packer> packerType : result.getPackerTypes()) {
+            if (packerType.equals(DefaultBase64Packer.class)) {
                 found = true;
                 break;
             }
         }
         assertTrue(found, "未扫描到 DefaultBase64Packer");
+        assertTrue(result.getFailures().isEmpty(), "扫描不应产生单类加载失败");
     }
 
     @Test

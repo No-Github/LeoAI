@@ -11,7 +11,7 @@
     }
     java.lang.reflect.Method {{VAR:defMethod}} = null;
     for (java.lang.reflect.Method {{VAR:m}} : ClassLoader.class.getDeclaredMethods()) {
-        if ({{VAR:m}}.getParameterCount() == 3
+        if ({{VAR:m}}.getParameterTypes().length == 3
                 && {{VAR:m}}.getParameterTypes()[0] == byte[].class
                 && {{VAR:m}}.getParameterTypes()[1] == int.class
                 && {{VAR:m}}.getParameterTypes()[2] == int.class) {

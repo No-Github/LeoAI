@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "JXPathScriptEngine", group = "JXPath", order = 1)
+@PackerMeta(name = "JXPathScriptEngine", group = "JXPath", order = 1, dependencies = "ScriptEngineNoSquareBrackets")
 public class JXPathScriptEnginePacker implements Packer {
     String template = "eval(getEngineByName(javax.script.ScriptEngineManager.new(), 'js'), '{{script}}')";
 

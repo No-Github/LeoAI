@@ -6,8 +6,10 @@ import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
+import org.leo.jmg.TargetJavaVersion;
 import org.leo.core.util.ApiResponse;
 import org.leo.jmg.mem.packer.PackerRegistry;
+import org.leo.jmg.mem.packer.PackerCompatibilityResult;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.service.shell.ShellResultStore;
 import org.leo.web.util.ControllerUtil;
@@ -80,6 +82,10 @@ public class ShellGeneratorController {
 
         // 每个 packer 声明的混淆步骤 ID 列表（空列表表示不支持混淆层配置）
         result.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
+        result.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
+        result.put("packerAvailability", PackerRegistry.getAvailabilityMap());
+        result.put("targetJavaVersions", getTargetJavaVersions());
+        result.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
 
         return ApiResponse.success(result);
     }
@@ -121,6 +127,8 @@ public class ShellGeneratorController {
             // 获取可选参数
             String coreClassName = ControllerUtil.getOptionalStringParam(params, "coreClassName");
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
+            String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
+            String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
             Integer respCode = getOptionalIntegerParam(params, "respCode");
             if (respCode == null) {
                 respCode = 200;
@@ -133,6 +141,12 @@ public class ShellGeneratorController {
             // 设置传输协议（如果提供）
             if (protocol != null && !protocol.isBlank()) {
                 configBuilder.protocol(protocol);
+            }
+            if (targetJavaVersion != null && !targetJavaVersion.isBlank()) {
+                configBuilder.targetJavaVersion(targetJavaVersion);
+            }
+            if (servletNamespace != null && !servletNamespace.isBlank()) {
+                configBuilder.servletNamespace(servletNamespace);
             }
 
             if (coreClassName != null && !coreClassName.isBlank()) {
@@ -161,6 +175,8 @@ public class ShellGeneratorController {
             data.put("type", shellTypeUpper);
             data.put("coreClassName", config.getCoreClassName());
             data.put("protocol", config.getProtocol());
+            data.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+            data.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
 
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
@@ -243,6 +259,15 @@ public class ShellGeneratorController {
                 configBuilder.byPassJavaModule(byPassJavaModule);
             }
 
+            String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
+            if (targetJavaVersion != null && !targetJavaVersion.isBlank()) {
+                configBuilder.targetJavaVersion(targetJavaVersion);
+            }
+            String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
+            if (servletNamespace != null && !servletNamespace.isBlank()) {
+                configBuilder.servletNamespace(servletNamespace);
+            }
+
             List<String> jspObfuscationSteps = getOptionalStringListParam(params, "jspObfuscationSteps");
             // null = 字段未发送（使用默认预设）；空列表 = 用户主动禁用全部，也需设置
             if (jspObfuscationSteps != null) {
@@ -269,6 +294,13 @@ public class ShellGeneratorController {
             ShellGenerator generator = new ShellGenerator(config);
 
             String packed = generator.generateFormattedInjector();
+            PackerCompatibilityResult compatibility = PackerRegistry.evaluateCompatibility(
+                    config.getPackerType(),
+                    config.getTargetJavaVersion(),
+                    config.isByPassJavaModule()
+            );
+            List<String> compatibilityWarnings = new ArrayList<String>(compatibility.getWarnings());
+            compatibilityWarnings.addAll(config.getCompatibilityWarnings());
 
             HashMap<String, Object> data = new HashMap<>();
             data.put("code", packed);
@@ -281,6 +313,9 @@ public class ShellGeneratorController {
             data.put("urlPattern", config.getUrlPattern());
             data.put("isAbstractTranslet", config.isAbstractTranslet());
             data.put("byPassJavaModule", config.isByPassJavaModule());
+            data.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
+            data.put("compatibilityWarnings", compatibilityWarnings);
+            data.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
             data.put("headerConfig",headerName+" : "+headerValue);
 
             return ApiResponse.success(data);
@@ -366,5 +401,13 @@ public class ShellGeneratorController {
             return false;
         }
         return null;
+    }
+
+    private static List<String> getTargetJavaVersions() {
+        List<String> versions = new ArrayList<String>();
+        for (TargetJavaVersion version : TargetJavaVersion.values()) {
+            versions.add(version.getValue());
+        }
+        return versions;
     }
 }

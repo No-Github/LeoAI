@@ -484,7 +484,8 @@ public class Util {
      * </ol>
      * <p>
      * helper 签名：{@code private static String helperName(String s, int k)}，
-     * 方法名每次随机生成，消除固定特征。内部使用 {@code java.util.Base64}（Java 8+）。
+     * 方法名每次随机生成，消除固定特征。运行时优先反射使用 Java 8 Base64，
+     * 并为 JDK 6/7 回退到 DatatypeConverter 或 sun.misc 编解码器。
      * <p>
      * 建议在 {@link #chunkPayload} 之前执行，使后续分块步骤能进一步拆散 XOR 后的字符串。
      *
@@ -499,7 +500,10 @@ public class Util {
 
         ThreadLocalRandom random = ThreadLocalRandom.current();
         int key = 1 + random.nextInt(126); // XOR 密钥：1-126
-        String methodName = ClassNameGenerator.randomFieldName(new HashSet<String>());
+        Set<String> helperNames = new HashSet<String>();
+        String methodName = ClassNameGenerator.randomFieldName(helperNames);
+        String decodeMethodName = ClassNameGenerator.randomFieldName(helperNames);
+        String encodeMethodName = ClassNameGenerator.randomFieldName(helperNames);
 
         // 替换所有符合条件的 base64 payload
         m.reset();
@@ -521,12 +525,31 @@ public class Util {
 
         // 构造 helper 方法：base64 解码 → XOR 还原 → 重新 base64 编码，返回原始 base64 字符串
         String helperDecl =
-            "private static String " + methodName + "(String s,int k){"
-            + "try{"
-            + "byte[] b=java.util.Base64.getDecoder().decode(s);"
+            "private static byte[] " + decodeMethodName + "(String s)throws Exception{"
+            + "try{Class c=Class.forName(\"java.util.Base64\");"
+            + "Object d=c.getMethod(\"getDecoder\",new Class[0]).invoke(null,new Object[0]);"
+            + "return(byte[])d.getClass().getMethod(\"decode\",new Class[]{String.class}).invoke(d,new Object[]{s});"
+            + "}catch(Throwable e){}"
+            + "try{Class c=Class.forName(\"javax.xml.bind.DatatypeConverter\");"
+            + "return(byte[])c.getMethod(\"parseBase64Binary\",new Class[]{String.class}).invoke(null,new Object[]{s});"
+            + "}catch(Throwable e){}"
+            + "Class c=Class.forName(\"sun.misc.BASE64Decoder\");Object d=c.newInstance();"
+            + "return(byte[])c.getMethod(\"decodeBuffer\",new Class[]{String.class}).invoke(d,new Object[]{s});}"
+            + "private static String " + encodeMethodName + "(byte[] b)throws Exception{"
+            + "try{Class c=Class.forName(\"java.util.Base64\");"
+            + "Object e=c.getMethod(\"getEncoder\",new Class[0]).invoke(null,new Object[0]);"
+            + "return(String)e.getClass().getMethod(\"encodeToString\",new Class[]{byte[].class}).invoke(e,new Object[]{b});"
+            + "}catch(Throwable e){}"
+            + "try{Class c=Class.forName(\"javax.xml.bind.DatatypeConverter\");"
+            + "return(String)c.getMethod(\"printBase64Binary\",new Class[]{byte[].class}).invoke(null,new Object[]{b});"
+            + "}catch(Throwable e){}"
+            + "Class c=Class.forName(\"sun.misc.BASE64Encoder\");Object e=c.newInstance();"
+            + "return(String)c.getMethod(\"encode\",new Class[]{byte[].class}).invoke(e,new Object[]{b});}"
+            + "private static String " + methodName + "(String s,int k){try{"
+            + "byte[] b=" + decodeMethodName + "(s);"
             + "for(int i=0;i<b.length;i++)b[i]=(byte)(b[i]^k);"
-            + "return java.util.Base64.getEncoder().encodeToString(b);"
-            + "}catch(Exception e){return s;}}";
+            + "return " + encodeMethodName + "(b);"
+            + "}catch(Throwable e){return s;}}";
 
         // 注入到声明区块（helper 仅含 ASCII，无需强制 UTF-8）
         return injectHelperDecl(code, helperDecl, false);
@@ -1102,4 +1125,3 @@ public class Util {
         return code;
     }
 }
-

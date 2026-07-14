@@ -54,6 +54,35 @@ class ShellGeneratorConfigTest {
                 () -> config.getJspObfuscationSteps().clear());
     }
 
+    @Test
+    void parsesExplicitTargetJavaVersionsAndDefaultsToAuto() {
+        assertEquals(TargetJavaVersion.AUTO, builder().build().getTargetJavaVersion());
+        assertEquals(TargetJavaVersion.JDK_6,
+                builder().targetJavaVersion("1.6").build().getTargetJavaVersion());
+        assertEquals(TargetJavaVersion.JDK_8,
+                builder().targetJavaVersion("jdk_8").build().getTargetJavaVersion());
+        assertEquals(TargetJavaVersion.JDK_9_PLUS,
+                builder().targetJavaVersion("11").build().getTargetJavaVersion());
+        assertEquals(TargetJavaVersion.JDK_17_PLUS,
+                builder().targetJavaVersion("17+").build().getTargetJavaVersion());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().targetJavaVersion("5"));
+    }
+
+    @Test
+    void parsesServletNamespacesAndKeepsLegacyDefault() {
+        assertEquals(ServletNamespace.AUTO, builder().build().getServletNamespace());
+        assertEquals(ServletNamespace.JAVAX, builder().build().getEffectiveServletNamespace());
+        assertEquals(ServletNamespace.JAKARTA,
+                builder().servletNamespace("jakarta").build().getEffectiveServletNamespace());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().servletNamespace("unsupported"));
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().servletNamespace("jakarta").targetJavaVersion("7").build().validate());
+        assertEquals(1, builder().servletNamespace("jakarta").build()
+                .getCompatibilityWarnings().size());
+    }
+
     private ShellGeneratorConfig.Builder builder() {
         return ShellGeneratorConfig.builder(new Disguise(), new Disguise());
     }

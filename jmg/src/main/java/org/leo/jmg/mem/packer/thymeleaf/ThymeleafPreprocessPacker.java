@@ -13,7 +13,7 @@ import org.leo.jmg.mem.packer.PackerRegistry;
  *
  * @author LeoSpring
  */
-@PackerMeta(name = "ThymeleafPreprocess", group = "Thymeleaf", order = 2)
+@PackerMeta(name = "ThymeleafPreprocess", group = "Thymeleaf", order = 2, dependencies = "DefaultScriptEngine")
 public class ThymeleafPreprocessPacker implements Packer {
 
     /**

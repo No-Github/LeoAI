@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "GroovyScriptEngine", group = "Groovy", order = 2)
+@PackerMeta(name = "GroovyScriptEngine", group = "Groovy", order = 2, dependencies = "DefaultScriptEngine")
 public class GroovyScriptEnginePacker implements Packer {
     String template = "new javax.script.ScriptEngineManager().getEngineByName('js').eval('{{script}}')";
 

@@ -31,6 +31,8 @@ public class ShellGeneratorConfig {
     private String serverType;
     private String shellType;
     private String packerType;
+    private TargetJavaVersion targetJavaVersion = TargetJavaVersion.AUTO;
+    private ServletNamespace servletNamespace = ServletNamespace.AUTO;
 
     // 内存马相关配置
     private String headerName;
@@ -279,6 +281,32 @@ public class ShellGeneratorConfig {
             return this;
         }
 
+        /** 设置生成物预期运行的 Java 版本；默认 AUTO 保持原有行为。 */
+        public Builder targetJavaVersion(TargetJavaVersion targetJavaVersion) {
+            config.targetJavaVersion = targetJavaVersion == null
+                    ? TargetJavaVersion.AUTO
+                    : targetJavaVersion;
+            return this;
+        }
+
+        /** 接受 API 字符串形式：auto、6、7、8、9+、17+。 */
+        public Builder targetJavaVersion(String targetJavaVersion) {
+            return targetJavaVersion(TargetJavaVersion.parse(targetJavaVersion));
+        }
+
+        /** 设置生成物使用的 Servlet API 命名空间。 */
+        public Builder servletNamespace(ServletNamespace servletNamespace) {
+            config.servletNamespace = servletNamespace == null
+                    ? ServletNamespace.AUTO
+                    : servletNamespace;
+            return this;
+        }
+
+        /** 接受 API 字符串形式：auto、javax、jakarta。 */
+        public Builder servletNamespace(String servletNamespace) {
+            return servletNamespace(ServletNamespace.parse(servletNamespace));
+        }
+
         public Builder byPassJavaModule(boolean byPassJavaModule) {
             config.byPassJavaModule = byPassJavaModule;
             return this;
@@ -368,6 +396,18 @@ public class ShellGeneratorConfig {
         return packerType;
     }
 
+    public TargetJavaVersion getTargetJavaVersion() {
+        return targetJavaVersion;
+    }
+
+    public ServletNamespace getServletNamespace() {
+        return servletNamespace;
+    }
+
+    public ServletNamespace getEffectiveServletNamespace() {
+        return servletNamespace.resolve();
+    }
+
     public boolean isByPassJavaModule() {
         return byPassJavaModule;
     }
@@ -424,6 +464,16 @@ public class ShellGeneratorConfig {
         return fieldComponents;
     }
 
+    /** 返回不阻断生成、但需要调用方展示的目标环境警告。 */
+    public List<String> getCompatibilityWarnings() {
+        if (getEffectiveServletNamespace() == ServletNamespace.JAKARTA
+                && targetJavaVersion.isAuto()) {
+            return Collections.singletonList(
+                    "Jakarta Servlet 需要 JDK 8+，auto 模式无法确认目标 JDK");
+        }
+        return Collections.emptyList();
+    }
+
     /**
      * 验证配置是否有效
      *
@@ -435,6 +485,12 @@ public class ShellGeneratorConfig {
         }
         if (respDisguise == null) {
             throw new IllegalArgumentException("respDisguise不能为空");
+        }
+        if (getEffectiveServletNamespace() == ServletNamespace.JAKARTA
+                && !targetJavaVersion.isAuto()
+                && targetJavaVersion.getMajor() < 8) {
+            throw new IllegalArgumentException("jakarta.servlet 最低要求 JDK 8，当前目标为 JDK "
+                    + targetJavaVersion.getValue());
         }
     }
 

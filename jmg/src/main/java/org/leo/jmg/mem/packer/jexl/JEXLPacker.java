@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "JEXL", order = 100)
+@PackerMeta(name = "JEXL", order = 100, dependencies = "DefaultScriptEngine")
 public class JEXLPacker implements Packer {
     String template = "''.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('js').eval('{{script}}')";
 
@@ -15,4 +15,3 @@ public class JEXLPacker implements Packer {
         return template.replace("{{script}}", script);
     }
 }
-

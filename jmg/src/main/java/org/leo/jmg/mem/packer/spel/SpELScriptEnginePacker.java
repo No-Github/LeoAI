@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "SpELScriptEngine", group = "SpEL", order = 1)
+@PackerMeta(name = "SpELScriptEngine", group = "SpEL", order = 1, dependencies = "DefaultScriptEngine")
 public class SpELScriptEnginePacker implements Packer {
     String template = "T(javax.script.ScriptEngineManager).newInstance().getEngineByName('js').eval('{{script}}')";
 

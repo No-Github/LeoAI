@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "OGNLScriptEngine", group = "Ognl", order = 1)
+@PackerMeta(name = "OGNLScriptEngine", group = "Ognl", order = 1, dependencies = "DefaultScriptEngine")
 public class OGNLScriptEnginePacker implements Packer {
     String template = "(new javax.script.ScriptEngineManager()).getEngineByName('js').eval('{{script}}')";
 

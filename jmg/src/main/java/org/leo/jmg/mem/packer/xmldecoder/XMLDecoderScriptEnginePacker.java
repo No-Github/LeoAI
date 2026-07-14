@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "XMLDecoderScriptEngine", group = "XmlDecoder", order = 1)
+@PackerMeta(name = "XMLDecoderScriptEngine", group = "XmlDecoder", order = 1, dependencies = "DefaultScriptEngine")
 public class XMLDecoderScriptEnginePacker implements Packer {
     String template = "<java>\n" +
             "    <object class=\"javax.script.ScriptEngineManager\">\n" +

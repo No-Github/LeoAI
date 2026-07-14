@@ -46,6 +46,27 @@ public @interface PackerMeta {
     boolean requiresAbstractTranslet() default false;
 
     /**
+     * 生成结果所需的最低目标 JDK 主版本。默认 6，表示实现应优先使用 JDK 6
+     * 可用的语法/API；高版本专用 Packer 必须显式声明。
+     */
+    int minTargetJava() default 6;
+
+    /**
+     * 该 Packer 直接依赖的其他 Packer 名称。注册中心会递归合并依赖项的能力要求。
+     */
+    String[] dependencies() default {};
+
+    /**
+     * 生成结果在目标运行环境中需要具备的能力。
+     */
+    PackerCapability[] requiredCapabilities() default {};
+
+    /**
+     * 目标环境中必须存在的类名，仅作为能力提示，不在生成器 JVM 中探测。
+     */
+    String[] requiredClasses() default {};
+
+    /**
      * 该 Packer 支持的 JSP/JSPX 混淆步骤 ID 列表，顺序即推荐执行顺序。
      * <p>
      * 步骤 ID 与 {@link org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline} 中的常量名对应：

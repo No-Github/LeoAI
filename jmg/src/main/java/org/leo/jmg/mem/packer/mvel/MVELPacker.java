@@ -5,7 +5,7 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 
-@PackerMeta(name = "MVEL", order = 100)
+@PackerMeta(name = "MVEL", order = 100, dependencies = "DefaultScriptEngine")
 public class MVELPacker implements Packer {
     String template = "new javax.script.ScriptEngineManager().getEngineByName('js').eval('{{script}}')";
 
