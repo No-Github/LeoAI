@@ -6,7 +6,9 @@ import org.leo.core.util.json.JsonUtil;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Disguise：编码/解码策略
@@ -17,6 +19,16 @@ public class Disguise {
     private String disguiseName;
     private String encodeBody;
     private String decodeBody;
+
+    /** Portable disguise schema. Legacy Java-only files deserialize as version 1. */
+    private Integer schemaVersion;
+    private Integer protocolVersion;
+
+    /** PHP function bodies. encode receives $payload; decode receives $body. */
+    private String phpEncodeBody;
+    private String phpDecodeBody;
+    private Set<String> supportedRuntimes;
+    private Map<String, Object> requirements;
 
     private Map<String, String> headers;
 
@@ -133,6 +145,7 @@ public class Disguise {
 
     public void setEncodeBody(String encodeBody) {
         this.encodeBody = encodeBody;
+        resetRuntimeHandler();
     }
 
     public String getDecodeBody() {
@@ -141,6 +154,78 @@ public class Disguise {
 
     public void setDecodeBody(String decodeBody) {
         this.decodeBody = decodeBody;
+        resetRuntimeHandler();
+    }
+
+    public int getSchemaVersion() {
+        return schemaVersion == null ? 1 : schemaVersion;
+    }
+
+    public void setSchemaVersion(Integer schemaVersion) {
+        this.schemaVersion = schemaVersion;
+    }
+
+    public int getProtocolVersion() {
+        return protocolVersion == null ? 1 : protocolVersion;
+    }
+
+    public void setProtocolVersion(Integer protocolVersion) {
+        this.protocolVersion = protocolVersion;
+    }
+
+    public String getPhpEncodeBody() {
+        return phpEncodeBody;
+    }
+
+    public void setPhpEncodeBody(String phpEncodeBody) {
+        this.phpEncodeBody = phpEncodeBody;
+    }
+
+    public String getPhpDecodeBody() {
+        return phpDecodeBody;
+    }
+
+    public void setPhpDecodeBody(String phpDecodeBody) {
+        this.phpDecodeBody = phpDecodeBody;
+    }
+
+    public Set<String> getSupportedRuntimes() {
+        return supportedRuntimes;
+    }
+
+    public void setSupportedRuntimes(Set<String> supportedRuntimes) {
+        this.supportedRuntimes = supportedRuntimes;
+    }
+
+    public Map<String, Object> getRequirements() {
+        return requirements == null ? new LinkedHashMap<>() : requirements;
+    }
+
+    public void setRequirements(Map<String, Object> requirements) {
+        this.requirements = requirements;
+    }
+
+    public boolean supportsRuntime(String runtime) {
+        if (runtime == null || runtime.isBlank()) return false;
+        if (supportedRuntimes != null && !supportedRuntimes.isEmpty()
+                && supportedRuntimes.stream().noneMatch(item -> runtime.equalsIgnoreCase(item))) {
+            return false;
+        }
+        if ("php".equalsIgnoreCase(runtime)) {
+            return phpEncodeBody != null && !phpEncodeBody.isBlank()
+                    && phpDecodeBody != null && !phpDecodeBody.isBlank()
+                    && encodeBody != null && !encodeBody.isBlank()
+                    && decodeBody != null && !decodeBody.isBlank();
+        }
+        return "java".equalsIgnoreCase(runtime)
+                && encodeBody != null && !encodeBody.isBlank()
+                && decodeBody != null && !decodeBody.isBlank();
+    }
+
+    private synchronized void resetRuntimeHandler() {
+        handlerClass = null;
+        encodeMethod = null;
+        decodeMethod = null;
     }
 
     public Map<String, String> getHeaders() {

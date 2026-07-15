@@ -1,0 +1,29 @@
+<?php
+/* Generated PHP wrapper: decode -> phpcore -> encode. PHP 5.6+. */
+
+{{WIRE_HELPERS}}
+
+{{REQUEST_DECODER}}
+
+{{RESPONSE_ENCODER}}
+
+{{PHP_CORE}}
+
+@error_reporting(0);
+@ini_set('display_errors', '0');
+try {
+    {{HEADER_GUARD}}
+    $body = file_get_contents('php://input');
+    if ($body === false || $body === '') throw new InvalidArgumentException();
+    $response = {{CORE_ENTRY}}(leo_request_decode($body));
+} catch (Exception $error) {
+    $response = ['code' => 500];
+} catch (Throwable $error) {
+    $response = ['code' => 500];
+}
+
+http_response_code({{RESPONSE_CODE}});
+{{RESPONSE_HEADERS}}
+try { echo leo_response_encode($response); }
+catch (Exception $error) { http_response_code(500); }
+catch (Throwable $error) { http_response_code(500); }

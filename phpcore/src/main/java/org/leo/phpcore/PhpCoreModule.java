@@ -7,12 +7,19 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.springframework.stereotype.Component;
+import org.leo.core.net.layer.HeaderNoiseStrategy;
+import org.leo.core.net.layer.PaddingStrategy;
+import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.util.json.JsonUtil;
+import org.leo.phpcore.puppet.PhpPuppetNode;
+import org.leo.phpcore.rpc.PhpRpcClient;
+import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 
 /**
- * PHP runtime integration module marker.
+ * PHP runtime integration module.
  *
- * <p>The module will contain the platform-side PHP node adapter, component
- * artifact resolver and target-side PHP templates. Keeping it separate from
+ * <p>The module contains the platform-side PHP node adapter, protocol client,
+ * generator, disguise validator and target-side PHP template. Keeping it separate from
  * {@code core} prevents runtime-specific source generation from leaking into
  * the shared protocol and capability contracts.
  */
@@ -21,7 +28,10 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
 
     public static final PuppetRuntime RUNTIME = PuppetRuntime.PHP;
 
-    public PhpCoreModule() {
+    private final PhpComponentArtifactRegistry componentRegistry;
+
+    public PhpCoreModule(PhpComponentArtifactRegistry componentRegistry) {
+        this.componentRegistry = componentRegistry;
     }
 
     @Override
@@ -31,13 +41,56 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
 
     @Override
     public boolean isReady() {
-        return false;
+        return true;
     }
 
     @Override
     public AbstractPuppetNode createNode(Puppet puppet,
                                          User user,
-                                         PuppetNodeCreationContext context) {
-        throw new IllegalStateException("PHP runtime module尚未完成节点实现");
+                                         PuppetNodeCreationContext context) throws Exception {
+        PuppetNodeCreationContext.TransportLayers layers = context.createTransportLayers(puppet);
+        if (layers.getRequestLayers().isEmpty() || layers.getResponseLayers().isEmpty()) {
+            throw new IllegalArgumentException("PHP Puppet 必须配置请求和响应伪装");
+        }
+        if (!layers.getRequestLayers().get(0).getDisguise().supportsRuntime("php")) {
+            throw new IllegalArgumentException("请求伪装不支持 PHP: "
+                    + layers.getRequestLayers().get(0).getDisguise().getDisguiseId());
+        }
+        if (!layers.getResponseLayers().get(layers.getResponseLayers().size() - 1)
+                .getDisguise().supportsRuntime("php")) {
+            throw new IllegalArgumentException("响应伪装不支持 PHP");
+        }
+
+        PhpRpcClient client = new PhpRpcClient(
+                context.createCommunication(puppet),
+                layers.getRequestLayers(), layers.getResponseLayers());
+        client.setMaxReqCount(puppet.getMaxReqCount());
+        applyStrategies(puppet, client);
+
+        PhpPuppetNode node = new PhpPuppetNode(client, componentRegistry);
+        node.setPuppet(puppet);
+        node.setUser(user);
+        return node;
+    }
+
+    private void applyStrategies(Puppet puppet, PhpRpcClient client) {
+        try {
+            if (puppet.getUrlStrategy() != null && !puppet.getUrlStrategy().isBlank()) {
+                client.setUrlStrategy((UrlStrategy) JsonUtil.fromJsonString(
+                        puppet.getUrlStrategy(), UrlStrategy.class));
+            }
+        } catch (Exception ignored) { }
+        try {
+            if (puppet.getPaddingStrategy() != null && !puppet.getPaddingStrategy().isBlank()) {
+                client.setPaddingStrategy((PaddingStrategy) JsonUtil.fromJsonString(
+                        puppet.getPaddingStrategy(), PaddingStrategy.class));
+            }
+        } catch (Exception ignored) { }
+        try {
+            if (puppet.getHeaderNoiseStrategy() != null && !puppet.getHeaderNoiseStrategy().isBlank()) {
+                client.setHeaderNoiseStrategy((HeaderNoiseStrategy) JsonUtil.fromJsonString(
+                        puppet.getHeaderNoiseStrategy(), HeaderNoiseStrategy.class));
+            }
+        } catch (Exception ignored) { }
     }
 }

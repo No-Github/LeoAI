@@ -30,8 +30,11 @@ public class ComponentController {
             List<String> loadedList = loaded == null ? new ArrayList<>() : new ArrayList<>(loaded);
             Collections.sort(loadedList);
 
-            // 扫描所有可用 .payload 组件
-            List<String> availableList = scanAvailableComponents();
+            // Runtime 可提供自己的动态制品列表；Java 旧节点继续扫描 .payload。
+            Set<String> runtimeAvailable = componentNode.getAvailableComponents();
+            List<String> availableList = runtimeAvailable == null || runtimeAvailable.isEmpty()
+                    ? scanAvailableComponents() : new ArrayList<>(runtimeAvailable);
+            Collections.sort(availableList);
 
             HashMap<String, Object> data = new HashMap<>();
             data.put("components", loadedList);

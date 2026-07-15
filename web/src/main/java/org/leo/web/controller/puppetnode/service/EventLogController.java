@@ -84,9 +84,13 @@ public class EventLogController {
         if (ControllerUtil.getStr(params, "source") == null) {
             return ApiResponse.badRequest("source 参数必填(文件路径)");
         }
+        int lines = Math.max(0, Math.min(100, ControllerUtil.getInt(params, "lines", 0)));
+        boolean fromTail = ControllerUtil.getBool(params, "tail");
         return ControllerUtil.handleCapabilityCall(params, EventLogCapable.class, "获取元数据失败", node -> node.metaEventLog(
                 ControllerUtil.getStr(params, "source"),
-                ControllerUtil.getStr(params, "format")));
+                ControllerUtil.getStr(params, "format"),
+                lines,
+                fromTail));
     }
 
     @RequestMapping(value = "/stats", method = RequestMethod.POST)

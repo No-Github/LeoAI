@@ -47,6 +47,7 @@ public final class PuppetNodeCapabilityRegistry {
             descriptor("componentInvoke", ComponentInvokeCapable.class),
             descriptor("componentManage", ComponentManageCapable.class),
             descriptor("catalinaManage", CatalinaManageCapable.class),
+            descriptor("plugin", PluginCapable.class),
             descriptor("javaPlugin", JavaPluginCapable.class),
             descriptor("credentialHarvest", CredentialHarvestCapable.class)
     );

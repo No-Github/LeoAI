@@ -55,6 +55,12 @@ public class PluginManageController {
     private static final String PARAM_PLUGIN_TYPE = "pluginType";
     private static final String PARAM_PLUGIN_ID = "pluginId";
     private static final String PARAM_REMARK = "remark";
+    private static final String PARAM_RUNTIME = "runtime";
+    private static final String PARAM_KIND = "kind";
+    private static final String PARAM_LANGUAGE = "language";
+    private static final String PARAM_ENTRYPOINT = "entrypoint";
+    private static final String PARAM_PARAMETER_SCHEMA = "parameterSchema";
+    private static final String PARAM_RISK_LEVEL = "riskLevel";
 
     /** 字节码插件类型：bytecode 字段是 JVM .class，需经反编译校验。 */
     private static final String PLUGIN_TYPE_JAVA = "java";
@@ -128,6 +134,7 @@ public class PluginManageController {
         componentPlugin.setVersion((String) params.get(PARAM_VERSION));
         componentPlugin.setParamsDemo((String) params.get(PARAM_PARAMS_DEMO));
         componentPlugin.setPluginType((String) params.get(PARAM_PLUGIN_TYPE));
+        applyRuntimeMetadata(params, componentPlugin);
 
         // 字节码插件走 bytecode + 反编译校验，脚本插件走 scriptContent 文本字节
         boolean isJava = isJavaPlugin(componentPlugin.getPluginType());
@@ -539,6 +546,36 @@ public class PluginManageController {
         if (params.containsKey(PARAM_REMARK)) {
             plugin.setRemark((String) params.get(PARAM_REMARK));
         }
+        applyRuntimeMetadata(params, plugin);
+    }
+
+    private void applyRuntimeMetadata(Map<String, Object> params, Plugin plugin) {
+        if (params.containsKey(PARAM_RUNTIME)) plugin.setRuntime(text(params.get(PARAM_RUNTIME)));
+        if (params.containsKey(PARAM_KIND)) plugin.setKind(text(params.get(PARAM_KIND)));
+        if (params.containsKey(PARAM_LANGUAGE)) plugin.setLanguage(text(params.get(PARAM_LANGUAGE)));
+        if (params.containsKey(PARAM_ENTRYPOINT)) plugin.setEntrypoint(text(params.get(PARAM_ENTRYPOINT)));
+        if (params.containsKey(PARAM_PARAMETER_SCHEMA)) {
+            plugin.setParameterSchema(text(params.get(PARAM_PARAMETER_SCHEMA)));
+        }
+        if (params.containsKey(PARAM_RISK_LEVEL)) plugin.setRiskLevel(text(params.get(PARAM_RISK_LEVEL)));
+        if (params.containsKey("requirements") && params.get("requirements") instanceof Map<?, ?> raw) {
+            Map<String, Object> requirements = new LinkedHashMap<>();
+            raw.forEach((key, value) -> requirements.put(String.valueOf(key), value));
+            plugin.setRequirements(requirements);
+        }
+        if (plugin.getRuntime() == null || plugin.getRuntime().isBlank()) {
+            plugin.setRuntime("php".equalsIgnoreCase(plugin.getPluginType()) ? "php" : "java");
+        }
+        if (plugin.getLanguage() == null || plugin.getLanguage().isBlank()) {
+            plugin.setLanguage(plugin.getPluginType());
+        }
+        if (plugin.getKind() == null || plugin.getKind().isBlank()) {
+            plugin.setKind(isJavaPlugin(plugin.getPluginType()) ? "bytecode" : "source");
+        }
+    }
+
+    private String text(Object value) {
+        return value == null ? null : String.valueOf(value).trim();
     }
     
     /**

@@ -26,6 +26,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/platform/disguise-manager")
@@ -111,6 +115,53 @@ public class DisguiseManagerController {
         } catch (Exception e) {
             return ApiResponse.error("测试过程中发生异常: " + e.getMessage());
         }
+    }
+
+    /** Validate the Java implementation and every declared runtime implementation. */
+    @RequestMapping(value = "/test-disguises/runtime", method = RequestMethod.POST)
+    @AdminOnlyEndpoint
+    public HashMap<String, Object> testRuntimeDisguise(@RequestBody HashMap<String, Object> params,
+                                                       HttpServletRequest request) {
+        if (getCurrentUser(request) == null) return ApiResponse.unauthorized("用户未登录");
+        try {
+            Disguise disguise = new Disguise();
+            disguise.setEncodeBody(ControllerUtil.getRequiredStringParam(params, "encodeBody"));
+            disguise.setDecodeBody(ControllerUtil.getRequiredStringParam(params, "decodeBody"));
+            disguise.setPhpEncodeBody(optionalText(params.get("phpEncodeBody")));
+            disguise.setPhpDecodeBody(optionalText(params.get("phpDecodeBody")));
+            disguise.setSchemaVersion(integerValue(params.get("schemaVersion"), 2));
+            disguise.setProtocolVersion(integerValue(params.get("protocolVersion"), 2));
+            disguise.setSupportedRuntimes(runtimeSet(params.get("supportedRuntimes")));
+            if (params.get("requirements") instanceof Map<?, ?> raw) {
+                Map<String, Object> requirements = new LinkedHashMap<>();
+                raw.forEach((key, value) -> requirements.put(String.valueOf(key), value));
+                disguise.setRequirements(requirements);
+            }
+            return ApiResponse.success(disguiseService.validateDisguise(disguise));
+        } catch (IllegalArgumentException e) {
+            return toValidationResponse(e);
+        } catch (Exception e) {
+            return ApiResponse.error("运行时伪装测试失败: " + e.getMessage());
+        }
+    }
+
+    private String optionalText(Object value) {
+        return value == null || String.valueOf(value).isBlank() ? null : String.valueOf(value);
+    }
+
+    private int integerValue(Object value, int fallback) {
+        if (value instanceof Number number) return number.intValue();
+        try { return value == null ? fallback : Integer.parseInt(String.valueOf(value)); }
+        catch (NumberFormatException ignored) { return fallback; }
+    }
+
+    private Set<String> runtimeSet(Object raw) {
+        Set<String> result = new LinkedHashSet<>();
+        if (raw instanceof Iterable<?> iterable) {
+            for (Object item : iterable) if (item != null) result.add(String.valueOf(item).toLowerCase());
+        }
+        if (result.isEmpty()) result.add("java");
+        return result;
     }
 
     /**

@@ -1,7 +1,10 @@
 package org.leo.web.controller.platform.shell;
 
 import org.leo.core.entity.Disguise;
+import org.leo.core.generator.GeneratedArtifact;
+import org.leo.core.generator.GenerationRequest;
 import org.leo.core.manager.DisguiseManager;
+import org.leo.core.runtime.PuppetRuntime;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
@@ -11,6 +14,7 @@ import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.PackerCompatibilityResult;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.service.shell.ShellResultStore;
+import org.leo.service.generator.ScriptGeneratorService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Shell生成器控制器
@@ -38,6 +44,9 @@ public class ShellGeneratorController {
 
     @Autowired
     private ShellResultStore shellResultStore;
+
+    @Autowired
+    private ScriptGeneratorService scriptGeneratorService;
 
     /**
      * 取回 AI 工具生成的完整代码。
@@ -85,8 +94,46 @@ public class ShellGeneratorController {
         result.put("packerAvailability", PackerRegistry.getAvailabilityMap());
         result.put("targetJavaVersions", getTargetJavaVersions());
         result.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
+        result.put("runtimeGenerators", scriptGeneratorService.getMetadata());
 
         return ApiResponse.success(result);
+    }
+
+    /** Generate an artifact through a runtime-specific provider such as phpcore. */
+    @RequestMapping(value = "/generate/runtime", method = RequestMethod.POST)
+    public HashMap<String, Object> generateRuntimeArtifact(@RequestBody HashMap<String, Object> params) {
+        try {
+            PuppetRuntime runtime = PuppetRuntime.from(ControllerUtil.getRequiredStringParam(params, "runtime"));
+            if (runtime == PuppetRuntime.UNKNOWN) {
+                return ApiResponse.badRequest("runtime参数无效");
+            }
+            String artifactType = ControllerUtil.getRequiredStringParam(params, "artifactType");
+            String reqDisguiseId = ControllerUtil.getRequiredStringParam(params, "reqDisguiseId");
+            String respDisguiseId = ControllerUtil.getRequiredStringParam(params, "respDisguiseId");
+            Disguise requestDisguise = disguiseManager.getDisguiseById(reqDisguiseId);
+            Disguise responseDisguise = disguiseManager.getDisguiseById(respDisguiseId);
+            if (requestDisguise == null) return ApiResponse.badRequest("请求伪装器不存在: " + reqDisguiseId);
+            if (responseDisguise == null) return ApiResponse.badRequest("响应伪装器不存在: " + respDisguiseId);
+
+            Map<String, Object> options = new LinkedHashMap<>(params);
+            for (String key : List.of("runtime", "artifactType", "reqDisguiseId", "respDisguiseId")) {
+                options.remove(key);
+            }
+            GeneratedArtifact artifact = scriptGeneratorService.generate(new GenerationRequest(
+                    runtime, artifactType, requestDisguise, responseDisguise, options));
+
+            HashMap<String, Object> data = new HashMap<>();
+            data.put("content", artifact.getContent());
+            data.put("fileExtension", artifact.getFileExtension());
+            data.put("mediaType", artifact.getMediaType());
+            data.put("metadata", artifact.getMetadata());
+            data.put("warnings", artifact.getWarnings());
+            return ApiResponse.success(data);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        } catch (Exception e) {
+            return ApiResponse.error("生成运行时脚本失败: " + e.getMessage());
+        }
     }
 
     /**

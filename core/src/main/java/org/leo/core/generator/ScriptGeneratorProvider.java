@@ -1,0 +1,15 @@
+package org.leo.core.generator;
+
+import org.leo.core.runtime.PuppetRuntime;
+
+import java.util.Map;
+
+/** Equal-status generator SPI implemented by jmg and phpcore. */
+public interface ScriptGeneratorProvider {
+
+    PuppetRuntime getRuntime();
+
+    Map<String, Object> getMetadata();
+
+    GeneratedArtifact generate(GenerationRequest request) throws Exception;
+}

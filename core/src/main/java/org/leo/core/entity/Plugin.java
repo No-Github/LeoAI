@@ -2,6 +2,9 @@ package org.leo.core.entity;
 
 import org.leo.core.util.json.JsonUtil;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public class Plugin {
 
     private String pluginId;
@@ -9,6 +12,14 @@ public class Plugin {
     private String pluginDescription;
     private byte[] bytecode;
     private String pluginType;
+    private String runtime;
+    private String kind;
+    private String language;
+    private String entrypoint;
+    private String parameterSchema;
+    private String digest;
+    private String riskLevel;
+    private Map<String, Object> requirements;
     private String paramsDemo;
     private String version;
     private String createUserId;
@@ -58,6 +69,46 @@ public class Plugin {
 
     public void setPluginType(String pluginType) {
         this.pluginType = pluginType;
+    }
+
+    public String getRuntime() { return runtime; }
+
+    public void setRuntime(String runtime) { this.runtime = runtime; }
+
+    public String getKind() { return kind; }
+
+    public void setKind(String kind) { this.kind = kind; }
+
+    public String getLanguage() { return language; }
+
+    public void setLanguage(String language) { this.language = language; }
+
+    public String getEntrypoint() { return entrypoint; }
+
+    public void setEntrypoint(String entrypoint) { this.entrypoint = entrypoint; }
+
+    public String getParameterSchema() { return parameterSchema; }
+
+    public void setParameterSchema(String parameterSchema) { this.parameterSchema = parameterSchema; }
+
+    public String getDigest() { return digest; }
+
+    public void setDigest(String digest) { this.digest = digest; }
+
+    public String getRiskLevel() { return riskLevel; }
+
+    public void setRiskLevel(String riskLevel) { this.riskLevel = riskLevel; }
+
+    public Map<String, Object> getRequirements() {
+        return requirements == null ? new LinkedHashMap<>() : requirements;
+    }
+
+    public void setRequirements(Map<String, Object> requirements) { this.requirements = requirements; }
+
+    /** Legacy plugins infer runtime from pluginType. */
+    public String resolveRuntime() {
+        if (runtime != null && !runtime.isBlank()) return runtime.trim().toLowerCase();
+        return "php".equalsIgnoreCase(pluginType) ? "php" : "java";
     }
 
     public String getParamsDemo() {

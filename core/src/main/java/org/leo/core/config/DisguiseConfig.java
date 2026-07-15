@@ -9,6 +9,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 @Configuration
 public class DisguiseConfig {
@@ -31,7 +33,42 @@ public class DisguiseConfig {
         disguiseManager.init(vfsPath + "/disguise", pluginEncryptKey);
         disguiseManager.inStallDisguise(getInnerDisguise());
         disguiseManager.inStallDisguise(getInnerDefineBase64Disguise());
+        disguiseManager.inStallDisguise(getPortablePhpDisguise());
         return disguiseManager;
+    }
+
+    /** Built-in protocol-v2 disguise shared by the Java platform and generated PHP target. */
+    private Disguise getPortablePhpDisguise() {
+        Disguise disguise = new Disguise();
+        disguise.setDisguiseId("inner_PHP_JSON_Base64_1.0.0");
+        disguise.setDisguiseName("inner_PHP_JSON_Base64");
+        disguise.setSchemaVersion(2);
+        disguise.setProtocolVersion(2);
+        disguise.setSupportedRuntimes(Set.of("php"));
+        disguise.setHeaders(Map.of("Content-Type", "text/plain;charset=utf-8"));
+        disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
+        disguise.setCreateUserId("system");
+        disguise.setVersion("1.0.0");
+        disguise.setDescription("PHP 内置可移植伪装，使用规范 JSON、二进制类型标记与 Base64");
+        disguise.setRequirements(Map.of("php", Map.of("minVersion", "5.6", "extensions", Set.of("json"),
+                "functions", Set.of("base64_encode", "base64_decode", "json_encode", "json_decode"))));
+        disguise.setEncodeBody("public byte[] encode(java.util.HashMap params) throws Exception {\n" +
+                "    byte[] json = org.leo.core.util.json.PortableJsonCodec.encode(params);\n" +
+                "    return java.util.Base64.getEncoder().encode(json);\n" +
+                "}");
+        disguise.setDecodeBody("public java.util.HashMap decode(byte[] data) throws Exception {\n" +
+                "    byte[] json = java.util.Base64.getDecoder().decode(new String(data, java.nio.charset.StandardCharsets.UTF_8).replaceAll(\"\\\\s\", \"\"));\n" +
+                "    return new java.util.HashMap(org.leo.core.util.json.PortableJsonCodec.decode(json));\n" +
+                "}");
+        disguise.setPhpEncodeBody("$json = json_encode(leo_wire_encode($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);\n" +
+                "if ($json === false) { throw new RuntimeException('JSON encode failed: ' . json_last_error_msg()); }\n" +
+                "return base64_encode($json);");
+        disguise.setPhpDecodeBody("$json = base64_decode(preg_replace('/\\\\s+/', '', $body), true);\n" +
+                "if ($json === false) { throw new RuntimeException('Invalid base64 request'); }\n" +
+                "$decoded = json_decode($json, true);\n" +
+                "if (!is_array($decoded)) { throw new RuntimeException('Invalid JSON request: ' . json_last_error_msg()); }\n" +
+                "return leo_wire_decode($decoded);");
+        return disguise;
     }
 
     private Disguise getInnerDisguise(){

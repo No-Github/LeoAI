@@ -1,6 +1,7 @@
 package org.leo.service.disguise;
 
 import org.leo.core.config.LeoConfig;
+import org.leo.core.disguise.DisguiseRuntimeValidator;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.User;
 import org.leo.core.manager.DisguiseManager;
@@ -23,6 +24,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -34,10 +37,13 @@ public class DisguiseService {
     private static final String FILE_SUFFIX = ".disguise";
 
     private final DisguiseManager disguiseManager;
+    private final List<DisguiseRuntimeValidator> runtimeValidators;
 
     @Autowired
-    public DisguiseService(DisguiseManager disguiseManager) {
+    public DisguiseService(DisguiseManager disguiseManager,
+                           List<DisguiseRuntimeValidator> runtimeValidators) {
         this.disguiseManager = disguiseManager;
+        this.runtimeValidators = runtimeValidators == null ? List.of() : List.copyOf(runtimeValidators);
     }
 
     public void addDisguise(HashMap<String, Object> params, User user) throws Exception {
@@ -66,6 +72,7 @@ public class DisguiseService {
         disguise.setDisguiseName(disguiseName);
         disguise.setEncodeBody(encodeBody);
         disguise.setDecodeBody(decodeBody);
+        applyRuntimeFields(params, disguise);
         disguise.setHeaders(headers);
         disguise.setVersion(version);
         disguise.setDescription(description);
@@ -73,6 +80,7 @@ public class DisguiseService {
         disguise.setCreateUserId(userId);
         disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
 
+        validateRuntimeImplementations(disguise);
         installAndPersist(disguise);
     }
 
@@ -97,6 +105,7 @@ public class DisguiseService {
         if (params.containsKey("decodeBody")) {
             existingDisguise.setDecodeBody(optionalString(params, "decodeBody"));
         }
+        applyRuntimeFields(params, existingDisguise);
         if (params.containsKey("headers")) {
             existingDisguise.setHeaders(parseHeaders(requireString(params, "headers")));
         }
@@ -111,6 +120,7 @@ public class DisguiseService {
         }
 
         ensureDisguiseLogic(existingDisguise.getEncodeBody(), existingDisguise.getDecodeBody());
+        validateRuntimeImplementations(existingDisguise);
         existingDisguise.setUpdateTime(String.valueOf(System.currentTimeMillis()));
         installAndPersist(existingDisguise);
     }
@@ -152,6 +162,14 @@ public class DisguiseService {
 
     public void testDisguise(String encodeBody, String decodeBody) throws Exception {
         ensureDisguiseLogic(encodeBody, decodeBody);
+    }
+
+    public Map<String, Object> validateDisguise(Disguise disguise) throws Exception {
+        ensureDisguiseLogic(disguise.getEncodeBody(), disguise.getDecodeBody());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("java", Map.of("valid", true));
+        result.putAll(validateRuntimeImplementations(disguise));
+        return result;
     }
 
     // ── 导出 ──────────────────────────────────────────────────────────────────
@@ -295,6 +313,7 @@ public class DisguiseService {
             disguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
             disguise.setVersion(defaultVersion(disguise.getVersion()));
             ensureDisguiseLogic(disguise.getEncodeBody(), disguise.getDecodeBody());
+            validateRuntimeImplementations(disguise);
             installAndPersist(disguise);
             String statusStr = (policy == ConflictPolicy.OVERWRITE && exists) ? "overwritten" : "imported";
             String msg       = (policy == ConflictPolicy.OVERWRITE && exists) ? "已覆盖"     : "导入成功";
@@ -358,6 +377,66 @@ public class DisguiseService {
         }
     }
 
+    private Map<String, Object> validateRuntimeImplementations(Disguise disguise) throws Exception {
+        Map<String, Object> diagnostics = new LinkedHashMap<>();
+        for (DisguiseRuntimeValidator validator : runtimeValidators) {
+            if (validator == null || validator.getRuntime() == null) continue;
+            String runtime = validator.getRuntime().getValue();
+            if (!disguise.supportsRuntime(runtime)) continue;
+            diagnostics.put(runtime, validator.validate(disguise));
+        }
+        return diagnostics;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void applyRuntimeFields(Map<String, Object> params, Disguise disguise) {
+        if (params.containsKey("schemaVersion")) {
+            disguise.setSchemaVersion(parseInteger(params.get("schemaVersion"), 2));
+        }
+        if (params.containsKey("protocolVersion")) {
+            disguise.setProtocolVersion(parseInteger(params.get("protocolVersion"), 2));
+        }
+        if (params.containsKey("phpEncodeBody")) {
+            disguise.setPhpEncodeBody(optionalString(params, "phpEncodeBody"));
+        }
+        if (params.containsKey("phpDecodeBody")) {
+            disguise.setPhpDecodeBody(optionalString(params, "phpDecodeBody"));
+        }
+        if (params.containsKey("supportedRuntimes")) {
+            Object raw = params.get("supportedRuntimes");
+            Set<String> values = new LinkedHashSet<>();
+            if (raw instanceof Iterable<?> iterable) {
+                for (Object item : iterable) {
+                    if (item != null && !String.valueOf(item).isBlank()) {
+                        values.add(String.valueOf(item).trim().toLowerCase());
+                    }
+                }
+            } else if (raw != null) {
+                for (String item : String.valueOf(raw).split(",")) {
+                    if (!item.isBlank()) values.add(item.trim().toLowerCase());
+                }
+            }
+            disguise.setSupportedRuntimes(values);
+        }
+        if (params.containsKey("requirements") && params.get("requirements") instanceof Map<?, ?> map) {
+            Map<String, Object> requirements = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                requirements.put(String.valueOf(entry.getKey()), entry.getValue());
+            }
+            disguise.setRequirements(requirements);
+        }
+    }
+
+    private int parseInteger(Object value, int defaultValue) {
+        if (value instanceof Number number) return number.intValue();
+        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, String> parseHeaders(String headersJson) {
         Object parsed = JsonUtil.fromJsonString(headersJson, HashMap.class);
@@ -396,7 +475,7 @@ public class DisguiseService {
         return stringValue;
     }
 
-    private String optionalString(HashMap<String, Object> params, String key) {
+    private String optionalString(Map<String, Object> params, String key) {
         Object value = params.get(key);
         return value == null ? null : String.valueOf(value);
     }
