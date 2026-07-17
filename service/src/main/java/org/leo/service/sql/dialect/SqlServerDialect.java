@@ -11,9 +11,8 @@ public class SqlServerDialect extends AbstractSqlDialect {
     public String getType() { return "sqlserver"; }
     public String getName() { return "SQL Server"; }
     public Integer getDefaultPort() { return 1433; }
-    public String getDriverClass() { return "com.microsoft.sqlserver.jdbc.SQLServerDriver"; }
-    public String getUrlTemplate() { return "jdbc:sqlserver://{host}:{port};databaseName={database};{params}"; }
-    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(variant("mssql", "Microsoft Driver", getDriverClass(), getUrlTemplate())); }
+    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(
+            variant("default", "SQL Server", "host", "port", "database", "username", "password", "options")); }
     public List<Map<String, Object>> getDataTypes() {
         return Arrays.<Map<String, Object>>asList(
                 dataType("INT", null, null, null), dataType("BIGINT", null, null, null),

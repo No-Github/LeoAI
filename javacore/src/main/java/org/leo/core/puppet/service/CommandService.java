@@ -36,6 +36,14 @@ public class CommandService extends ComponentService {
         return invokeComponent("ExecCommandComponent", params);
     }
 
+    public Map<String, Object> resize(String size, String processId) throws Exception {
+        HashMap<String, Object> params = new HashMap<String, Object>();
+        params.put("processId", processId.getBytes("UTF-8"));
+        params.put("op", 3);
+        params.put("cmd", size.getBytes("UTF-8"));
+        return invokeComponent("ExecCommandComponent", params);
+    }
+
     public Map<String, Object> execSimpleCommand(String cmd) throws Exception {
         return execSimpleCommand(cmd, 0);
     }

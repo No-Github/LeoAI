@@ -59,6 +59,16 @@ class PhpScriptGeneratorProviderTest {
         assertFalse(source.contains("function leo_basic_info"));
         assertFalse(source.contains("{{"));
         assertEquals("on-demand-disk-cache", artifact.getMetadata().get("componentDeliveryMode"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ExecCommandComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("HttpRequestComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ProxyForwardComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ReverseTunnelComponent"));
+        assertTrue(artifact.getMetadata().get("componentRequirements") instanceof Map<?, ?>);
+        Map<?, ?> componentRequirements = (Map<?, ?>) artifact.getMetadata().get("componentRequirements");
+        Map<?, ?> databaseRequirements = (Map<?, ?>) componentRequirements.get("DatabaseComponent");
+        assertEquals(List.of("PDO"), databaseRequirements.get("classes"));
+        assertTrue(((List<?>) databaseRequirements.get("pdoDriversAnyOf"))
+                .containsAll(List.of("mysql", "pgsql", "sqlsrv", "dblib", "oci", "sqlite")));
         assertEquals(List.of(), artifact.getMetadata().get("bundledComponents"));
         Map<?, ?> requirements = (Map<?, ?>) artifact.getMetadata().get("requirements");
         assertFalse(requirements.containsKey("extensions"));

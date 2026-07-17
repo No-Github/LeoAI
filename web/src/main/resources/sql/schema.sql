@@ -91,47 +91,37 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- 数据库连接信息表
 -- =====================================================
 
--- 11. 数据库连接信息表
-CREATE TABLE IF NOT EXISTS puppet_jdbc (
-    conn_id VARCHAR(50) PRIMARY KEY,
-    conn_name VARCHAR(100) NOT NULL,
-    puppet_id VARCHAR(50) NOT NULL, -- 所属的puppet ID
-    db_type VARCHAR(20) NOT NULL, -- mysql, postgresql, sqlserver, oracle, sqlite
-    host VARCHAR(255) NOT NULL,
-    port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
-    database_name VARCHAR(100), -- 数据库名、服务名或文件路径
+-- 11. Puppet 数据库连接配置表（运行时中立）
+CREATE TABLE IF NOT EXISTS puppet_database_connections (
+    connection_id VARCHAR(50) PRIMARY KEY,
+    connection_name VARCHAR(100) NOT NULL,
+    puppet_id VARCHAR(50) NOT NULL,
+    db_type VARCHAR(20) NOT NULL,
+    connection_spec TEXT NOT NULL,
     username VARCHAR(100),
-    password VARCHAR(255), -- 加密存储
-    url_template TEXT, -- JDBC URL模板
-    jdbc_url TEXT, -- 完整的JDBC连接字符串
-    driver_class VARCHAR(255), -- JDBC驱动类名
-    connection_params TEXT, -- JSON格式存储额外连接参数
-    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
-    test_status INTEGER DEFAULT 0 CHECK (test_status IN (0, 1, 2)), -- 0:未测试 1:连接成功 2:连接失败
+    password VARCHAR(512),
+    status INTEGER DEFAULT 1 CHECK (status IN (0, 1)),
+    test_status INTEGER DEFAULT 0 CHECK (test_status IN (0, 1, 2)),
     last_test_time DATETIME,
-    last_test_message TEXT, -- 最后一次测试的结果信息
-    max_connections INTEGER DEFAULT 10 CHECK (max_connections > 0), -- 最大连接数
-    timeout_seconds INTEGER DEFAULT 30 CHECK (timeout_seconds > 0), -- 连接超时时间(秒)
+    last_test_message TEXT,
+    max_connections INTEGER DEFAULT 10 CHECK (max_connections > 0),
+    timeout_seconds INTEGER DEFAULT 30 CHECK (timeout_seconds > 0),
     create_user_id VARCHAR(50) NOT NULL,
-    team_id VARCHAR(50), -- 所属团队，NULL表示个人连接
-    is_public INTEGER DEFAULT 0 CHECK (is_public IN (0, 1)), -- 0:私有 1:团队内共享
+    team_id VARCHAR(50),
+    scope VARCHAR(16) NOT NULL DEFAULT 'private' CHECK (scope IN ('private', 'team', 'public')),
+    is_public INTEGER DEFAULT 0 CHECK (is_public IN (0, 1)),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     description TEXT,
     remark TEXT
 );
 
--- 高频关联查询索引。业务唯一索引由 DatabaseInitializer 在兼容历史数据的前提下创建。
-CREATE INDEX IF NOT EXISTS idx_teams_leader_id ON teams(leader_id);
-CREATE INDEX IF NOT EXISTS idx_puppets_parent_id ON puppets(parent_puppet_id);
-CREATE INDEX IF NOT EXISTS idx_puppets_create_user_id ON puppets(create_by_user_id);
-CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
-CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_create_user_id ON puppet_jdbc(create_user_id);
-CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_puppet_id ON puppet_jdbc(puppet_id);
-CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_team_id ON puppet_jdbc(team_id);
+CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id
+    ON puppet_database_connections(create_user_id);
+CREATE INDEX IF NOT EXISTS idx_database_connections_puppet_id
+    ON puppet_database_connections(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_database_connections_team_id
+    ON puppet_database_connections(team_id);
 
 -- 12. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (

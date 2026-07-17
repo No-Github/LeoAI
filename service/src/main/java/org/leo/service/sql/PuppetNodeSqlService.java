@@ -1,6 +1,7 @@
 package org.leo.service.sql;
 
 import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.service.sql.dialect.AbstractSqlDialect;
 import org.leo.service.sql.dialect.SqlDialectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ public class PuppetNodeSqlService {
     public Map<String, Object> testConnection(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
         String testSql = dialect.buildTestSql();
+        long startedAt = System.nanoTime();
         Map<String, Object> raw = executeRaw(puppetNode, connection, testSql);
         List<Map<String, Object>> rowList = rows(raw);
         String version = "";
@@ -31,8 +33,8 @@ public class PuppetNodeSqlService {
 
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("databaseVersion", version);
-        data.put("driverVersion", stringValue(connection.get("driver")));
-        data.put("latencyMs", null);
+        data.put("runtimeMetadata", raw.get("runtimeMetadata"));
+        data.put("latencyMs", (System.nanoTime() - startedAt) / 1_000_000L);
         data.put("statementType", detectStatementType(testSql));
         return data;
     }
@@ -152,7 +154,7 @@ public class PuppetNodeSqlService {
         data.put("table", table);
         data.put("database", database);
         data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         return data;
     }
 
@@ -163,7 +165,7 @@ public class PuppetNodeSqlService {
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("database", database);
         data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         return data;
     }
 
@@ -179,7 +181,7 @@ public class PuppetNodeSqlService {
         data.put("database", database);
         data.put("table", table);
         data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         return data;
     }
 
@@ -196,7 +198,7 @@ public class PuppetNodeSqlService {
         data.put("database", database);
         data.put("table", table);
         data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         return data;
     }
 
@@ -212,7 +214,7 @@ public class PuppetNodeSqlService {
         data.put("database", database);
         data.put("table", table);
         data.put("sql", sql);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         return data;
     }
 
@@ -231,13 +233,7 @@ public class PuppetNodeSqlService {
     }
 
     private Map<String, Object> executeRaw(SqlCapable puppetNode, Map<String, Object> connection, String sql) throws Exception {
-        Map<String, Object> result = puppetNode.execSql(
-                stringValue(connection.get("driver")),
-                stringValue(connection.get("url")),
-                stringValue(connection.get("user")),
-                stringValue(connection.get("password")),
-                sql
-        );
+        Map<String, Object> result = puppetNode.executeSql(DatabaseConnectionSpec.fromMap(connection), sql);
         if (result == null) {
             throw new IllegalStateException("puppet 执行结果为空");
         }
@@ -263,7 +259,7 @@ public class PuppetNodeSqlService {
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("columns", columns);
         data.put("rows", rowList);
-        data.put("affectedRows", toInteger(raw.get("updateCount")));
+        data.put("affectedRows", toInteger(raw.get("affectedRows")));
         data.put("statementType", statementType);
         return data;
     }

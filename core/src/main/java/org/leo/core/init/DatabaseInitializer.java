@@ -8,12 +8,17 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.leo.core.util.json.PortableJsonCodec;
 
 import javax.sql.DataSource;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Component
 @Order(0)
@@ -55,6 +60,8 @@ public class DatabaseInitializer implements CommandLineRunner {
     }
 
     private void runMigrations() {
+        ensureDatabaseConnectionScope();
+        migrateLegacyDatabaseConnections();
         addColumnIfMissing("ai_messages", "plan_json", "TEXT");
         addColumnIfMissing("ai_messages", "nodes_json", "TEXT");
         addColumnIfMissing("ai_messages", "attachments_json", "TEXT");
@@ -126,10 +133,128 @@ public class DatabaseInitializer implements CommandLineRunner {
         executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)");
         executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id)");
         executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time)");
-        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_create_user_id "
-                + "ON puppet_jdbc(create_user_id)");
-        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_puppet_id ON puppet_jdbc(puppet_id)");
-        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_puppet_jdbc_team_id ON puppet_jdbc(team_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id "
+                + "ON puppet_database_connections(create_user_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_database_connections_puppet_id "
+                + "ON puppet_database_connections(puppet_id)");
+        executeMigrationSql("CREATE INDEX IF NOT EXISTS idx_database_connections_team_id "
+                + "ON puppet_database_connections(team_id)");
+    }
+
+    /** Copies historical JDBC-shaped profiles into the runtime-neutral table once. */
+    private void migrateLegacyDatabaseConnections() {
+        String insertSql = "INSERT OR IGNORE INTO puppet_database_connections ("
+                + "connection_id, connection_name, puppet_id, db_type, connection_spec, username, password, "
+                + "status, test_status, last_test_time, last_test_message, max_connections, timeout_seconds, "
+                + "create_user_id, team_id, scope, is_public, create_time, update_time, description, remark) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (Connection conn = dataSource.getConnection()) {
+            if (!tableExists(conn, "puppet_jdbc") || !tableExists(conn, "puppet_database_connections")) return;
+            int migrated = 0;
+            int skipped = 0;
+            try (Statement query = conn.createStatement();
+                 ResultSet rows = query.executeQuery("SELECT * FROM puppet_jdbc");
+                 PreparedStatement insert = conn.prepareStatement(insertSql)) {
+                while (rows.next()) {
+                    String type = rows.getString("db_type");
+                    if (type == null || type.isBlank()) {
+                        skipped++;
+                        continue;
+                    }
+                    insert.setObject(1, rows.getObject("conn_id"));
+                    insert.setObject(2, rows.getObject("conn_name"));
+                    insert.setObject(3, rows.getObject("puppet_id"));
+                    insert.setObject(4, type);
+                    insert.setString(5, legacyConnectionSpec(rows, type));
+                    insert.setObject(6, rows.getObject("username"));
+                    insert.setObject(7, rows.getObject("password"));
+                    insert.setObject(8, rows.getObject("status"));
+                    insert.setObject(9, rows.getObject("test_status"));
+                    insert.setObject(10, rows.getObject("last_test_time"));
+                    insert.setObject(11, rows.getObject("last_test_message"));
+                    insert.setObject(12, rows.getObject("max_connections"));
+                    insert.setObject(13, rows.getObject("timeout_seconds"));
+                    insert.setObject(14, rows.getObject("create_user_id"));
+                    insert.setObject(15, rows.getObject("team_id"));
+                    insert.setString(16, rows.getInt("is_public") == 1 ? "team" : "private");
+                    insert.setObject(17, rows.getObject("is_public"));
+                    insert.setObject(18, rows.getObject("create_time"));
+                    insert.setObject(19, rows.getObject("update_time"));
+                    insert.setObject(20, rows.getObject("description"));
+                    insert.setObject(21, rows.getObject("remark"));
+                    migrated += insert.executeUpdate();
+                }
+            }
+            if (migrated > 0) log.info("已迁移 {} 条历史数据库连接配置", migrated);
+            if (skipped > 0) {
+                log.warn("有 {} 条历史数据库连接缺少类型，保留 puppet_jdbc 以便后续处理", skipped);
+                return;
+            }
+            try (Statement drop = conn.createStatement()) {
+                drop.execute("DROP TABLE puppet_jdbc");
+            }
+            log.info("历史数据库连接表 puppet_jdbc 已清理");
+        } catch (Exception e) {
+            log.warn("历史数据库连接配置迁移失败: {}", e.getMessage());
+        }
+    }
+
+    private void ensureDatabaseConnectionScope() {
+        try (Connection conn = dataSource.getConnection()) {
+            if (!tableExists(conn, "puppet_database_connections")
+                    || columnExists(conn, "puppet_database_connections", "scope")) return;
+            try (Statement st = conn.createStatement()) {
+                st.execute("ALTER TABLE puppet_database_connections "
+                        + "ADD COLUMN scope VARCHAR(16) NOT NULL DEFAULT 'private'");
+                st.executeUpdate("UPDATE puppet_database_connections SET scope = "
+                        + "CASE WHEN is_public = 1 THEN 'team' ELSE 'private' END");
+            }
+            log.info("数据库连接可见范围字段迁移完成");
+        } catch (SQLException e) {
+            log.warn("数据库连接可见范围迁移失败: {}", e.getMessage());
+        }
+    }
+
+    private String legacyConnectionSpec(ResultSet row, String type) throws SQLException {
+        String storedSpec = row.getString("connection_params");
+        if (storedSpec != null && storedSpec.trim().startsWith("{")) {
+            try {
+                Map<String, Object> decoded = PortableJsonCodec.decode(storedSpec.getBytes(StandardCharsets.UTF_8));
+                decoded.remove("password");
+                return new String(PortableJsonCodec.encode(decoded), StandardCharsets.UTF_8);
+            } catch (RuntimeException ignored) {
+                // Continue with field-based migration for older JSON shapes.
+            }
+        }
+
+        Map<String, Object> spec = new LinkedHashMap<String, Object>();
+        spec.put("type", type);
+        spec.put("host", row.getString("host"));
+        int port = row.getInt("port");
+        if (!row.wasNull() && port > 0) spec.put("port", port);
+        String locator = row.getString("database_name");
+        if ("sqlite".equalsIgnoreCase(type)) {
+            spec.put("variant", "file");
+            spec.put("file", locator);
+        } else if ("oracle".equalsIgnoreCase(type)) {
+            spec.put("variant", "service");
+            spec.put("service", locator);
+        } else {
+            spec.put("variant", "default");
+            spec.put("database", locator);
+        }
+        spec.put("username", row.getString("username"));
+        spec.put("timeoutSeconds", row.getObject("timeout_seconds"));
+        spec.put("options", new LinkedHashMap<String, Object>());
+        String jdbcUrl = row.getString("jdbc_url");
+        String driverClass = row.getString("driver_class");
+        if ((jdbcUrl != null && !jdbcUrl.isBlank()) || (driverClass != null && !driverClass.isBlank())) {
+            Map<String, Object> java = new LinkedHashMap<String, Object>();
+            java.put("jdbcUrl", jdbcUrl == null ? "" : jdbcUrl);
+            java.put("driverClass", driverClass == null ? "" : driverClass);
+            spec.put("nativeOptions", Map.of("java", java));
+        }
+        return new String(PortableJsonCodec.encode(spec), StandardCharsets.UTF_8);
     }
 
     private void executeMigrationSql(String sql) {

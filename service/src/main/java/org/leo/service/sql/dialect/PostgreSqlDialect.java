@@ -9,9 +9,8 @@ public class PostgreSqlDialect extends AbstractSqlDialect {
     public String getType() { return "postgresql"; }
     public String getName() { return "PostgreSQL"; }
     public Integer getDefaultPort() { return 5432; }
-    public String getDriverClass() { return "org.postgresql.Driver"; }
-    public String getUrlTemplate() { return "jdbc:postgresql://{host}:{port}/{database}?{params}"; }
-    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(variant("pg", "PostgreSQL", getDriverClass(), getUrlTemplate())); }
+    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(
+            variant("default", "PostgreSQL", "host", "port", "database", "username", "password", "options")); }
     public List<Map<String, Object>> getDataTypes() {
         return Arrays.<Map<String, Object>>asList(
                 dataType("INT", null, null, null), dataType("BIGINT", null, null, null),

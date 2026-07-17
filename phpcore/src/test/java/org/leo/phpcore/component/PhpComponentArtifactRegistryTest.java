@@ -16,7 +16,11 @@ class PhpComponentArtifactRegistryTest {
     @Test
     void loadsIndependentDigestAddressedArtifacts() {
         PhpComponentArtifactRegistry registry = new PhpComponentArtifactRegistry();
-        assertEquals(10, registry.getComponentIds().size());
+        assertEquals(14, registry.getComponentIds().size());
+        assertTrue(registry.getComponentIds().contains("ExecCommandComponent"));
+        assertTrue(registry.getComponentIds().contains("HttpRequestComponent"));
+        assertTrue(registry.getComponentIds().contains("ProxyForwardComponent"));
+        assertTrue(registry.getComponentIds().contains("ReverseTunnelComponent"));
         ComponentArtifact artifact = registry.getRequired("FileComponent");
         assertEquals(ComponentDeliveryMode.DISK_CACHE, artifact.getDeliveryMode());
         assertEquals(64, artifact.getDigest().length());

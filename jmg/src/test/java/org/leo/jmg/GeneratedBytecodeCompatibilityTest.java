@@ -170,6 +170,9 @@ class GeneratedBytecodeCompatibilityTest {
                 .shellType("FilterInjector")
                 .packerType("DefaultBase64")
                 .servletNamespace(servletNamespace)
+                // Regression seed: fieldResults used to become "buffer" and
+                // collide with a fixed redirect local in Javassist source.
+                .obfuscationSeed(-2840755419257969001L)
                 .build();
     }
 

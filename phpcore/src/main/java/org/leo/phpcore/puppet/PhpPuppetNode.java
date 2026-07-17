@@ -2,35 +2,58 @@ package org.leo.phpcore.puppet;
 
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
-import org.leo.core.puppet.capability.CommandCapable;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.puppet.capability.ComponentManageCapable;
 import org.leo.core.puppet.capability.FileCapable;
 import org.leo.core.puppet.capability.HostScopedCapable;
+import org.leo.core.puppet.capability.HttpProxyCapable;
+import org.leo.core.puppet.capability.HttpSenderCapable;
 import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
+import org.leo.core.puppet.capability.LocalForwardCapable;
 import org.leo.core.puppet.capability.PluginCapable;
+import org.leo.core.puppet.capability.ReverseTunnelCapable;
 import org.leo.core.puppet.capability.ScriptCapable;
+import org.leo.core.puppet.capability.Socks5ProxyCapable;
 import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.puppet.capability.TerminalCapable;
+import org.leo.core.engine.proxy.NetworkProxyManager;
+import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.runtime.PuppetRuntime;
 import org.leo.core.runtime.RuntimeProfile;
+import org.leo.core.puppet.http.HttpSenderEngine;
 import org.leo.phpcore.rpc.PhpRpcClient;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
+import org.leo.phpcore.database.PhpDatabaseConnectionAdapter;
 import org.leo.core.component.runtime.ComponentArtifact;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** PHP implementation of the shared Puppet node and core capabilities. */
 public final class PhpPuppetNode extends AbstractPuppetNode implements
-        BasicInfoCapable, CommandCapable, FileCapable, ScriptCapable, SqlCapable,
+        BasicInfoCapable, TerminalCapable, FileCapable, ScriptCapable, SqlCapable,
         ComponentInvokeCapable, ComponentManageCapable, PluginCapable,
+        HttpSenderCapable, Socks5ProxyCapable, HttpProxyCapable,
+        LocalForwardCapable, ReverseTunnelCapable,
         HostScopedCapable, LoadedComponentCacheCapable {
 
     private final PhpRpcClient rpcClient;
+    private final PhpDatabaseConnectionAdapter databaseConnectionAdapter = new PhpDatabaseConnectionAdapter();
     private final PhpComponentArtifactRegistry componentRegistry;
     private final Set<String> loadedComponents = ConcurrentHashMap.newKeySet();
+    private final NetworkProxyManager networkProxyManager = new NetworkProxyManager(this);
+    private final HttpSenderEngine httpSenderEngine = new HttpSenderEngine() {
+        @Override
+        protected Map<String, Object> executeRequest(
+                String method, String url, Map<String, String> headers, String body,
+                int connectTimeout, int readTimeout, boolean followRedirects) throws Exception {
+            return PhpPuppetNode.this.httpRequest(method, url, headers, body,
+                    connectTimeout, readTimeout, followRedirects);
+        }
+    };
     private String hostId;
 
     public PhpPuppetNode(PhpRpcClient rpcClient, PhpComponentArtifactRegistry componentRegistry) {
@@ -109,10 +132,14 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
 
     @Override
     public Map<String, Object> execCommand(String type, String cmd, String processId) throws Exception {
-        if (!"write".equalsIgnoreCase(type)) {
-            return error(400, "PHP 请求运行时不支持交互式终端 read/stop");
+        String action = type == null ? "" : type.trim().toLowerCase();
+        if (!Set.of("write", "read", "resize", "stop").contains(action)) {
+            return error(400, "PHP 虚拟终端操作不受支持: " + action);
         }
-        return execSimpleCommand(cmd);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("processId", processId);
+        params.put("cmd", cmd == null ? "" : cmd);
+        return invoke("ExecCommandComponent", action, params);
     }
 
     @Override
@@ -205,13 +232,142 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user,
-                                       String password, String sqlScript) throws Exception {
+    public Map<String, Object> httpRequest(String method, String url, Map<String, String> headers,
+                                           String body, int connectTimeout, int readTimeout,
+                                           boolean followRedirects) throws Exception {
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("driver", driverClassName);
-        params.put("url", jdbcUrl);
-        params.put("user", user);
-        params.put("password", password);
+        params.put("method", method == null ? "GET" : method);
+        params.put("url", url);
+        if (headers != null && !headers.isEmpty()) params.put("headers", new LinkedHashMap<>(headers));
+        if (body != null) params.put("body", body);
+        if (connectTimeout > 0) params.put("connectTimeout", connectTimeout);
+        if (readTimeout > 0) params.put("readTimeout", readTimeout);
+        params.put("followRedirects", followRedirects);
+        return invoke("HttpRequestComponent", "send", params);
+    }
+
+    @Override
+    public Map<String, Object> sendRawHttp(String rawHttp, String targetHost, int targetPort,
+                                           boolean useTls, boolean followRedirects,
+                                           int connectTimeout, int readTimeout) throws Exception {
+        return httpSenderEngine.sendRawHttp(rawHttp, targetHost, targetPort, useTls,
+                followRedirects, connectTimeout, readTimeout);
+    }
+
+    @Override
+    public Map<String, Object> startFuzz(String rawHttp, Map<String, List<String>> payloads,
+                                         String targetHost, int targetPort, boolean useTls,
+                                         int threads, int delayMs,
+                                         Map<String, Object> matchRules) throws Exception {
+        return httpSenderEngine.startFuzz(rawHttp, payloads, targetHost, targetPort, useTls,
+                threads, delayMs, matchRules);
+    }
+
+    @Override
+    public Map<String, Object> queryFuzz(String taskId) {
+        return httpSenderEngine.queryFuzz(taskId);
+    }
+
+    @Override
+    public Map<String, Object> stopFuzz(String taskId) {
+        return httpSenderEngine.stopFuzz(taskId);
+    }
+
+    @Override
+    public Map<String, Object> startSocks5Proxy(int port) throws Exception {
+        return networkProxyManager.startSocks5Proxy(port);
+    }
+
+    @Override
+    public Map<String, Object> stopSocks5Proxy() {
+        return networkProxyManager.stopSocks5Proxy();
+    }
+
+    @Override
+    public Map<String, Object> getSocks5ProxyStatus() {
+        return networkProxyManager.getSocks5ProxyStatus();
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
+        return networkProxyManager.getSocks5ProxyStatistics();
+    }
+
+    @Override
+    public Map<String, Object> startHttpProxy(int port) throws Exception {
+        return networkProxyManager.startHttpProxy(port);
+    }
+
+    @Override
+    public Map<String, Object> stopHttpProxy() {
+        return networkProxyManager.stopHttpProxy();
+    }
+
+    @Override
+    public Map<String, Object> getHttpProxyStatus() {
+        return networkProxyManager.getHttpProxyStatus();
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
+        return networkProxyManager.getHttpProxyStatistics();
+    }
+
+    @Override
+    public Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
+        return networkProxyManager.startLocalForward(localPort, targetHost, targetPort);
+    }
+
+    @Override
+    public Map<String, Object> stopLocalForward(int localPort) {
+        return networkProxyManager.stopLocalForward(localPort);
+    }
+
+    @Override
+    public Map<String, Object> stopAllLocalForwards() {
+        return networkProxyManager.stopAllLocalForwards();
+    }
+
+    @Override
+    public List<Map<String, Object>> listLocalForwards() {
+        return networkProxyManager.listLocalForwards();
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
+        return networkProxyManager.getLocalForwardStatistics(localPort);
+    }
+
+    @Override
+    public Map<String, Object> startReverseTunnel(int remoteListenPort, String bindAddr,
+                                                   String forwardHost, int forwardPort) throws Exception {
+        return networkProxyManager.startReverseTunnel(remoteListenPort, bindAddr, forwardHost, forwardPort);
+    }
+
+    @Override
+    public Map<String, Object> stopReverseTunnel(String listenId) {
+        return networkProxyManager.stopReverseTunnel(listenId);
+    }
+
+    @Override
+    public Map<String, Object> stopAllReverseTunnels() {
+        return networkProxyManager.stopAllReverseTunnels();
+    }
+
+    @Override
+    public List<Map<String, Object>> listReverseTunnels() {
+        return networkProxyManager.listReverseTunnels();
+    }
+
+    @Override
+    public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
+        return networkProxyManager.getReverseTunnelStatistics(listenId);
+    }
+
+    @Override
+    public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
+                                          String sqlScript) throws Exception {
+        Map<String, Object> params = new LinkedHashMap<>(databaseConnectionAdapter.adapt(connection));
         params.put("sql", sqlScript);
         return invoke("DatabaseComponent", "exec", params);
     }
@@ -238,6 +394,8 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
 
     @Override
     public void close() throws Exception {
+        networkProxyManager.close();
+        httpSenderEngine.close();
         rpcClient.close();
     }
 

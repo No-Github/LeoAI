@@ -10,9 +10,8 @@ public class MySqlDialect extends AbstractSqlDialect {
     public String getType() { return "mysql"; }
     public String getName() { return "MySQL"; }
     public Integer getDefaultPort() { return 3306; }
-    public String getDriverClass() { return "com.mysql.cj.jdbc.Driver"; }
-    public String getUrlTemplate() { return "jdbc:mysql://{host}:{port}/{database}?{params}"; }
-    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(variant("mysql8", "MySQL 8.x", getDriverClass(), getUrlTemplate())); }
+    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(
+            variant("default", "MySQL", "host", "port", "database", "username", "password", "options")); }
     public List<Map<String, Object>> getDataTypes() {
         return Arrays.<Map<String, Object>>asList(
                 dataType("INT", null, null, null), dataType("BIGINT", null, null, null),

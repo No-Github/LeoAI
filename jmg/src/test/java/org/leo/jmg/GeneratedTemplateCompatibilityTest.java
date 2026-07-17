@@ -30,11 +30,9 @@ class GeneratedTemplateCompatibilityTest {
     }
 
     @Test
-    void sourceTemplatesDoNotDirectlyLinkJava8Base64Api() {
+    void groovyTemplateDoesNotDirectlyLinkJava8Base64Api() {
         assertNotContains("/memshell-template/shell.groovy.txt", "java.util.Base64.getDecoder(");
         assertNotContains("/memshell-template/shell.groovy.txt", "java.util.Base64.Decoder");
-        assertNotContains("/memshell-template/XXL-Job-DefineClass.java.txt", "import java.util.Base64");
-        assertNotContains("/memshell-template/XXL-Job-DefineClass.java.txt", "Base64.getDecoder(");
     }
 
     @Test

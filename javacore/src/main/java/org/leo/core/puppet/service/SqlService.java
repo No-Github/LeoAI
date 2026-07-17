@@ -3,6 +3,8 @@ package org.leo.core.puppet.service;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
+import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.puppet.database.JavaDatabaseConnectionAdapter;
 
 import java.util.HashMap;
 import java.util.List;
@@ -10,17 +12,15 @@ import java.util.Map;
 
 public class SqlService extends ComponentService {
 
+    private final JavaDatabaseConnectionAdapter connectionAdapter = new JavaDatabaseConnectionAdapter();
+
     public SqlService(Communication communication, List<RequestLayer> requestLayers, List<ResponseLayer> responseLayers) {
         super(communication, requestLayers, responseLayers);
     }
 
-    public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
-        HashMap<String, Object> payload = new HashMap<String, Object>();
+    public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) throws Exception {
+        HashMap<String, Object> payload = new HashMap<String, Object>(connectionAdapter.adapt(connection));
         payload.put("sql", sqlScript);
-        payload.put("url", jdbcUrl);
-        payload.put("user", user);
-        payload.put("password", password);
-        payload.put("driver", driverClassName);
         return invokeComponent("DatabaseComponent", payload);
     }
 }

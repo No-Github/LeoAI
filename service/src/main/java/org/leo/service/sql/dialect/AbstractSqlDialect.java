@@ -10,10 +10,6 @@ public abstract class AbstractSqlDialect {
 
     public abstract Integer getDefaultPort();
 
-    public abstract String getDriverClass();
-
-    public abstract String getUrlTemplate();
-
     public abstract List<Map<String, Object>> getVariants();
 
     public abstract List<Map<String, Object>> getDataTypes();
@@ -143,9 +139,8 @@ public abstract class AbstractSqlDialect {
         item.put("type", getType());
         item.put("name", getName());
         item.put("defaultPort", getDefaultPort());
-        item.put("driverClass", getDriverClass());
-        item.put("urlTemplate", getUrlTemplate());
         item.put("variants", getVariants());
+        item.put("runtimeSupport", Map.of("java", true, "php", true));
         return item;
     }
 
@@ -308,12 +303,11 @@ public abstract class AbstractSqlDialect {
         return "'" + text.replace("'", "''") + "'";
     }
 
-    protected Map<String, Object> variant(String key, String name, String driverClass, String urlTemplate) {
+    protected Map<String, Object> variant(String key, String name, String... fields) {
         Map<String, Object> item = new LinkedHashMap<String, Object>();
         item.put("key", key);
         item.put("name", name);
-        item.put("driverClass", driverClass);
-        item.put("urlTemplate", urlTemplate);
+        item.put("fields", Arrays.asList(fields));
         return item;
     }
 

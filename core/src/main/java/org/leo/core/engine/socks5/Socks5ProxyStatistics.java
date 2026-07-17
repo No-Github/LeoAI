@@ -60,20 +60,20 @@ public class Socks5ProxyStatistics {
     /**
      * 增加连接数
      */
-    public void addConnection(String connId, String targetHost, int targetPort, String clientIp) {
-        activeConnections.incrementAndGet();
-        totalConnections.incrementAndGet();
-        
+    public synchronized void addConnection(String connId, String targetHost, int targetPort, String clientIp) {
         ConnectionInfo info = new ConnectionInfo();
         info.connId = connId;
         info.targetHost = targetHost;
         info.targetPort = targetPort;
         info.clientIp = clientIp;
         info.connectTime = System.currentTimeMillis();
-        info.uploadBytes = 0;
-        info.downloadBytes = 0;
-        
-        connections.put(connId, info);
+        ConnectionInfo previous = connections.putIfAbsent(connId, info);
+        if (previous != null) {
+            logger.warn("忽略重复连接标识: connId={}", connId);
+            return;
+        }
+        activeConnections.incrementAndGet();
+        totalConnections.incrementAndGet();
         
         logger.debug("新增连接: connId={}, target={}:{}, clientIp={}, 当前连接数={}", 
                     connId, targetHost, targetPort, clientIp, activeConnections.get());
@@ -82,9 +82,9 @@ public class Socks5ProxyStatistics {
     /**
      * 移除连接
      */
-    public void removeConnection(String connId) {
+    public synchronized void removeConnection(String connId) {
         if (connections.remove(connId) != null) {
-            activeConnections.decrementAndGet();
+            activeConnections.updateAndGet(value -> Math.max(0, value - 1));
             logger.debug("移除连接: connId={}, 当前连接数={}", connId, activeConnections.get());
         }
     }
@@ -93,6 +93,7 @@ public class Socks5ProxyStatistics {
      * 增加上行数据量
      */
     public void addUploadBytes(String connId, long bytes) {
+        if (bytes <= 0) return;
         uploadBytes.addAndGet(bytes);
         ConnectionInfo info = connections.get(connId);
         if (info != null) {
@@ -104,6 +105,7 @@ public class Socks5ProxyStatistics {
      * 增加下行数据量
      */
     public void addDownloadBytes(String connId, long bytes) {
+        if (bytes <= 0) return;
         downloadBytes.addAndGet(bytes);
         ConnectionInfo info = connections.get(connId);
         if (info != null) {
@@ -114,7 +116,7 @@ public class Socks5ProxyStatistics {
     /**
      * 更新速率
      */
-    public void updateRates() {
+    public synchronized void updateRates() {
         long currentTime = System.currentTimeMillis();
         long timeDiff = currentTime - lastUpdateTime;
         
@@ -137,7 +139,7 @@ public class Socks5ProxyStatistics {
     /**
      * 获取统计信息快照
      */
-    public StatisticsSnapshot getSnapshot() {
+    public synchronized StatisticsSnapshot getSnapshot() {
         updateRates();
         
         StatisticsSnapshot snapshot = new StatisticsSnapshot();
@@ -158,7 +160,7 @@ public class Socks5ProxyStatistics {
     /**
      * 重置统计信息
      */
-    public void reset() {
+    public synchronized void reset() {
         activeConnections.set(0);
         totalConnections.set(0);
         uploadBytes.set(0);
@@ -180,8 +182,8 @@ public class Socks5ProxyStatistics {
         public int targetPort;
         public String clientIp;
         public long connectTime;
-        public long uploadBytes;
-        public long downloadBytes;
+        public volatile long uploadBytes;
+        public volatile long downloadBytes;
         
         public long getUptime() {
             return System.currentTimeMillis() - connectTime;
@@ -204,4 +206,3 @@ public class Socks5ProxyStatistics {
         public java.util.List<ConnectionInfo> connections;
     }
 }
-

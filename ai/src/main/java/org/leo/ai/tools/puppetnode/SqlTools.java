@@ -4,6 +4,7 @@ import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.service.audit.PuppetAuditService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -35,14 +36,15 @@ public class SqlTools {
     }
 
     @Tool("执行 SQL 语句（允许写入和结构变更）。验证连接、枚举库表、查询或提取证据。⚠️ 只读查询优先使用 querySql。")
-    public Map<String, Object> execSql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
+    public Map<String, Object> execSql(Map<String, Object> connection, String sqlScript) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
-        Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
-        String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
+        DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
+        Map<String, Object> auditParams = sqlAuditParams(sessionId, connectionSpec, sqlScript);
+        String operationPath = sqlOperationPath(connectionSpec, sqlScript);
         try {
-            Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+            Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
             auditService.logSuccess(sessionId, auditNode, "SQL_EXEC", "AI执行SQL", operationPath,
                     auditParams, "AI执行SQL成功");
             return result;
@@ -54,7 +56,7 @@ public class SqlTools {
     }
 
     @Tool("执行只读 SQL 查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH）。拒绝写入或结构变更。")
-    public Map<String, Object> querySql(String driverClassName, String jdbcUrl, String user, String password, String sqlScript) throws Exception {
+    public Map<String, Object> querySql(Map<String, Object> connection, String sqlScript) throws Exception {
         String violation = detectSqlViolation(sqlScript);
         if (violation != null) {
             throw new IllegalArgumentException(violation);
@@ -62,10 +64,11 @@ public class SqlTools {
         String sessionId = AiToolContext.requireSessionId();
         SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
-        Map<String, Object> auditParams = sqlAuditParams(sessionId, driverClassName, jdbcUrl, user, password, sqlScript);
-        String operationPath = sqlOperationPath(jdbcUrl, sqlScript);
+        DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
+        Map<String, Object> auditParams = sqlAuditParams(sessionId, connectionSpec, sqlScript);
+        String operationPath = sqlOperationPath(connectionSpec, sqlScript);
         try {
-            Map<String, Object> result = node.execSql(driverClassName, jdbcUrl, user, password, sqlScript);
+            Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
             auditService.logSuccess(sessionId, auditNode, "SQL_QUERY", "AI查询SQL", operationPath,
                     auditParams, "AI查询SQL成功");
             return result;
@@ -125,30 +128,23 @@ public class SqlTools {
     }
 
     private Map<String, Object> sqlAuditParams(String sessionId,
-                                               String driverClassName,
-                                               String jdbcUrl,
-                                               String user,
-                                               String password,
+                                               DatabaseConnectionSpec connection,
                                                String sqlScript) {
         HashMap<String, Object> params = new HashMap<>();
         params.put("sessionId", sessionId);
-        params.put("driverClassName", driverClassName);
-        params.put("jdbcUrl", jdbcUrl);
-        params.put("user", user);
-        params.put("password", password);
+        Map<String, Object> safeConnection = new HashMap<>(connection.toMap());
+        safeConnection.remove("password");
+        params.put("connection", safeConnection);
         params.put("sql", sqlScript);
         return params;
     }
 
-    private String sqlOperationPath(String jdbcUrl, String sqlScript) {
+    private String sqlOperationPath(DatabaseConnectionSpec connection, String sqlScript) {
         String sql = truncate(sqlScript, 180);
-        if (jdbcUrl == null || jdbcUrl.isBlank()) {
-            return sql;
-        }
-        if (sql == null || sql.isBlank()) {
-            return jdbcUrl;
-        }
-        return jdbcUrl + " | " + sql;
+        String target = connection.getType() + "://"
+                + (connection.getHost() == null ? "local" : connection.getHost())
+                + (connection.getDatabase() == null ? "" : "/" + connection.getDatabase());
+        return sql == null || sql.isBlank() ? target : target + " | " + sql;
     }
 
     private String truncate(String value, int maxLength) {

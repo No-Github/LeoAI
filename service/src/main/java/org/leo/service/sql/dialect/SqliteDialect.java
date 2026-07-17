@@ -9,9 +9,8 @@ public class SqliteDialect extends AbstractSqlDialect {
     public String getType() { return "sqlite"; }
     public String getName() { return "SQLite"; }
     public Integer getDefaultPort() { return null; }
-    public String getDriverClass() { return "org.sqlite.JDBC"; }
-    public String getUrlTemplate() { return "jdbc:sqlite:{path}"; }
-    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(variant("sqlite", "SQLite", getDriverClass(), getUrlTemplate())); }
+    public List<Map<String, Object>> getVariants() { return Arrays.<Map<String, Object>>asList(
+            variant("file", "SQLite 文件", "file")); }
     public List<Map<String, Object>> getDataTypes() {
         return Arrays.<Map<String, Object>>asList(
                 dataType("INTEGER", null, null, null), dataType("TEXT", null, null, null),

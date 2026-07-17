@@ -9,12 +9,10 @@ public class OracleDialect extends AbstractSqlDialect {
     public String getType() { return "oracle"; }
     public String getName() { return "Oracle"; }
     public Integer getDefaultPort() { return 1521; }
-    public String getDriverClass() { return "oracle.jdbc.driver.OracleDriver"; }
-    public String getUrlTemplate() { return "jdbc:oracle:thin:@//{host}:{port}/{service}?{params}"; }
     public List<Map<String, Object>> getVariants() {
         return Arrays.<Map<String, Object>>asList(
-                variant("oracle_service", "Thin (Service Name)", getDriverClass(), "jdbc:oracle:thin:@//{host}:{port}/{service}?{params}"),
-                variant("oracle_sid", "Thin (SID)", getDriverClass(), "jdbc:oracle:thin:@{host}:{port}:{sid}?{params}")
+                variant("service", "Service Name", "host", "port", "service", "username", "password", "options"),
+                variant("sid", "SID", "host", "port", "sid", "username", "password", "options")
         );
     }
     public List<Map<String, Object>> getDataTypes() {

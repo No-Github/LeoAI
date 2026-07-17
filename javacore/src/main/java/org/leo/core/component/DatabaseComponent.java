@@ -51,20 +51,21 @@ public class DatabaseComponent implements Runnable {
      * 主要执行方法
      */
     public void invoke() throws Exception {
-        String url = (String) params.get("url");
-        String user = (String) params.get("user");
+        String url = (String) params.get("jdbcUrl");
+        String user = (String) params.get("username");
         String password = (String) params.get("password");
         String sql = (String) params.get("sql");
-        String driver = (String) params.get("driver");
+        String driver = (String) params.get("driverClass");
 
         // 参数校验，统一返回格式
         if (url == null || url.trim().isEmpty() || sql == null || sql.trim().isEmpty()) {
             results.put("code", 400);
-            results.put("msg", "缺少必填参数: url 或 sql");
+            results.put("msg", "缺少必填参数: jdbcUrl 或 sql");
             results.put("columns", new ArrayList<HashMap<String, Object>>());
             results.put("rows", new ArrayList<HashMap<String, Object>>());
             results.put("rowCount", null);
-            results.put("updateCount", 0);
+            results.put("affectedRows", 0);
+            results.put("generatedKey", null);
             return;
         }
 
@@ -87,7 +88,7 @@ public class DatabaseComponent implements Runnable {
                     column.put("name", metaData.getColumnName(i));
                     column.put("label", metaData.getColumnLabel(i));
                     column.put("type", metaData.getColumnTypeName(i));
-                    column.put("jdbcType", Integer.valueOf(metaData.getColumnType(i)));
+                    column.put("nativeType", metaData.getColumnTypeName(i));
                     columns.add(column);
                 }
                 while (rs.next()) {
@@ -103,7 +104,12 @@ public class DatabaseComponent implements Runnable {
             results.put("columns", columns);
             results.put("rows", rows);
             results.put("rowCount", rows.size());
-            results.put("updateCount", updateCount);
+            results.put("affectedRows", updateCount);
+            results.put("generatedKey", null);
+            HashMap<String, Object> runtimeMetadata = new HashMap<String, Object>();
+            runtimeMetadata.put("provider", "jdbc");
+            runtimeMetadata.put("driver", driver);
+            results.put("runtimeMetadata", runtimeMetadata);
             results.put("code", 200);
             results.put("msg", "执行成功");
         } catch (Exception ex) {

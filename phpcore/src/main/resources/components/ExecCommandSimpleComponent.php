@@ -8,7 +8,7 @@ $available = static function ($name) {
 };
 return [
     'id' => 'ExecCommandSimpleComponent',
-    'version' => '1.0.0',
+    'version' => '1.1.0',
     'handle' => static function ($action, $params) use ($get, $available) {
         $command = (string)$get($params, 'cmd', '');
         if ($command === '') throw new InvalidArgumentException('cmd is required');
@@ -31,10 +31,6 @@ return [
             $stdout .= stream_get_contents($pipes[1]); $stderr .= stream_get_contents($pipes[2]);
             fclose($pipes[1]); fclose($pipes[2]); $exitCode = proc_close($process);
             return ['stdout' => $stdout, 'stderr' => $stderr, 'output' => $stdout . $stderr, 'exitCode' => $exitCode];
-        }
-        if ($available('shell_exec')) {
-            $output = shell_exec($command . ' 2>&1');
-            return ['stdout' => (string)$output, 'stderr' => '', 'output' => (string)$output, 'exitCode' => 0];
         }
         if ($available('exec')) {
             $lines = []; $code = 0; exec($command . ' 2>&1', $lines, $code); $output = implode("\n", $lines);

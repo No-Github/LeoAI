@@ -7,6 +7,7 @@ import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.sql.PuppetNodeSqlService;
 import org.leo.service.sql.SqlExportService;
+import org.leo.service.PuppetDatabaseConnectionService;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.ConnectionPayload;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.CreateDatabaseRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.CreateTableRequest;
@@ -22,6 +23,7 @@ import org.leo.web.dto.puppetnode.sql.SqlRequests.MetadataRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.QueryTableRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.UpdateRowRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.security.DatabaseConnectionResolver;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -47,11 +49,18 @@ public class PuppetNodeSQLController {
 
     private final PuppetNodeSqlService puppetNodeSqlService;
     private final SqlExportService sqlExportService;
+    private final PuppetDatabaseConnectionService databaseConnectionService;
+    private final DatabaseConnectionResolver databaseConnectionResolver;
 
     @Autowired
-    public PuppetNodeSQLController(PuppetNodeSqlService puppetNodeSqlService, SqlExportService sqlExportService) {
+    public PuppetNodeSQLController(PuppetNodeSqlService puppetNodeSqlService,
+                                   SqlExportService sqlExportService,
+                                   PuppetDatabaseConnectionService databaseConnectionService,
+                                   DatabaseConnectionResolver databaseConnectionResolver) {
         this.puppetNodeSqlService = puppetNodeSqlService;
         this.sqlExportService = sqlExportService;
+        this.databaseConnectionService = databaseConnectionService;
+        this.databaseConnectionResolver = databaseConnectionResolver;
     }
 
     /**
@@ -64,16 +73,30 @@ public class PuppetNodeSQLController {
             String sqlScript = requireText(request.sql(), "sql");
             logger.debug("执行SQL，sessionId: {}", request.sessionId());
             Map<String, Object> results = puppetNodeSqlService.executeSql(
-                    node, request.connectionOptions(), sqlScript);
+                    node, resolveConnection(request), sqlScript);
             return ApiResponse.success("ok", results);
         });
     }
 
     @PostMapping("/connections/test")
     public Map<String, Object> testConnection(@RequestBody MetadataRequest request) {
-        return sqlCall("连接失败", () -> ApiResponse.success(
-                "连接成功",
-                puppetNodeSqlService.testConnection(sqlNode(request), request.connectionOptions())));
+        return sqlCall("连接失败", () -> {
+            SqlCapable node = sqlNode(request);
+            Map<String, Object> connection = resolveConnection(request);
+            String connectionId = connectionReference(request);
+            try {
+                Map<String, Object> result = puppetNodeSqlService.testConnection(node, connection);
+                if (connectionId != null) {
+                    recordConnectionTestResult(connectionId, true, successfulTestMessage(result));
+                }
+                return ApiResponse.success("连接成功", result);
+            } catch (Exception e) {
+                if (connectionId != null) {
+                    recordConnectionTestResult(connectionId, false, e.getMessage());
+                }
+                throw e;
+            }
+        });
     }
 
     @GetMapping("/dialects")
@@ -91,7 +114,7 @@ public class PuppetNodeSQLController {
     public Map<String, Object> getDatabases(@RequestBody MetadataRequest request) {
         return sqlCall("获取数据库列表失败", () -> ApiResponse.success(
                 "ok",
-                puppetNodeSqlService.getDatabases(sqlNode(request), request.connectionOptions())));
+                puppetNodeSqlService.getDatabases(sqlNode(request), resolveConnection(request))));
     }
 
     @PostMapping("/metadata/tables")
@@ -100,7 +123,7 @@ public class PuppetNodeSQLController {
                 "ok",
                 puppetNodeSqlService.getTables(
                         sqlNode(request),
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database())));
     }
 
@@ -110,7 +133,7 @@ public class PuppetNodeSQLController {
                 "ok",
                 puppetNodeSqlService.getTableColumns(
                         sqlNode(request),
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table())));
     }
@@ -123,7 +146,7 @@ public class PuppetNodeSQLController {
                 "ok",
                 puppetNodeSqlService.queryTable(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table(),
                         intValue(request.page(), 1),
@@ -146,7 +169,7 @@ public class PuppetNodeSQLController {
                 "创建成功",
                 puppetNodeSqlService.createTable(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table(),
                         mapList(request.columns()))));
@@ -159,7 +182,7 @@ public class PuppetNodeSQLController {
                 "创建成功",
                 puppetNodeSqlService.createDatabase(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database())));
     }
 
@@ -171,7 +194,7 @@ public class PuppetNodeSQLController {
                 "创建成功",
                 puppetNodeSqlService.insertRow(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table(),
                         mapValue(request.row()))));
@@ -185,7 +208,7 @@ public class PuppetNodeSQLController {
                 "更新成功",
                 puppetNodeSqlService.updateRows(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table(),
                         mapValue(request.where()),
@@ -200,7 +223,7 @@ public class PuppetNodeSQLController {
                 "删除成功",
                 puppetNodeSqlService.deleteRows(
                         node,
-                        request.connectionOptions(),
+                        resolveConnection(request),
                         request.database(),
                         request.table(),
                         mapValue(request.where()))));
@@ -217,7 +240,7 @@ public class PuppetNodeSQLController {
                     node,
                     user.getUserId(),
                     request.sessionId(),
-                    request.connectionOptions(),
+                    resolveConnection(request),
                     request.database(),
                     request.table(),
                     request.format()));
@@ -235,7 +258,7 @@ public class PuppetNodeSQLController {
                     node,
                     user.getUserId(),
                     request.sessionId(),
-                    request.connectionOptions(),
+                    resolveConnection(request),
                     request.database(),
                     stringList(request.tables()),
                     boolValue(request.includeStructure()),
@@ -293,7 +316,7 @@ public class PuppetNodeSQLController {
                     user.getUserId(),
                     request.sessionId(),
                     request.taskId(),
-                    request.connectionOptions()));
+                    resolveConnection(request)));
         });
     }
 
@@ -364,6 +387,40 @@ public class PuppetNodeSQLController {
 
     private SqlCapable sqlNode(ConnectionPayload request) {
         return ControllerUtil.requireCapability(request.sessionId(), SqlCapable.class);
+    }
+
+    private Map<String, Object> resolveConnection(ConnectionPayload request) {
+        Map<String, Object> options = request.connectionOptions();
+        AbstractPuppetNode node = ControllerUtil.getAbstractPuppetNode(request.sessionId());
+        if (node.getPuppet() == null || node.getPuppet().getPuppetId() == null
+                || node.getPuppet().getPuppetId().isBlank()) {
+            throw ApiException.badRequest("当前会话缺少 Puppet 标识");
+        }
+        return databaseConnectionResolver.resolve(
+                options, node.getPuppet().getPuppetId(), ControllerUtil.getCurrentUser());
+    }
+
+    private String connectionReference(ConnectionPayload request) {
+        return databaseConnectionResolver.reference(request.connectionOptions());
+    }
+
+    private String successfulTestMessage(Map<String, Object> result) {
+        StringBuilder message = new StringBuilder("连接成功");
+        Object latency = result.get("latencyMs");
+        if (latency != null) message.append("，延迟 ").append(latency).append(" ms");
+        Object version = result.get("databaseVersion");
+        if (version != null && !String.valueOf(version).isBlank()) {
+            message.append("，版本 ").append(version);
+        }
+        return message.toString();
+    }
+
+    private void recordConnectionTestResult(String connectionId, boolean success, String message) {
+        try {
+            databaseConnectionService.recordTestResult(connectionId, success, message);
+        } catch (RuntimeException e) {
+            logger.warn("记录数据库连接测试状态失败，connectionId: {}", connectionId, e);
+        }
     }
 
     private String requireText(String value, String name) {
@@ -470,10 +527,10 @@ public class PuppetNodeSQLController {
 
     private void putConnectionAuditParams(Map<String, Object> params, ConnectionPayload request) {
         Map<String, Object> options = request.connectionOptions();
-        params.put("dbType", firstText(options, "type", request.type()));
-        params.put("dbUrl", firstText(options, "url", request.url()));
-        params.put("dbUser", firstText(options, "user", request.user()));
-        params.put("driver", firstText(options, "driver", request.driver()));
+        params.put("dbType", firstText(options, "type", null));
+        params.put("dbHost", firstText(options, "host", null));
+        params.put("dbUser", firstText(options, "username", null));
+        params.put("dbTarget", connectionTarget(options));
     }
 
     private Map<String, Object> exportTaskAuditParams(ExportTaskRequest request) {
@@ -490,14 +547,22 @@ public class PuppetNodeSQLController {
         }
         Map<String, Object> options = request.connectionOptions();
         StringBuilder path = new StringBuilder();
-        appendPathPart(path, firstText(options, "type", request.type()));
-        appendPathPart(path, firstText(options, "url", request.url()));
+        appendPathPart(path, firstText(options, "type", null));
+        appendPathPart(path, connectionTarget(options));
         appendPathPart(path, database);
         appendPathPart(path, table);
         if (detail != null && !detail.isBlank()) {
             appendPathPart(path, truncate(detail, 180));
         }
         return path.isEmpty() ? null : path.toString();
+    }
+
+    private String connectionTarget(Map<String, Object> options) {
+        for (String key : List.of("file", "database", "service", "sid", "host")) {
+            String value = firstText(options, key, null);
+            if (value != null) return value;
+        }
+        return null;
     }
 
     private String firstText(Map<String, Object> options, String key, String fallback) {
