@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.nio.file.StandardCopyOption;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,7 +41,16 @@ class PuppetNodeSqlServicePhpContractTest {
         Assumptions.assumeTrue(commandSucceeds("php", "-r",
                 "exit(in_array('sqlite',PDO::getAvailableDrivers(),true)?0:1);"), "pdo_sqlite is not installed");
         URL resource = Objects.requireNonNull(getClass().getResource("/components/DatabaseComponent.php"));
-        component = Paths.get(resource.toURI());
+        String urlString = resource.toString();
+        if (urlString.startsWith("jar:")) {
+            try (var in = resource.openStream()) {
+                component = Files.createTempFile("leo-database-component-", ".php");
+                component.toFile().deleteOnExit();
+                Files.copy(in, component, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } else {
+            component = Paths.get(resource.toURI());
+        }
         database = Files.createTempFile("leo-php-sql-service-", ".sqlite");
         service = new PuppetNodeSqlService(new SqlDialectFactory());
         connection = new LinkedHashMap<>();
