@@ -32,7 +32,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 
 ## 类型安全
 
-- [ ] **整数取值**：`((Number) params.get("key")).intValue()`，兼容 Integer/Long/Short/String 反序列化
+- [ ] **整数取值**：传输编解码器可能产生 `Number`、`String` 或 UTF-8 `byte[]`；先判断 `Number`，其他类型转文本后用 `Integer.parseInt` / `Long.parseLong` 解析（直接强转 `Number` 不兼容字符串）
 - [ ] **字符串取值**：`(String) params.get("key")` 或 `params.get("key").toString()`
 - [ ] **布尔取值**：`Boolean.TRUE.equals(params.get("key"))`
 - [ ] **byte[] 取值**：`(byte[]) params.get("key")`，注意 base64 编码场景需手动解码
@@ -43,6 +43,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 - [ ] **明确生命周期**：静态字段在 puppet 端同一 ClassLoader 下跨调用持续存在，确认这是预期行为
 - [ ] **资源清理**：持有 Socket/ServerSocket/Thread 等资源的静态字段，提供 cleanup 操作或在重新初始化时关闭上一轮残留
 - [ ] **线程安全**：多线程访问的静态字段使用 `ConcurrentHashMap`/`ConcurrentLinkedQueue`/`volatile`
+- [ ] **线程画像**：工作池可由 Component 自身实现 `ThreadFactory`，线程名使用 `getClass().getSimpleName()` 加有界序号，避免默认 pool 名称和固定功能名；不要使用匿名 ThreadFactory
 
 ## 错误处理
 
@@ -115,6 +116,8 @@ public class XxxComponent implements Runnable {
     // 2. 静态 Map 传递线程参数，key 为 Thread 对象本身
     private static final java.util.Map THREAD_PARAMS =
             new java.util.concurrent.ConcurrentHashMap();
+    private static final java.util.concurrent.atomic.AtomicInteger THREAD_SEQUENCE =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     public void run() {
         // 3. run() 入口先检查是否为工作线程
@@ -149,7 +152,8 @@ public class XxxComponent implements Runnable {
     private void mainLoop() {
         // ...
         // 6. 启动工作线程：先 put 参数，再 start
-        Thread t = new Thread(this, "XxxComponent-Worker");
+        Thread t = new Thread(this,
+                getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
         t.setDaemon(true);
         THREAD_PARAMS.put(t, new Object[]{socket, connId});
         t.start();

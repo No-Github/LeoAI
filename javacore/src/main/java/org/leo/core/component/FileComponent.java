@@ -63,8 +63,8 @@ public class FileComponent implements Runnable {
      * 文件操作处理
      */
     private void handleFile() throws Exception {
-        // 【修复 #1】使用 Number.intValue() 替代 (Integer) 直接拆箱
-        int action = ((Number) params.get("action")).intValue();
+        // Disguise/JSON 实现可能把整数反序列化为 String 或 UTF-8 byte[]。
+        int action = getRequiredIntParam("action");
 
         switch (action) {
             case ACTION_LIST_FILES:
@@ -210,6 +210,12 @@ public class FileComponent implements Runnable {
      */
     private void createNewFile() throws Exception {
         String path = getPathFromParams();
+        byte[] content = (byte[]) params.get("content");
+        if (content != null && content.length > MAX_WRITE_BYTES) {
+            results.put("code", 500);
+            results.put("msg", "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
+            return;
+        }
 
         File file = new File(path);
         if (file.exists()) {
@@ -234,17 +240,8 @@ public class FileComponent implements Runnable {
             return;
         }
 
-        // 【修复 #7】如果 params 包含 content，写入初始内容
-        byte[] content = (byte[]) params.get("content");
+        // 如果 params 包含 content，写入初始内容
         if (content != null && content.length > 0) {
-            // 【修复 #5】大小限制
-            if (content.length > MAX_WRITE_BYTES) {
-                results.put("code", 500);
-                results.put("msg", "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
-                // 文件已创建但不写内容，保持空文件
-                return;
-            }
-
             FileOutputStream fos = null;
             try {
                 fos = new FileOutputStream(file);
@@ -601,10 +598,35 @@ public class FileComponent implements Runnable {
         if (value == null) {
             return null;
         }
-        if (value instanceof String) {
-            return (String) value;
+        if (value instanceof byte[]) {
+            return new String((byte[]) value, "UTF-8");
         }
-        return new String((byte[]) value, "UTF-8");
+        return String.valueOf(value);
+    }
+
+    /**
+     * 获取必填整数参数，兼容不同传输编解码器产生的 Number/String/byte[]。
+     */
+    private int getRequiredIntParam(String key) throws UnsupportedEncodingException {
+        Object value = params.get(key);
+        if (value == null) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+
+        String text;
+        if (value instanceof byte[]) {
+            text = new String((byte[]) value, "UTF-8");
+        } else {
+            text = String.valueOf(value);
+        }
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be an integer: " + text);
+        }
     }
 
     /**

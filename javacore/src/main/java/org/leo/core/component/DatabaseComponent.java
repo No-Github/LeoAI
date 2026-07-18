@@ -1,5 +1,6 @@
 package org.leo.core.component;
 
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
 import java.sql.Connection;
 import java.sql.Driver;
@@ -39,7 +40,7 @@ public class DatabaseComponent implements Runnable {
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -51,21 +52,18 @@ public class DatabaseComponent implements Runnable {
      * 主要执行方法
      */
     public void invoke() throws Exception {
-        String url = (String) params.get("jdbcUrl");
-        String user = (String) params.get("username");
-        String password = (String) params.get("password");
-        String sql = (String) params.get("sql");
-        String driver = (String) params.get("driverClass");
+        String url = getStringParam("jdbcUrl");
+        String user = getStringParam("username");
+        String password = getStringParam("password");
+        String sql = getStringParam("sql");
+        String driver = getStringParam("driverClass");
 
         // 参数校验，统一返回格式
-        if (url == null || url.trim().isEmpty() || sql == null || sql.trim().isEmpty()) {
+        if (url == null || url.trim().length() == 0 || sql == null || sql.trim().length() == 0
+                || driver == null || driver.trim().length() == 0) {
             results.put("code", 400);
-            results.put("msg", "缺少必填参数: jdbcUrl 或 sql");
-            results.put("columns", new ArrayList<HashMap<String, Object>>());
-            results.put("rows", new ArrayList<HashMap<String, Object>>());
-            results.put("rowCount", null);
-            results.put("affectedRows", 0);
-            results.put("generatedKey", null);
+            results.put("msg", "缺少必填参数: driverClass、jdbcUrl 或 sql");
+            putEmptyResults();
             return;
         }
 
@@ -113,20 +111,29 @@ public class DatabaseComponent implements Runnable {
             results.put("code", 200);
             results.put("msg", "执行成功");
         } catch (Exception ex) {
+            putEmptyResults();
             results.put("code", 500);
             results.put("msg", ex.getMessage());
             throw ex;
         } finally {
-            closeResource(rs, "ResultSet");
-            closeResource(stmt, "Statement");
-            closeResource(conn, "Connection");
+            closeResource(rs);
+            closeResource(stmt);
+            closeResource(conn);
         }
+    }
+
+    private void putEmptyResults() {
+        results.put("columns", new ArrayList<HashMap<String, Object>>());
+        results.put("rows", new ArrayList<HashMap<String, Object>>());
+        results.put("rowCount", null);
+        results.put("affectedRows", Integer.valueOf(0));
+        results.put("generatedKey", null);
     }
 
     /**
      * 安全关闭资源
      */
-    private void closeResource(Object resource, String resourceName) {
+    private void closeResource(Object resource) {
         if (resource != null) {
             try {
                 if (resource instanceof ResultSet) {
@@ -167,7 +174,7 @@ public class DatabaseComponent implements Runnable {
                     "JDBC driver not found: " + driver
                     + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
         }
-        Object driverInstance = driverClass.getDeclaredConstructor().newInstance();
+        Object driverInstance = driverClass.newInstance();
 
         // 直接用 Driver.connect(url, props) 而不是 DriverManager.getConnection()
         // —— DriverManager 会检查 Driver 是否由调用类的 CL 加载，跨 CL 会失败
@@ -264,5 +271,15 @@ public class DatabaseComponent implements Runnable {
             }
         }
         return copy;
+    }
+
+    private String getStringParam(String key) {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof byte[]) {
+            try { return new String((byte[]) value, "UTF-8"); }
+            catch (UnsupportedEncodingException ignored) { return new String((byte[]) value); }
+        }
+        return String.valueOf(value);
     }
 }

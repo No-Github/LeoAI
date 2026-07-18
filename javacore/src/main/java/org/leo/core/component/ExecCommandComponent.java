@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Persistent interactive terminal component.
@@ -50,6 +51,7 @@ public class ExecCommandComponent implements Runnable {
     private static final Map env = new ConcurrentHashMap();
     private static final Map THREAD_PARAMS = new ConcurrentHashMap();
     private static final String INSTANCE_ID = createInstanceId();
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
     private static final String PYTHON_PTY_BRIDGE =
         "from __future__ import print_function\n" +
@@ -186,6 +188,8 @@ public class ExecCommandComponent implements Runnable {
             } else if (stdout != null) {
                 try { stdout.close(); } catch (IOException ignored) {}
             }
+            if (process != null) closeProcessStreams(process);
+            deleteTerminalFiles(processMap);
             processMap.put("exited", Boolean.TRUE);
             notifyStateChange(processMap);
         }
@@ -212,7 +216,12 @@ public class ExecCommandComponent implements Runnable {
 
         touchProcess(processMap);
         if (operation == OP_WRITE) {
-            waitForProcessReady(processMap);
+            try {
+                waitForProcessReady(processMap);
+            } catch (Exception error) {
+                destroyProcess(processId, processMap);
+                throw error;
+            }
             String command = getStringParam("cmd");
             if (!"init".equals(command)) writeCommand(processMap);
             writeTerminalMetadata(processMap);
@@ -249,7 +258,8 @@ public class ExecCommandComponent implements Runnable {
         }
         if (existing != null) return existing;
 
-        Thread worker = new Thread(this, "ExecCommand-" + processId);
+        Thread worker = new Thread(this,
+                getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
         worker.setDaemon(true);
         THREAD_PARAMS.put(worker, processId);
         try {

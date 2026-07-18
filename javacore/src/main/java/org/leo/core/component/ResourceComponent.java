@@ -7,6 +7,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -51,7 +52,7 @@ public class ResourceComponent implements Runnable {
     public void run() {
         InvocationHandler h = (InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = (HashMap) h.invoke(null, null, null);
+            params = copyStringObjectMap(h.invoke(null, null, null));
             results = new HashMap();
             invoke();
         } catch (Throwable t) {
@@ -70,18 +71,24 @@ public class ResourceComponent implements Runnable {
     }
 
     public void invoke() throws Exception {
-        if (!params.containsKey("resourcePath")) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "resourcePath 不能为空");
-            return;
-        }
-        String resourcePath = (String) params.get("resourcePath");
+        resourceTooLarge = false;
+        String resourcePath = getStringParam("resourcePath");
         if (resourcePath == null || resourcePath.trim().length() == 0) {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "resourcePath 不能为空");
             return;
         }
-        resourcePath = resourcePath.trim();
+        resourcePath = resourcePath.trim().replace('\\', '/');
+        while (resourcePath.startsWith("/")) {
+            resourcePath = resourcePath.substring(1);
+        }
+        if (resourcePath.length() == 0 || "..".equals(resourcePath)
+                || resourcePath.startsWith("../") || resourcePath.endsWith("/..")
+                || resourcePath.indexOf("/../") >= 0) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "resourcePath 包含无效路径片段");
+            return;
+        }
 
         // 依次尝试所有可能持有该资源的 ClassLoader
         byte[] bytes = readResource(resourcePath);
@@ -140,7 +147,17 @@ public class ResourceComponent implements Runnable {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
             int n;
-            while ((n = in.read(buffer)) > 0) {
+            while ((n = in.read(buffer)) != -1) {
+                if (n == 0) {
+                    int single = in.read();
+                    if (single == -1) break;
+                    if (baos.size() >= MAX_RESOURCE_SIZE) {
+                        resourceTooLarge = true;
+                        throw new java.io.IOException("资源超过最大允许大小");
+                    }
+                    baos.write(single);
+                    continue;
+                }
                 if (baos.size() > MAX_RESOURCE_SIZE - n) {
                     resourceTooLarge = true;
                     throw new java.io.IOException("资源超过最大允许大小");
@@ -192,5 +209,27 @@ public class ResourceComponent implements Runnable {
             }
         }
         return result;
+    }
+
+    private String getStringParam(String key) throws java.io.UnsupportedEncodingException {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof String) return (String) value;
+        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        return String.valueOf(value);
+    }
+
+    private static HashMap copyStringObjectMap(Object value) {
+        HashMap copy = new HashMap();
+        if (!(value instanceof Map)) return copy;
+        Map source = (Map) value;
+        Iterator entries = source.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry entry = (Map.Entry) entries.next();
+            if (entry.getKey() instanceof String) {
+                copy.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return copy;
     }
 }

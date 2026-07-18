@@ -1,6 +1,5 @@
 package org.leo.core.component;
 
-import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -9,7 +8,9 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 主机可达性检测组件
@@ -18,10 +19,11 @@ import java.util.concurrent.TimeUnit;
  * @author LeoSpring
  * @version 2.1
  */
-public class HostIsReachableComponent implements Runnable {
+public class HostIsReachableComponent implements Runnable, ThreadFactory {
 
     private static final int MAX_THREADS = 64;
     private static final int MAX_TIMEOUT_MS = 300000;
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
     private HashMap params;
     private HashMap results;
@@ -74,15 +76,14 @@ public class HostIsReachableComponent implements Runnable {
             }
             return;
         }
-        try {
-            if (isReachable(scanHost, scanTimeout)) {
-                reachableHostList.add(scanHost);
-            } else {
-                unreachableHostList.add(scanHost);
-            }
-        } finally {
-            // 无论成功失败都要减少计数
-            if (latch != null) {
+        boolean reachable = isReachable(scanHost, scanTimeout);
+        if (latch != null) {
+            synchronized (latch) {
+                if (reachable) {
+                    reachableHostList.add(scanHost);
+                } else {
+                    unreachableHostList.add(scanHost);
+                }
                 latch.countDown();
             }
         }
@@ -106,10 +107,11 @@ public class HostIsReachableComponent implements Runnable {
         String[] scanHosts = new String[scanHostsList.size()];
         for (int i = 0; i < scanHostsList.size(); i++) {
             Object hostObj = scanHostsList.get(i);
-            if (hostObj == null || hostObj.toString().trim().length() == 0) {
+            String host = hostObj == null ? null : toHost(hostObj).trim();
+            if (host == null || host.length() == 0) {
                 throw new IllegalArgumentException("scanHosts 包含空主机，索引: " + i);
             }
-            scanHosts[i] = hostObj.toString().trim();
+            scanHosts[i] = host;
         }
 
         // 获取超时时间，默认3000毫秒
@@ -125,13 +127,14 @@ public class HostIsReachableComponent implements Runnable {
         // 有多少host就启动多少线程
         int hostCount = scanHosts.length;
         int threadCount = Math.min(hostCount, MAX_THREADS);
-        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount, this);
         CountDownLatch latch = new CountDownLatch(hostCount);
 
+        boolean completed = false;
         try {
             // 为每个host启动一个线程
-            for (String scanHost : scanHosts) {
-                pool.execute(new HostIsReachableComponent(scanHost, scanTimeout, 
+            for (int i = 0; i < scanHosts.length; i++) {
+                pool.execute(new HostIsReachableComponent(scanHosts[i], scanTimeout,
                                                           reachableHostList, unreachableHostList, 
                                                           latch));
             }
@@ -140,24 +143,38 @@ public class HostIsReachableComponent implements Runnable {
             long batches = (hostCount + threadCount - 1L) / threadCount;
             long waitMillis = batches * (long) scanTimeout + 5000L;
             if (waitMillis > MAX_TIMEOUT_MS) waitMillis = MAX_TIMEOUT_MS;
-            boolean completed = latch.await(waitMillis, TimeUnit.MILLISECONDS);
+            completed = latch.await(waitMillis, TimeUnit.MILLISECONDS);
+
+            ArrayList reachableSnapshot;
+            ArrayList unreachableSnapshot;
+            int pendingCount;
+            synchronized (latch) {
+                reachableSnapshot = new ArrayList(reachableHostList);
+                unreachableSnapshot = new ArrayList(unreachableHostList);
+                pendingCount = (int) latch.getCount();
+            }
 
             // 返回结果
             results.put("code", 200);
-            results.put("reachableHostList", new ArrayList(reachableHostList));
-            results.put("unreachableHostList", new ArrayList(unreachableHostList));
+            results.put("reachableHostList", reachableSnapshot);
+            results.put("unreachableHostList", unreachableSnapshot);
             results.put("totalCount", hostCount);
-            results.put("reachableCount", reachableHostList.size());
-            results.put("unreachableCount", unreachableHostList.size());
-            results.put("pendingCount", Integer.valueOf((int) latch.getCount()));
+            results.put("reachableCount", reachableSnapshot.size());
+            results.put("unreachableCount", unreachableSnapshot.size());
+            results.put("pendingCount", Integer.valueOf(pendingCount));
             results.put("timedOut", Boolean.valueOf(!completed));
-            if (!completed) {
-                pool.shutdownNow();
-            }
         } finally {
-            // 关闭线程池
-            pool.shutdown();
+            if (completed) pool.shutdown(); else pool.shutdownNow();
         }
+    }
+
+    public Thread newThread(Runnable task) {
+        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+    }
+
+    private String toHost(Object value) throws Exception {
+        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        return String.valueOf(value);
     }
 
     /**
@@ -167,15 +184,11 @@ public class HostIsReachableComponent implements Runnable {
      * @param timeout 超时时间，单位毫秒
      * @return true表示可达，false表示不可达
      */
-    private Boolean isReachable(String host, int timeout) {
+    private boolean isReachable(String host, int timeout) {
         try {
             InetAddress inet = InetAddress.getByName(host);
             return inet.isReachable(timeout);
-        } catch (IOException e) {
-            // 网络异常或主机不可达
-            return false;
         } catch (Exception e) {
-            // 其他异常，如无效的主机名
             return false;
         }
     }

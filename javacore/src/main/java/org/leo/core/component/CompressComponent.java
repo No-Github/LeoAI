@@ -251,7 +251,6 @@ public class CompressComponent implements Runnable {
         } catch (Exception e) {
             results.put("code",500);
             results.put("msg", e.getMessage());
-            throw e;
         }
     }
 

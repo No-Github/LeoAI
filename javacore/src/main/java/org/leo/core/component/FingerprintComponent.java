@@ -31,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -48,7 +49,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author LeoSpring
  * @version 3.0
  */
-public class FingerprintComponent implements Runnable, InvocationHandler {
+public class FingerprintComponent implements Runnable, InvocationHandler, ThreadFactory {
+
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
     private HashMap params;
     private HashMap results;
@@ -237,20 +240,25 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
         tasks.put(id, task);
         taskLocks.put(id, lock);
 
-        ExecutorService pool = Executors.newFixedThreadPool(threads);
-        task.put("executor", pool);
+        ExecutorService pool = null;
         try {
+            pool = Executors.newFixedThreadPool(threads, this);
+            task.put("executor", pool);
             for (int i = 0; i < targets.size(); i++) {
                 pool.execute(new FingerprintComponent(id, (Map) targets.get(i)));
             }
         } catch (RuntimeException e) {
-            task.put("status", STATE_STOPPED);
-            task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-            pool.shutdownNow();
+            if (pool != null) pool.shutdownNow();
+            tasks.remove(id);
+            taskLocks.remove(id);
             throw e;
         }
         pool.shutdown();
         return id;
+    }
+
+    public Thread newThread(Runnable task) {
+        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
     }
 
     // ==================== 暂停 / 恢复 / 停止 ====================
@@ -295,19 +303,7 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
 
     private void stop(Object id) {
         HashMap task = requireTask(id);
-        Object  lock = taskLocks.get(id);
-        if (lock != null) {
-            synchronized (lock) {
-                task.put("status",     STATE_STOPPED);
-                task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-                lock.notifyAll();
-            }
-        } else {
-            synchronized (task) {
-                task.put("status",     STATE_STOPPED);
-                task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-            }
-        }
+        finishTask(task, true);
         Object executor = task.get("executor");
         if (executor instanceof ExecutorService) ((ExecutorService) executor).shutdownNow();
         task.remove("executor");
@@ -318,20 +314,20 @@ public class FingerprintComponent implements Runnable, InvocationHandler {
         int done  = completed != null ? completed.incrementAndGet() : 0;
         int total = intVal(task.get("total"), 0);
         if (total > 0 && done >= total) {
-            Object lock = taskLocks.get(task.get("taskId"));
-            if (lock != null) {
-                synchronized (lock) {
-                    if (!STATE_STOPPED.equals(task.get("status"))) task.put("status", STATE_STOPPED);
-                    if (task.get("finishedAt") == null) task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-                    lock.notifyAll();
-                }
-            } else {
-                synchronized (task) {
-                    if (!STATE_STOPPED.equals(task.get("status"))) task.put("status", STATE_STOPPED);
-                    if (task.get("finishedAt") == null) task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-                }
-            }
+            finishTask(task, false);
             task.remove("executor");
+        }
+    }
+
+    private void finishTask(HashMap task, boolean refreshFinishedAt) {
+        Object monitor = taskLocks.get(task.get("taskId"));
+        if (monitor == null) monitor = task;
+        synchronized (monitor) {
+            task.put("status", STATE_STOPPED);
+            if (refreshFinishedAt || task.get("finishedAt") == null) {
+                task.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            }
+            monitor.notifyAll();
         }
     }
 

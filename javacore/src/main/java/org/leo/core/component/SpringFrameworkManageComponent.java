@@ -31,18 +31,25 @@ public class SpringFrameworkManageComponent implements Runnable {
         }
     }
 
-    /**
-     * 每次执行操作前现取 Spring ApplicationContext。
-     * 跨方法调用之间不缓存：避免首次 idle 拿不到就永久卡死，
-     * 也防止 contextRefreshed 后引用旧的过期 context。
-     */
     private Object context;
 
-
     public void invoke() throws Exception {
-        // 每次现取，不缓存——idle 环境下首次失败也不会污染后续调用
+        Object methodObj = params.get("methodName");
+        if (!(methodObj instanceof String)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "methodName required");
+            return;
+        }
+        String methodName = (String) methodObj;
+        if (!"getFrameworkInfo".equals(methodName)
+                && !"unLoadController".equals(methodName)
+                && !"unLoadInterceptor".equals(methodName)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 methodName: " + methodName);
+            return;
+        }
+        // 每次现取，不缓存，避免首次 idle 失败或 context 刷新后保留旧引用。
         context = getContext();
-        String methodName = (String) params.get("methodName");
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
         } else if ("unLoadController".equals(methodName)) {
@@ -51,10 +58,6 @@ public class SpringFrameworkManageComponent implements Runnable {
         } else if ("unLoadInterceptor".equals(methodName)) {
             String interceptorId= (String) params.get("interceptorId");
             unLoadInterceptor(interceptorId);
-        } else {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "未知 methodName: " + methodName);
-            return;
         }
         results.put("code", 200);
     }
@@ -62,24 +65,14 @@ public class SpringFrameworkManageComponent implements Runnable {
 
     private HashMap getFrameworkInfo() throws Exception {
         HashMap frameworkInfo=new HashMap();
-        try {frameworkInfo.put("allController",getAllController());}catch (Exception e){}
-        try {frameworkInfo.put("allMappedInterceptor",getAllMappedInterceptor());}catch (Exception e){}
+        try {frameworkInfo.put("allController",getAllController());}catch (Exception ignored){}
+        try {frameworkInfo.put("allMappedInterceptor",getAllMappedInterceptor());}catch (Exception ignored){}
         return frameworkInfo;
     }
     public ArrayList getAllController() throws Exception {
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
-        Object mappingRegistry;
-        try {
-            mappingRegistry=invokeMethod(abstractHandlerMapping,"getMappingRegistry");
-        }catch (Exception e){
-            mappingRegistry=getFV(abstractHandlerMapping,"mappingRegistry");
-        }
-        Map registry;
-        try{
-            registry= (Map) invokeMethod(mappingRegistry,"getRegistrations");
-        }catch (Exception e){
-            registry= (Map) getFV(mappingRegistry,"registry");
-        }
+        Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
+        Map registry = getRegistrations(mappingRegistry);
         ArrayList allController=new ArrayList();
         Iterator s=registry.keySet().iterator();
         while (s.hasNext()){
@@ -104,17 +97,34 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
 
-    public void unLoadController(String mappingInfo) throws InvocationTargetException, NoSuchMethodException {
+    public void unLoadController(String mappingInfo) throws Exception {
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
 
-        Object mappingRegistry = invokeMethod(abstractHandlerMapping, "getMappingRegistry");
-        Map registry = (Map) invokeMethod(mappingRegistry, "getRegistrations");
+        Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
+        Map registry = getRegistrations(mappingRegistry);
         Iterator it = new ArrayList(registry.keySet()).iterator();
 
         while (it.hasNext()) {
             Object key = it.next();
-            if (key.toString().equals(mappingInfo)) {invokeMethod(mappingRegistry, "unregister", new Class[]{Object.class}, new Object[]{key});
+            if (key.toString().equals(mappingInfo)) {
+                invokeMethod(mappingRegistry, "unregister", new Class[]{key.getClass()}, new Object[]{key});
             }
+        }
+    }
+
+    private Object getMappingRegistry(Object handlerMapping) throws Exception {
+        try {
+            return invokeMethod(handlerMapping, "getMappingRegistry");
+        } catch (Exception ignored) {
+            return getFV(handlerMapping, "mappingRegistry");
+        }
+    }
+
+    private Map getRegistrations(Object mappingRegistry) throws Exception {
+        try {
+            return (Map) invokeMethod(mappingRegistry, "getRegistrations");
+        } catch (Exception ignored) {
+            return (Map) getFV(mappingRegistry, "registry");
         }
     }
 
@@ -308,11 +318,11 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
 
-    static synchronized Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, InvocationTargetException {
+    static Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, InvocationTargetException {
         return invokeMethod(targetObject, methodName, new Class[0], new Object[0]);
     }
 
-    public static synchronized Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException {
+    public static Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException {
         Class clazz = (obj instanceof Class) ? (Class) obj : obj.getClass();
         Method method = null;
 

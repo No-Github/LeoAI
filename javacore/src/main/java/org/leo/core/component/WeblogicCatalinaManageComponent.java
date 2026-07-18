@@ -33,19 +33,27 @@ public class WeblogicCatalinaManageComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        String methodName = (String) params.get("methodName");
+        Object methodObj = params.get("methodName");
+        if (!(methodObj instanceof String)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "methodName required");
+            return;
+        }
+        String methodName = (String) methodObj;
         if ("getCatalinaInfo".equals(methodName)) {
             results.put("catalinaInfo",getCatalinaInfo());
-        }
-        if ("unLoadFilter".equals(methodName)) {
+        } else if ("unLoadFilter".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("filterName");
             unLoadFilter(contextName,filterName);
-        }
-        if ("unLoadServlet".equals(methodName)) {
+        } else if ("unLoadServlet".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("servletPattern");
             unLoadServlet(contextName,filterName);
+        } else {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 methodName: " + methodName);
+            return;
         }
         results.put("code", 200);
     }
@@ -86,7 +94,7 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                 Object map=invokeMethod(filterPattern,"getMap");
                 Object urlPatterns=invokeMethod(map,"keys");
                 filterInfo.put("filterName",filterName);
-                filterInfo.put("servletName",getFV(filterPattern, servletName));
+                filterInfo.put("servletName", servletName);
                 filterInfo.put("urlPatterns",urlPatterns);
                 Object filter=filters.get(filterName);
                 filterInfo.put("filterClass",getFV(filter, "filterClassName"));
@@ -218,17 +226,21 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         for (Object standardContext:getContext()){
             if (contextName.equals(getFV(standardContext,"contextName"))){
                 Object filterManager = invokeMethod(standardContext, "getFilterManager");
-                HashMap filters= (HashMap) getFV(filterManager,"filters");
-                ArrayList filterPatternList= (ArrayList) getFV(filterManager,"filterPatternList");
-                filters.remove(filterName);
-                for (Object filterPattern:filterPatternList) {
-                    if (invokeMethod(filterPattern,"getFilterName").equals(filterName)){
-                        filterPatternList.remove(filterPattern);
-                    }
-                }
+                removeFilter(filterManager, filterName);
             }
         }
         return true;
+    }
+
+    private void removeFilter(Object filterManager, String filterName) throws Exception {
+        HashMap filters = (HashMap) getFV(filterManager,"filters");
+        ArrayList filterPatternList = (ArrayList) getFV(filterManager,"filterPatternList");
+        filters.remove(filterName);
+        Iterator iterator = filterPatternList.iterator();
+        while (iterator.hasNext()) {
+            Object filterPattern = iterator.next();
+            if (filterName.equals(invokeMethod(filterPattern,"getFilterName"))) iterator.remove();
+        }
     }
 
     public Boolean unLoadServlet(String contextName,String servletPattern) throws Exception {
@@ -324,9 +336,9 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         for (int i = 0; i < threadCount; i++) {
             Thread thread = threads[i];
             if (thread != null) {
-                Object workEntry = getFV(thread, "workEntry");
-                if (workEntry != null) {
-                    try {
+                try {
+                    Object workEntry = getFV(thread, "workEntry");
+                    if (workEntry != null) {
                         Object context = null;
                         Object connectionHandler = getFV(workEntry, "connectionHandler");
                         if (connectionHandler != null) {
@@ -342,9 +354,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                         if (context != null) {
                             webappContexts.add(context);
                         }
-                    } catch (Throwable e) {
-
                     }
+                } catch (Throwable ignored) {
                 }
             }
         }
@@ -485,11 +496,11 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         throw new NoSuchFieldException(fieldName);
     }
 
-    static synchronized Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+    static Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
         return invokeMethod(targetObject, methodName, new Class[0], new Object[0]);
     }
 
-    public static synchronized Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+    public static Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
         Class clazz = (obj instanceof Class) ? (Class) obj : obj.getClass();
         Method method = null;
 

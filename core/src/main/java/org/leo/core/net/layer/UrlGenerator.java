@@ -3,6 +3,10 @@ package org.leo.core.net.layer;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 /**
  * URL 生成器，根据 UrlStrategy 配置为每次请求生成不同的 URL。
@@ -31,11 +35,20 @@ public class UrlGenerator {
 
     private final UrlStrategy strategy;
     private final String fallbackUrl;
-    private final Random random = new Random();
+    private final Random random;
+    private final boolean sessionStable;
+    private String stableUrl;
 
     public UrlGenerator(UrlStrategy strategy, String fallbackUrl) {
+        this(strategy, fallbackUrl, null);
+    }
+
+    /** 创建 seed 驱动的会话级 URL 生成器；同一 seed 始终选择同一路径。 */
+    public UrlGenerator(UrlStrategy strategy, String fallbackUrl, String seed) {
         this.strategy = strategy;
         this.fallbackUrl = fallbackUrl;
+        this.sessionStable = seed != null && !seed.isBlank();
+        this.random = sessionStable ? new Random(seedLong(seed)) : new Random();
     }
 
     /**
@@ -43,8 +56,19 @@ public class UrlGenerator {
      * 如果策略未启用或配置无效，返回 fallbackUrl。
      */
     public String nextUrl() {
+        return nextUrl(null);
+    }
+
+    /**
+     * 按请求方法生成 URL。POST/PUT/PATCH 不使用图片、字体等二进制静态资源扩展名。
+     */
+    public synchronized String nextUrl(String method) {
         if (strategy == null || !strategy.isEnabled()) {
             return fallbackUrl;
+        }
+
+        if (sessionStable && stableUrl != null) {
+            return stableUrl;
         }
 
         UrlStrategy.Mode mode = strategy.getMode();
@@ -52,16 +76,23 @@ public class UrlGenerator {
             return fallbackUrl;
         }
 
+        String generated;
         switch (mode) {
             case POOL:
-                return pickFromPool();
+                generated = pickFromPool();
+                break;
             case TEMPLATE:
-                return renderTemplate();
+                generated = renderTemplate(method);
+                break;
             case STATIC_ASSET:
-                return generateStaticAssetPath();
+                generated = generateStaticAssetPath(method);
+                break;
             default:
-                return fallbackUrl;
+                generated = fallbackUrl;
         }
+        generated = resolve(generated);
+        if (sessionStable) stableUrl = generated;
+        return generated;
     }
 
     // ==================== POOL 模式 ====================
@@ -76,7 +107,7 @@ public class UrlGenerator {
 
     // ==================== TEMPLATE 模式 ====================
 
-    private String renderTemplate() {
+    private String renderTemplate(String method) {
         String template = strategy.getUrlTemplate();
         if (template == null || template.isEmpty()) {
             return fallbackUrl;
@@ -96,7 +127,7 @@ public class UrlGenerator {
             result = replaceFirst(result, "{ts}", String.valueOf(System.currentTimeMillis()));
         }
         while (result.contains("{ext}")) {
-            result = replaceFirst(result, "{ext}", randomExtension());
+            result = replaceFirst(result, "{ext}", randomExtension(method));
         }
         while (result.contains("{word}")) {
             result = replaceFirst(result, "{word}", COMMON_WORDS[random.nextInt(COMMON_WORDS.length)]);
@@ -113,11 +144,11 @@ public class UrlGenerator {
 
     // ==================== STATIC_ASSET 模式 ====================
 
-    private String generateStaticAssetPath() {
+    private String generateStaticAssetPath(String method) {
         String prefix = strategy.getPrefix() != null ? strategy.getPrefix() : "/static";
         String dir = STATIC_DIRS[random.nextInt(STATIC_DIRS.length)];
         String name = randomAlphaNum(4) + "." + randomHex(6);
-        String ext = randomExtension();
+        String ext = randomExtension(method);
 
         return prefix + "/" + dir + "/" + name + ext;
     }
@@ -140,12 +171,59 @@ public class UrlGenerator {
         return sb.toString();
     }
 
-    private String randomExtension() {
+    private String randomExtension(String method) {
         List<String> exts = strategy.getExtensions();
-        if (exts != null && !exts.isEmpty()) {
-            return exts.get(random.nextInt(exts.size()));
+        List<String> candidates = exts != null && !exts.isEmpty()
+                ? exts : java.util.Arrays.asList(DEFAULT_EXTENSIONS);
+        if (isBodyMethod(method)) {
+            List<String> coherent = candidates.stream()
+                    .filter(this::isBodyExtension)
+                    .toList();
+            if (!coherent.isEmpty()) candidates = coherent;
+            else return ".json";
         }
-        return DEFAULT_EXTENSIONS[random.nextInt(DEFAULT_EXTENSIONS.length)];
+        return candidates.get(random.nextInt(candidates.size()));
+    }
+
+    private boolean isBodyMethod(String method) {
+        return method != null && ("POST".equalsIgnoreCase(method)
+                || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method));
+    }
+
+    private boolean isBodyExtension(String extension) {
+        if (extension == null) return false;
+        String value = extension.toLowerCase(java.util.Locale.ROOT);
+        return value.equals(".json") || value.equals(".js") || value.equals(".map")
+                || value.equals(".txt") || value.equals(".html");
+    }
+
+    private String resolve(String candidate) {
+        if (candidate == null || candidate.isBlank()) return fallbackUrl;
+        try {
+            URI value = URI.create(candidate);
+            if (value.isAbsolute()) return value.toString();
+            URI base = URI.create(fallbackUrl);
+            if (!base.isAbsolute()) return candidate;
+            String path = candidate.startsWith("/") ? candidate : "/" + candidate;
+            return new URI(base.getScheme(), base.getUserInfo(), base.getHost(), base.getPort(),
+                    null, null, null).resolve(path).toString();
+        } catch (Exception ignored) {
+            return fallbackUrl;
+        }
+    }
+
+    private long seedLong(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            long seed = 0L;
+            for (int index = 0; index < Long.BYTES; index++) {
+                seed = (seed << 8) | (digest[index] & 0xffL);
+            }
+            return seed;
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String replaceFirst(String source, String target, String replacement) {

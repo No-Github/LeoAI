@@ -3,8 +3,9 @@ package org.leo.core.puppet.service;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
+import org.leo.core.rpc.PuppetOperation;
 
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -15,8 +16,6 @@ public class TestConnService extends ComponentService {
     }
 
     public Map<String, Object> testConn() {
-        Map<String, Object> params = new HashMap<String, Object>();
-        params.put("M", 0);
-        return run(params);
+        return run(PuppetOperation.PING, null, null, Collections.emptyMap());
     }
 }

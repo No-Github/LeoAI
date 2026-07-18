@@ -52,6 +52,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -63,8 +65,11 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     List<RequestLayer> requestLayers = new ArrayList<>();
     List<ResponseLayer> responseLayers = new ArrayList<>();
 
-    private HashMap<String, Set<String>> allLoadedComponent = new HashMap<String, Set<String>>();
+    private static final int MAX_LOADED_COMPONENT_HOSTS = 128;
+    private final LinkedHashMap<String, Set<String>> allLoadedComponent =
+            new LinkedHashMap<String, Set<String>>(16, 0.75f, true);
     private final List<ComponentService> componentServices = new ArrayList<ComponentService>();
+    private final ComponentLoadRegistry componentLoadRegistry = new ComponentLoadRegistry();
     BasicInfoService basicInfoService;
     CommandService commandService;
     ComponentService componentService;
@@ -182,6 +187,10 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 wifiProfileService, persistenceService, networkConnectionService,
                 mountDiskService, clipboardService);
 
+        for (ComponentService service : componentServices) {
+            service.setComponentLoadRegistry(componentLoadRegistry);
+        }
+
         if (hostId != null) {
             setHostId(hostId);
         }
@@ -259,8 +268,15 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public void addLoadedComponent(String hostId, Set<String> loadedComponent){
-        allLoadedComponent.put(hostId,loadedComponent);
+    public synchronized void addLoadedComponent(String hostId, Set<String> loadedComponent){
+        if (hostId == null || loadedComponent == null) return;
+        allLoadedComponent.put(hostId, new HashSet<String>(loadedComponent));
+        while (allLoadedComponent.size() > MAX_LOADED_COMPONENT_HOSTS) {
+            Iterator<String> iterator = allLoadedComponent.keySet().iterator();
+            if (!iterator.hasNext()) break;
+            iterator.next();
+            iterator.remove();
+        }
         // 同步到所有 ComponentService 实例，避免重复加载
         syncLoadedComponentsToServices(hostId, loadedComponent);
     }
@@ -306,7 +322,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public Set<String> getLoadedComponents() {
+    public synchronized Set<String> getLoadedComponents() {
         // 聚合所有 ComponentService 实例的已加载组件，避免仅读单一 service 导致漏显
         Set<String> merged = new HashSet<String>();
         if (hostId != null) {
@@ -317,7 +333,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         if (!merged.isEmpty()) return merged;
         // fallback: 从旧的本地缓存读取
         Set<String> set = allLoadedComponent.get(hostId);
-        return set != null ? set : new HashSet<String>();
+        return set != null ? new HashSet<String>(set) : new HashSet<String>();
     }
 
     @Override
@@ -1243,14 +1259,35 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     @Override
     public void close() throws Exception {
-        networkProxyManager.close();
-        if (httpSenderService != null) {
-            httpSenderService.close();
+        Exception failure = null;
+        try {
+            networkProxyManager.close();
+        } catch (Exception e) {
+            failure = e;
         }
-        if (communication instanceof java.io.Closeable closeable) {
-            closeable.close();
-        } else if (communication instanceof org.java_websocket.client.WebSocketClient webSocketClient) {
-            webSocketClient.close();
+        try {
+            if (httpSenderService != null) httpSenderService.close();
+        } catch (Exception e) {
+            if (failure == null) failure = e; else failure.addSuppressed(e);
         }
+        try {
+            if (communication instanceof java.io.Closeable closeable) {
+                closeable.close();
+            } else if (communication instanceof org.java_websocket.client.WebSocketClient webSocketClient) {
+                webSocketClient.close();
+            }
+        } catch (Exception e) {
+            if (failure == null) failure = e; else failure.addSuppressed(e);
+        } finally {
+            for (ComponentService service : componentServices) {
+                service.clearLoadedComponentCache();
+            }
+            componentServices.clear();
+            synchronized (this) {
+                allLoadedComponent.clear();
+            }
+            componentLoadRegistry.clear();
+        }
+        if (failure != null) throw failure;
     }
 }

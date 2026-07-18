@@ -6,20 +6,24 @@ $available = static function ($name) {
     return function_exists($name) && !in_array($name,
         array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
 };
-$baseDirectory = rtrim((string)sys_get_temp_dir(), DIRECTORY_SEPARATOR)
-    . DIRECTORY_SEPARATOR . '.leo-php-terminal';
 $phpBinary = defined('PHP_BINARY') ? (string)constant('PHP_BINARY') : '';
 $instanceId = substr(hash('sha256', php_uname('n') . '|' . __FILE__ . '|' . $phpBinary), 0, 16);
-$pathsForKey = static function ($key) use ($baseDirectory) {
+$baseDirectory = rtrim((string)sys_get_temp_dir(), DIRECTORY_SEPARATOR)
+    . DIRECTORY_SEPARATOR . '.' . substr(hash('sha256', __FILE__ . '|state'), 0, 14);
+$fileSuffixes = [];
+foreach (['state', 'output', 'input', 'size', 'bridge', 'exit', 'lock'] as $fileLabel) {
+    $fileSuffixes[$fileLabel] = '.' . substr(hash('sha256', __FILE__ . '|file|' . $fileLabel), 0, 12);
+}
+$pathsForKey = static function ($key) use ($baseDirectory, $fileSuffixes) {
     $prefix = $baseDirectory . DIRECTORY_SEPARATOR . $key;
     return [
-        'state' => $prefix . '.json',
-        'output' => $prefix . '.out',
-        'input' => $prefix . '.in',
-        'size' => $prefix . '.size',
-        'bridge' => $prefix . '.py',
-        'exit' => $prefix . '.exit',
-        'lock' => $prefix . '.lock'
+        'state' => $prefix . $fileSuffixes['state'],
+        'output' => $prefix . $fileSuffixes['output'],
+        'input' => $prefix . $fileSuffixes['input'],
+        'size' => $prefix . $fileSuffixes['size'],
+        'bridge' => $prefix . $fileSuffixes['bridge'],
+        'exit' => $prefix . $fileSuffixes['exit'],
+        'lock' => $prefix . $fileSuffixes['lock']
     ];
 };
 $sessionPaths = static function ($processId) use ($pathsForKey) {
@@ -32,9 +36,12 @@ $loadState = static function ($path) {
 };
 $saveState = static function ($path, $state) {
     $encoded = json_encode($state);
-    if (!is_string($encoded) || @file_put_contents($path, $encoded, LOCK_EX) === false) {
+    $temporary = $path . '.' . getmypid() . '.tmp';
+    if (!is_string($encoded) || @file_put_contents($temporary, $encoded, LOCK_EX) === false) {
         throw new RuntimeException('failed to persist terminal state');
     }
+    @chmod($temporary, 0600);
+    if (!@rename($temporary, $path)) { @unlink($temporary); throw new RuntimeException('failed to persist terminal state'); }
 };
 $capture = static function ($command) use ($available) {
     if ($available('shell_exec')) return trim((string)@shell_exec($command . ' 2>/dev/null'));
@@ -434,13 +441,14 @@ $writeCommand = static function (&$state, $command, $outputPath) use ($appendOut
     return $length;
 };
 $cleanup = static function ($excludeKey) use (
-    $baseDirectory, $loadState, $pathsForKey, $stopPty, $removeSessionFiles
+    $baseDirectory, $fileSuffixes, $loadState, $pathsForKey, $stopPty, $removeSessionFiles
 ) {
-    $states = (array)glob($baseDirectory . DIRECTORY_SEPARATOR . '*.json');
+    $stateSuffix = $fileSuffixes['state'];
+    $states = (array)glob($baseDirectory . DIRECTORY_SEPARATOR . '*' . $stateSuffix);
     usort($states, static function ($left, $right) { return @filemtime($left) - @filemtime($right); });
     $removeCount = max(0, count($states) - 32);
     foreach ($states as $index => $statePath) {
-        $key = basename($statePath, '.json');
+        $name = basename($statePath); $key = substr($name, 0, strlen($name) - strlen($stateSuffix));
         if ($key === $excludeKey) continue;
         if ($index >= $removeCount && @filemtime($statePath) >= time() - 1800) continue;
         $paths = $pathsForKey($key);

@@ -215,8 +215,8 @@ public class FileEnhanceComponent implements Runnable {
             ".xlsx",".ppt",".pptx",".exe",".dll",".so",".dylib",".bin",
             ".dat",".db",".sqlite",".lock",".pid"
         };
-        for (String ext : binExts) {
-            if (name.endsWith(ext)) return true;
+        for (int i = 0; i < binExts.length; i++) {
+            if (name.endsWith(binExts[i])) return true;
         }
         return false;
     }
@@ -256,8 +256,12 @@ public class FileEnhanceComponent implements Runnable {
         if (recursive && target.isDirectory()) {
             count = touchRecursive(target, timestamp, 0);
         } else {
-            target.setLastModified(timestamp);
-            count = 1;
+            count = target.setLastModified(timestamp) ? 1 : 0;
+        }
+        if (count == 0) {
+            results.put("code", 500);
+            results.put("msg", "时间戳修改失败");
+            return;
         }
 
         results.put("code", 200);
@@ -279,8 +283,7 @@ public class FileEnhanceComponent implements Runnable {
                 }
             }
         }
-        file.setLastModified(timestamp);
-        return count + 1;
+        return file.setLastModified(timestamp) ? count + 1 : count;
     }
 
     // ── PACK：打包目录为 tar.gz ───────────────────────────────────────────────
@@ -321,6 +324,7 @@ public class FileEnhanceComponent implements Runnable {
         // 写 tar.gz（纯 Java 实现，不依赖外部命令）
         FileOutputStream fos = null;
         GZIPOutputStream gzos = null;
+        boolean packed = false;
         try {
             fos = new FileOutputStream(destFile);
             gzos = new GZIPOutputStream(fos);
@@ -329,9 +333,11 @@ public class FileEnhanceComponent implements Runnable {
             writeTar(source, baseDir, gzos);
             gzos.write(new byte[1024]);
             gzos.finish();
+            packed = true;
         } finally {
             closeQuietly(gzos);
             closeQuietly(fos);
+            if (!packed) destFile.delete();
         }
 
         results.put("code", 200);
@@ -363,8 +369,8 @@ public class FileEnhanceComponent implements Runnable {
             File[] children = file.listFiles();
             if (children != null) {
                 Arrays.sort(children);
-                for (File child : children) {
-                    writeTar(child, baseDir, out);
+                for (int i = 0; i < children.length; i++) {
+                    writeTar(children[i], baseDir, out);
                 }
             }
         } else {
@@ -427,7 +433,7 @@ public class FileEnhanceComponent implements Runnable {
 
         // compute checksum
         int checksum = 0;
-        for (byte b : header) checksum += (b & 0xFF);
+        for (int i = 0; i < header.length; i++) checksum += (header[i] & 0xFF);
         fillOctal(header, 148, 7, checksum);
         header[155] = ' ';
 
@@ -457,13 +463,15 @@ public class FileEnhanceComponent implements Runnable {
     }
 
     private void fillOctal(byte[] buf, int offset, int len, long value) throws Exception {
-        String octal = String.format("%0" + (len - 1) + "o", value);
+        String octal = Long.toOctalString(value);
         byte[] bytes = octal.getBytes("UTF-8");
         if (bytes.length > len - 1) {
             throw new IOException("TAR 数值字段溢出: " + value);
         }
+        Arrays.fill(buf, offset, offset + len - 1, (byte) '0');
         int start = offset + (len - 1 - bytes.length);
         System.arraycopy(bytes, 0, buf, start, bytes.length);
+        buf[offset + len - 1] = 0;
     }
 
     // ── RENAME：重命名 ────────────────────────────────────────────────────────
@@ -516,7 +524,9 @@ public class FileEnhanceComponent implements Runnable {
             results.put("code", 400); results.put("msg", "mode 不能为空"); return;
         }
         // 只允许 3-4 位八进制数字
-        String modeClean = mode.replaceAll("^0+", "");
+        int modeStart = 0;
+        while (modeStart < mode.length() - 1 && mode.charAt(modeStart) == '0') modeStart++;
+        String modeClean = mode.substring(modeStart);
         if (!modeClean.matches("[0-7]{1,4}")) {
             results.put("code", 400); results.put("msg", "mode 格式错误，需为八进制数字如 755"); return;
         }
@@ -541,10 +551,12 @@ public class FileEnhanceComponent implements Runnable {
             proc = Runtime.getRuntime().exec(cmd);
             // 读取 stderr 防止缓冲区阻塞
             InputStream errStream = proc.getErrorStream();
-            byte[] errBuf = new byte[1024];
-            int n = errStream.read(errBuf);
-            if (n > 0) {
-                errMsg = new String(errBuf, 0, n, "UTF-8").trim();
+            try {
+                byte[] errBuf = new byte[1024];
+                int n = errStream.read(errBuf);
+                if (n > 0) errMsg = new String(errBuf, 0, n, "UTF-8").trim();
+            } finally {
+                closeQuietly(errStream);
             }
             exitCode = proc.waitFor();
         } catch (Exception e) {
@@ -605,7 +617,11 @@ public class FileEnhanceComponent implements Runnable {
 
     private String getString(String key) {
         Object v = params.get(key);
-        return v == null ? null : v.toString();
+        if (v == null) return null;
+        if (v instanceof byte[]) {
+            try { return new String((byte[]) v, "UTF-8"); } catch (Exception ignored) {}
+        }
+        return String.valueOf(v);
     }
 
     private int toInt(Object v, int def) {

@@ -1,0 +1,199 @@
+package org.leo.core.component;
+
+import javassist.ClassPool;
+import javassist.CtClass;
+import org.junit.jupiter.api.Test;
+import org.leo.core.util.javassist.CloneWithJavassist;
+
+import java.io.File;
+import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ExecutionAndDatabaseComponentTest {
+
+    @Test
+    void transformedPayloadsRemainRunnableAfterMethodRandomization() throws Exception {
+        assertTransformedRunnable("DatabaseComponent");
+        assertTransformedRunnable("ExecCommandSimpleComponent");
+        assertTransformedRunnable("ExecScriptComponent");
+        assertTransformedRunnable("PluginComponent");
+    }
+
+    @Test
+    void databaseRequiresDriverAndKeepsStableErrorShape() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "jdbcUrl", "jdbc:sqlite::memory:", "sql", "SELECT 1"));
+
+        assertEquals(400, code(response));
+        assertTrue(((java.util.List<?>) response.get("columns")).isEmpty());
+        assertTrue(((java.util.List<?>) response.get("rows")).isEmpty());
+        assertEquals(0, response.get("affectedRows"));
+        assertTrue(response.containsKey("rowCount"));
+        assertTrue(response.containsKey("generatedKey"));
+    }
+
+    @Test
+    void databaseAcceptsUtf8ByteParameters() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "driverClass", utf8("org.sqlite.JDBC"),
+                "jdbcUrl", utf8("jdbc:sqlite::memory:"),
+                "sql", utf8("SELECT 1 AS value")));
+
+        assertEquals(200, code(response));
+        assertEquals(1, response.get("rowCount"));
+        assertEquals(1, ((java.util.List<?>) response.get("rows")).size());
+        assertEquals("jdbc", ((Map<?, ?>) response.get("runtimeMetadata")).get("provider"));
+    }
+
+    @Test
+    void simpleCommandAcceptsByteCommandAndReturnsLifecycleFlags() throws Exception {
+        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+                "cmd", utf8("echo simple-ok"), "timeout", "2"));
+
+        assertEquals(200, code(response));
+        assertFalse((Boolean) response.get("timedOut"));
+        assertFalse((Boolean) response.get("truncated"));
+        assertTrue(new String((byte[]) response.get("data"), StandardCharsets.UTF_8)
+                .contains("simple-ok"));
+    }
+
+    @Test
+    void simpleCommandTimeoutTerminatesPromptly() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
+        long startedAt = System.nanoTime();
+        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+                "cmd", "sleep 3", "timeout", 1));
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+
+        assertEquals(200, code(response));
+        assertTrue((Boolean) response.get("timedOut"));
+        assertEquals(-1, response.get("exitCode"));
+        assertTrue(elapsedMs < 2500L, "timeout should not wait for the original process");
+    }
+
+    @Test
+    void simpleCommandReportsOutputTruncation() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
+        Map<String, Object> response = invoke(new ExecCommandSimpleComponent(), params(
+                "cmd", "head -c 4198400 /dev/zero", "timeout", 5));
+
+        assertEquals(200, code(response));
+        assertFalse((Boolean) response.get("timedOut"));
+        assertTrue((Boolean) response.get("truncated"));
+        assertEquals(4 * 1024 * 1024, ((byte[]) response.get("data")).length);
+    }
+
+    @Test
+    void scriptAcceptsByteParametersBeforeEngineLookup() throws Exception {
+        Map<String, Object> response = invoke(new ExecScriptComponent(), params(
+                "language", utf8("missing-engine-for-test"), "script", utf8("1 + 1")));
+
+        assertEquals(500, code(response));
+        assertTrue(String.valueOf(response.get("msg")).contains("missing-engine-for-test"));
+    }
+
+    @Test
+    void pluginRejectsInvalidParameterTypesWithClientError() throws Exception {
+        Map<String, Object> invalidBytecode = invoke(new PluginComponent(), params(
+                "pluginBytecode", "not-bytes"));
+        assertEquals(400, code(invalidBytecode));
+
+        Map<String, Object> invalidParams = invoke(new PluginComponent(), params(
+                "pluginBytecode", new byte[]{1}, "pluginParam", "not-a-map"));
+        assertEquals(400, code(invalidParams));
+    }
+
+    @Test
+    void pluginDeletesTemporaryDirectoryWhenClassLoadingFails() throws Exception {
+        byte[] bytecode = generatedClassBytecode("org.leo.generated.FuturePlugin" + System.nanoTime());
+        bytecode[6] = (byte) 0x7f;
+        bytecode[7] = (byte) 0xff;
+        Set<String> before = pluginTempDirectories();
+
+        PluginComponent component = new PluginComponent();
+        setField(component, "params", params("pluginBytecode", bytecode));
+        setField(component, "results", new HashMap<String, Object>());
+
+        assertThrows(UnsupportedClassVersionError.class, component::invoke);
+        assertEquals(before, pluginTempDirectories());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> invoke(Object component, HashMap<String, Object> params) throws Exception {
+        HashMap<String, Object> results = new HashMap<>();
+        setField(component, "params", params);
+        setField(component, "results", results);
+        component.getClass().getDeclaredMethod("invoke").invoke(component);
+        return results;
+    }
+
+    private HashMap<String, Object> params(Object... values) {
+        HashMap<String, Object> params = new HashMap<>();
+        for (int index = 0; index < values.length; index += 2) {
+            params.put((String) values[index], values[index + 1]);
+        }
+        return params;
+    }
+
+    private int code(Map<String, Object> response) {
+        return ((Number) response.get("code")).intValue();
+    }
+
+    private byte[] utf8(String value) {
+        return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("windows");
+    }
+
+    private byte[] generatedClassBytecode(String className) throws Exception {
+        CtClass generated = new ClassPool(true).makeClass(className);
+        try {
+            return generated.toBytecode();
+        } finally {
+            generated.detach();
+        }
+    }
+
+    private Set<String> pluginTempDirectories() {
+        File[] files = new File(System.getProperty("java.io.tmpdir")).listFiles();
+        Set<String> paths = new HashSet<>();
+        if (files == null) return paths;
+        for (File file : files) {
+            if (file.isDirectory() && file.getName().startsWith("leo-plugin-")) {
+                paths.add(file.getAbsolutePath());
+            }
+        }
+        return paths;
+    }
+
+    private void setField(Object target, String name, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private void assertTransformedRunnable(String componentId) throws Exception {
+        String className = "org.leo.generated." + componentId + System.nanoTime();
+        byte[] bytecode = CloneWithJavassist.cloneClass(componentId, className);
+        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
+        assertTrue(Runnable.class.isAssignableFrom(transformed));
+        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
+    }
+
+    private static final class BytecodeLoader extends ClassLoader {
+        private Class<?> define(String name, byte[] bytecode) {
+            return defineClass(name, bytecode, 0, bytecode.length);
+        }
+    }
+}

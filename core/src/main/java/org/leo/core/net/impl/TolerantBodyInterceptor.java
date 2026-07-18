@@ -5,6 +5,8 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.leo.core.net.TransportException;
+import org.leo.core.net.TransportLimits;
 
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
@@ -51,6 +53,16 @@ public class TolerantBodyInterceptor implements Interceptor {
 
     /** 读取缓冲区大小（不影响正确性，只影响吞吐） */
     private static final int READ_BUFFER_SIZE = 8192;
+    private final int maxResponseBytes;
+
+    public TolerantBodyInterceptor() {
+        this(TransportLimits.MAX_MESSAGE_BYTES);
+    }
+
+    public TolerantBodyInterceptor(int maxResponseBytes) {
+        if (maxResponseBytes <= 0) throw new IllegalArgumentException("maxResponseBytes必须大于0");
+        this.maxResponseBytes = maxResponseBytes;
+    }
 
     @Override
     public Response intercept(Chain chain) throws IOException {
@@ -66,6 +78,10 @@ public class TolerantBodyInterceptor implements Interceptor {
         try (InputStream is = body.byteStream()) {
             int read;
             while ((read = is.read(buf)) != -1) {
+                if (read > maxResponseBytes - collected.size()) {
+                    throw new TransportException(TransportException.Reason.MESSAGE_TOO_LARGE,
+                            "HTTP 响应超过限制: " + maxResponseBytes);
+                }
                 collected.write(buf, 0, read);
             }
         } catch (EOFException eof) {

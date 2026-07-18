@@ -1,5 +1,8 @@
 package org.leo.core.net.layer;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -56,6 +59,50 @@ public class PaddingUtil {
     }
 
     /**
+     * 根据未填充载荷大小补齐到配置的长度桶。桶大小包含编码格式自身的少量开销，
+     * 因此预留固定的结构预算；最终报文会稳定落在目标桶附近且不突破策略上限。
+     */
+    public static void pad(Map<String, Object> params, PaddingStrategy strategy,
+                           int encodedBytes, String seed) {
+        if (strategy == null || !strategy.isEnabled() || params == null) return;
+        if (!strategy.isBucketed() || strategy.getBucketSizes().length == 0) {
+            pad(params, strategy);
+            return;
+        }
+
+        final int structureBudget = 32;
+        int maxTotal = strategy.getMaxTotalBytes() > 0
+                ? strategy.getMaxTotalBytes() : Integer.MAX_VALUE;
+        int desiredMinimum = Math.max(0, encodedBytes) + strategy.getMinBytes() + structureBudget;
+        int target = -1;
+        for (int bucket : strategy.getBucketSizes()) {
+            if (bucket >= desiredMinimum && bucket <= maxTotal) {
+                target = bucket;
+                break;
+            }
+        }
+
+        int paddingLength;
+        if (target > 0) {
+            paddingLength = target - Math.max(0, encodedBytes) - structureBudget;
+            paddingLength = Math.max(strategy.getMinBytes(),
+                    Math.min(strategy.getMaxBytes(), paddingLength));
+        } else {
+            paddingLength = computePaddingLength(strategy);
+            if (maxTotal != Integer.MAX_VALUE) {
+                paddingLength = Math.min(paddingLength,
+                        Math.max(0, maxTotal - Math.max(0, encodedBytes) - structureBudget));
+            }
+        }
+        if (paddingLength <= 0) return;
+
+        String material = seed == null || seed.isBlank()
+                ? Long.toUnsignedString(ThreadLocalRandom.current().nextLong()) : seed;
+        String key = "_" + hexDigest(material + "|key").substring(0, 12);
+        params.put(key, deterministicString(paddingLength, material));
+    }
+
+    /**
      * 从解码后的 Map 中移除填充字段（可选调用，用于控制端解码响应时清理）。
      * <p>
      * 通常不需要调用 — puppet 端天然忽略未知 key。
@@ -65,7 +112,8 @@ public class PaddingUtil {
      */
     public static void removePadding(Map<String, Object> params) {
         if (params == null) return;
-        params.keySet().removeIf(key -> key.startsWith(PADDING_KEY_PREFIX));
+        params.keySet().removeIf(key -> key.startsWith(PADDING_KEY_PREFIX)
+                || key.matches("_[a-f0-9]{12}"));
     }
 
     // ==================== 填充长度计算 ====================
@@ -106,5 +154,34 @@ public class PaddingUtil {
             sb.append(ALPHA_NUM.charAt(rng.nextInt(ALPHA_NUM.length())));
         }
         return sb.toString();
+    }
+
+    private static String deterministicString(int length, String seed) {
+        StringBuilder result = new StringBuilder(length);
+        int counter = 0;
+        while (result.length() < length) {
+            byte[] block = digest(seed + "|value|" + counter++);
+            for (byte value : block) {
+                result.append(ALPHA_NUM.charAt((value & 0xff) % ALPHA_NUM.length()));
+                if (result.length() == length) break;
+            }
+        }
+        return result.toString();
+    }
+
+    private static String hexDigest(String value) {
+        byte[] bytes = digest(value);
+        StringBuilder result = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) result.append(String.format("%02x", item & 0xff));
+        return result.toString();
+    }
+
+    private static byte[] digest(String value) {
+        try {
+            return MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

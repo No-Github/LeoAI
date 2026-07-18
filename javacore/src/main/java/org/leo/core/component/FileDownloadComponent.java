@@ -13,10 +13,7 @@ import java.util.HashMap;
  */
 public class FileDownloadComponent implements Runnable {
     
-    // 性能优化常量
-    private static final int DEFAULT_BUFFER_SIZE = 8192; // 8KB缓冲区
-    private static final int LARGE_BUFFER_SIZE = 65536;  // 64KB缓冲区，用于大文件
-    private static final int MAX_CHUNK_SIZE = 1048576;   // 1MB最大块大小
+    private static final int MAX_CHUNK_SIZE = 1048576;
     
     private HashMap params;
     private HashMap results;
@@ -51,17 +48,13 @@ public class FileDownloadComponent implements Runnable {
      * 高性能文件下载
      */
     private void fileDownload() throws Exception {
-        Object pathObj = params.get("path");
-        Object sizeObj = params.get("size");
-        Object offsetObj = params.get("offset");
+        String path = getStringParam("path");
+        long size = getLongParam("size", 0L);
+        long offset = getLongParam("offset", 0L);
 
-        if (!(pathObj instanceof byte[])) {
-            throw new IllegalArgumentException("path 必须是 UTF-8 byte[]");
+        if (path == null) {
+            throw new IllegalArgumentException("path 不能为空");
         }
-        String path = new String((byte[]) pathObj, "UTF-8");
-        
-        long size = sizeObj != null ? ((Number) sizeObj).longValue() : 0;
-        long offset = offsetObj != null ? ((Number) offsetObj).longValue() : 0;
         if (path.length() == 0) {
             throw new IllegalArgumentException("path 不能为空");
         }
@@ -118,20 +111,8 @@ public class FileDownloadComponent implements Runnable {
             int readSize = (int) Math.min(size, availableSize);
             readSize = Math.min(readSize, MAX_CHUNK_SIZE); // 限制最大块大小
             
-            // 性能优化：使用缓冲读取
             byte[] buffer = new byte[readSize];
-            int totalRead = 0;
-            
-            // 对于大文件，使用分块读取
-            if (readSize > LARGE_BUFFER_SIZE) {
-                totalRead = readLargeFile(inputFile, buffer, readSize);
-            } else {
-                // 小文件直接读取
-                totalRead = inputFile.read(buffer);
-                if (totalRead == -1) {
-                    totalRead = 0;
-                }
-            }
+            int totalRead = readChunk(inputFile, buffer);
             
             // 如果实际读取的数据少于请求的数据，调整数组大小
             if (totalRead < readSize) {
@@ -155,24 +136,39 @@ public class FileDownloadComponent implements Runnable {
         }
     }
     
-    /**
-     * 大文件分块读取优化
-     */
-    private int readLargeFile(RandomAccessFile file, byte[] buffer, int targetSize) throws Exception {
+    private int readChunk(RandomAccessFile file, byte[] buffer) throws Exception {
         int totalRead = 0;
-        int remaining = targetSize;
-        while (remaining > 0 && totalRead < targetSize) {
-            int chunkSize = Math.min(remaining, DEFAULT_BUFFER_SIZE);
-            int bytesRead = file.read(buffer, totalRead, chunkSize);
-            
-            if (bytesRead == -1) {
-                break; // 文件结束
-            }
+        while (totalRead < buffer.length) {
+            int bytesRead = file.read(buffer, totalRead, buffer.length - totalRead);
+            if (bytesRead <= 0) break;
             totalRead += bytesRead;
-            remaining -= bytesRead;
         }
-        
         return totalRead;
+    }
+
+    private String getStringParam(String key) throws Exception {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        return String.valueOf(value);
+    }
+
+    private long getLongParam(String key, long defaultValue) throws Exception {
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        if (value instanceof Number) return ((Number) value).longValue();
+
+        String text;
+        if (value instanceof byte[]) {
+            text = new String((byte[]) value, "UTF-8");
+        } else {
+            text = String.valueOf(value);
+        }
+        try {
+            return Long.parseLong(text.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " 必须是整数: " + text);
+        }
     }
     
     /**

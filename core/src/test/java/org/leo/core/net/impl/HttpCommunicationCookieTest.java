@@ -2,7 +2,7 @@ package org.leo.core.net.impl;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import junit.framework.TestCase;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -13,9 +13,13 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class HttpCommunicationCookieTest extends TestCase {
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
-    public void testLearnsSetCookieWithPathScope() throws Exception {
+class HttpCommunicationCookieTest {
+
+    @Test
+    void learnsSetCookieWithPathScope() throws Exception {
         AtomicReference<String> appCookie = new AtomicReference<>();
         AtomicReference<String> otherCookie = new AtomicReference<>();
 
@@ -51,7 +55,8 @@ public class HttpCommunicationCookieTest extends TestCase {
         }
     }
 
-    public void testConfiguredCookieWinsAndAutoCookieIsMerged() throws Exception {
+    @Test
+    void configuredCookieWinsAndAutoCookieIsMerged() throws Exception {
         AtomicReference<String> nextCookie = new AtomicReference<>();
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

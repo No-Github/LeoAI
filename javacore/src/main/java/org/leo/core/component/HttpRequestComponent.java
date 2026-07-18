@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -96,7 +97,14 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             return;
         }
 
-        URL targetUrl = new URL(url);
+        URL targetUrl;
+        try {
+            targetUrl = new URL(url);
+        } catch (MalformedURLException error) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "invalid url");
+            return;
+        }
         String protocol = targetUrl.getProtocol();
         if (!("http".equalsIgnoreCase(protocol) || "https".equalsIgnoreCase(protocol))) {
             results.put("code", Integer.valueOf(400));
@@ -111,6 +119,19 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (connectTimeout > MAX_TIMEOUT) connectTimeout = MAX_TIMEOUT;
         if (readTimeout > MAX_TIMEOUT) readTimeout = MAX_TIMEOUT;
         boolean followRedirects = getBooleanParam("followRedirects", true);
+        Object requestHeadersObj = params.get("headers");
+        if (requestHeadersObj != null && !(requestHeadersObj instanceof Map)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "headers must be a map");
+            return;
+        }
+        Map requestHeaders = (Map) requestHeadersObj;
+        byte[] bodyBytes = getBodyBytes();
+        if (bodyBytes != null && bodyBytes.length > MAX_REQUEST_SIZE) {
+            results.put("code", Integer.valueOf(413));
+            results.put("msg", "request body exceeds 10MB limit");
+            return;
+        }
 
         HttpURLConnection conn = null;
 
@@ -132,7 +153,6 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             conn.setInstanceFollowRedirects(followRedirects);
 
             // 设置请求头
-            Map requestHeaders = (Map) params.get("headers");
             if (requestHeaders != null) {
                 for (Object entry : requestHeaders.entrySet()) {
                     Map.Entry e = (Map.Entry) entry;
@@ -144,12 +164,6 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             applyBrowserRequestHeaders(conn, requestHeaders);
 
             // 写入请求体
-            byte[] bodyBytes = getBodyBytes();
-            if (bodyBytes != null && bodyBytes.length > MAX_REQUEST_SIZE) {
-                results.put("code", Integer.valueOf(413));
-                results.put("msg", "request body exceeds 10MB limit");
-                return;
-            }
             if (bodyBytes != null && bodyBytes.length > 0
                     && allowsRequestBody(method)) {
                 conn.setDoOutput(true);
@@ -288,7 +302,8 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
             if (trustAllSslSocketFactory == null) {
                 SSLContext ctx = SSLContext.getInstance("TLS");
                 ClassLoader cl = Thread.currentThread().getContextClassLoader();
-                TrustManager tm = (TrustManager) Proxy.newProxyInstance(cl, new Class[]{X509TrustManager.class}, this);
+                TrustManager tm = (TrustManager) Proxy.newProxyInstance(
+                        cl, new Class[]{X509TrustManager.class}, new HttpRequestComponent());
                 ctx.init(null, new TrustManager[]{tm}, new SecureRandom());
                 trustAllSslSocketFactory = ctx.getSocketFactory();
             }
@@ -300,6 +315,10 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         String name = method.getName();
         if (name.equals("verify")) return Boolean.TRUE;
         if (name.equals("getAcceptedIssuers")) return new X509Certificate[0];
+        if (name.equals("hashCode")) return Integer.valueOf(System.identityHashCode(proxy));
+        if (name.equals("equals")) return Boolean.valueOf(
+                args != null && args.length > 0 && proxy == args[0]);
+        if (name.equals("toString")) return proxy.getClass().getName();
         return null;
     }
 
@@ -343,7 +362,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
         if (contentType == null) {
             return true; // 默认当文本处理
         }
-        String lower = contentType.toLowerCase();
+        String lower = contentType.toLowerCase(Locale.ENGLISH);
         return lower.contains("text/")
                 || lower.contains("application/json")
                 || lower.contains("application/xml")
@@ -355,7 +374,7 @@ public class HttpRequestComponent implements Runnable, InvocationHandler {
 
     private String parseCharset(String contentType) {
         if (contentType != null) {
-            String lower = contentType.toLowerCase();
+            String lower = contentType.toLowerCase(Locale.ENGLISH);
             int idx = lower.indexOf("charset=");
             if (idx >= 0) {
                 String charset = contentType.substring(idx + 8).trim();

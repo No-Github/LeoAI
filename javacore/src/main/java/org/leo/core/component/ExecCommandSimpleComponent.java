@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 一次性命令执行组件
@@ -22,6 +23,7 @@ import java.util.HashMap;
  *   <li>{@code data}（byte[]）— stdout + stderr 合并输出（UTF-8，最多 4 MB）</li>
  *   <li>{@code exitCode}（Integer）— 进程退出码</li>
  *   <li>{@code timedOut}（Boolean）— true 表示触发超时被强制终止</li>
+ *   <li>{@code truncated}（Boolean）— true 表示输出超过 4 MB、返回内容已截断</li>
  *   <li>{@code code}（Integer）— 200 成功 / 400 参数错误 / 500 执行异常</li>
  * </ul>
  * <p>
@@ -36,6 +38,7 @@ public class ExecCommandSimpleComponent implements Runnable {
     private static final int  MAX_OUTPUT_BYTES   = 4 * 1024 * 1024; // 4 MB
     private static final long DEFAULT_TIMEOUT_MS = 30000L;           // 30s
     private static final long MAX_TIMEOUT_MS     = 300000L;          // 5min 上限，防止入参滥用
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
     private HashMap params;
     private HashMap results;
@@ -46,6 +49,8 @@ public class ExecCommandSimpleComponent implements Runnable {
     private volatile byte[]  workerOutput;
     private volatile int     workerExitCode = 0;
     private volatile String  workerError;
+    private volatile boolean workerCancelled;
+    private volatile boolean workerTruncated;
     /** 由 worker 创建后写入；invoke() 触发超时时调用 destroy() 强制结束。 */
     private volatile Process workerProcess;
 
@@ -82,6 +87,8 @@ public class ExecCommandSimpleComponent implements Runnable {
 
     private void execInWorker() {
         try {
+            if (workerCancelled) return;
+
             String[] command;
             if (isWindows()) {
                 command = new String[]{"cmd.exe", "/c", execCmd};
@@ -95,6 +102,13 @@ public class ExecCommandSimpleComponent implements Runnable {
             Process process = pb.start();
             workerProcess = process; // 让主线程在超时后能 destroy
 
+            // 超时可能发生在 pb.start() 之前；进程创建后再次检查，避免漏杀。
+            if (workerCancelled) {
+                try { process.destroy(); } catch (Exception ignored) {}
+                try { process.getInputStream().close(); } catch (Exception ignored) {}
+                return;
+            }
+
             // 关闭子进程 stdin，防止某些 shell 等待输入而阻塞
             try { process.getOutputStream().close(); } catch (Exception ignored) {}
 
@@ -106,10 +120,14 @@ public class ExecCommandSimpleComponent implements Runnable {
             try {
                 while ((read = is.read(buffer)) != -1) {
                     int remaining = MAX_OUTPUT_BYTES - total;
-                    if (remaining <= 0) continue; // 继续排空管道，避免子进程阻塞
+                    if (remaining <= 0) {
+                        workerTruncated = true;
+                        continue; // 继续排空管道，避免子进程阻塞
+                    }
                     int toWrite = read <= remaining ? read : remaining;
                     output.write(buffer, 0, toWrite);
                     total += toWrite;
+                    if (toWrite < read) workerTruncated = true;
                 }
             } finally {
                 try { is.close(); } catch (Exception ignored) {}
@@ -128,6 +146,7 @@ public class ExecCommandSimpleComponent implements Runnable {
         } catch (Throwable t) {
             workerError = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
         } finally {
+            workerMode = false;
             workerDone = true;
         }
     }
@@ -150,9 +169,12 @@ public class ExecCommandSimpleComponent implements Runnable {
         workerOutput  = null;
         workerProcess = null;
         workerDone    = false;
+        workerCancelled = false;
+        workerTruncated = false;
         workerMode    = true;  // volatile write：建立 happens-before，execCmd 对 worker 可见
 
-        Thread worker = new Thread(this);
+        Thread worker = new Thread(this,
+                getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
         worker.setDaemon(true);
         worker.start();
 
@@ -169,9 +191,11 @@ public class ExecCommandSimpleComponent implements Runnable {
         if (timedOut) {
             // 强制终止子进程；worker 的 read/waitFor 会因 EOF/InterruptedException 退出，
             // 然后给它一小段时间把已经读到的输出写回 workerOutput。
+            workerCancelled = true;
             Process p = workerProcess;
             if (p != null) {
                 try { p.destroy(); } catch (Exception ignored) {}
+                try { p.getInputStream().close(); } catch (Exception ignored) {}
             }
             long graceDeadline = System.currentTimeMillis() + 500L;
             while (!workerDone && System.currentTimeMillis() < graceDeadline) {
@@ -180,15 +204,15 @@ public class ExecCommandSimpleComponent implements Runnable {
                     break;
                 }
             }
+            if (!workerDone) worker.interrupt();
         }
-
-        workerMode = false; // 重置，避免下次调用误入 worker 分支
 
         if (timedOut) {
             results.put("code",     Integer.valueOf(200));
             results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
             results.put("exitCode", Integer.valueOf(-1));
             results.put("timedOut", Boolean.TRUE);
+            results.put("truncated", Boolean.valueOf(workerTruncated));
             results.put("msg",      "command timed out after " + (timeoutMs / 1000L) + "s");
             return;
         }
@@ -203,6 +227,7 @@ public class ExecCommandSimpleComponent implements Runnable {
         results.put("data",     workerOutput != null ? workerOutput : new byte[0]);
         results.put("exitCode", Integer.valueOf(workerExitCode));
         results.put("timedOut", Boolean.FALSE);
+        results.put("truncated", Boolean.valueOf(workerTruncated));
     }
 
     /**
@@ -240,10 +265,13 @@ public class ExecCommandSimpleComponent implements Runnable {
         Object value = params.get(key);
         if (value == null) return null;
         if (value instanceof String) return (String) value;
-        try {
-            return new String((byte[]) value, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
+        if (value instanceof byte[]) {
+            try {
+                return new String((byte[]) value, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                return new String((byte[]) value);
+            }
         }
+        return String.valueOf(value);
     }
 }

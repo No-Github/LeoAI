@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExecCommandComponentTest {
@@ -92,6 +93,29 @@ class ExecCommandComponentTest {
             assertTrue(output.contains("java-first-write-ok"), output);
         } finally {
             invoke(processId, 2, "");
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void failedStartupRemovesProcessPlaceholder() throws Exception {
+        String processId = "failed-" + UUID.randomUUID();
+        Field envField = ExecCommandComponent.class.getDeclaredField("env");
+        envField.setAccessible(true);
+        Map<String, Map<String, Object>> environment =
+                (Map<String, Map<String, Object>>) envField.get(null);
+        Map<String, Object> failed = new HashMap<>();
+        failed.put("exited", Boolean.TRUE);
+        failed.put("error", "startup failed");
+        failed.put("lastAccessTime", System.currentTimeMillis());
+        environment.put(processId, failed);
+        try {
+            IllegalStateException error = assertThrows(IllegalStateException.class,
+                    () -> invoke(processId, 0, "init"));
+            assertEquals("startup failed", error.getMessage());
+            assertFalse(environment.containsKey(processId));
+        } finally {
+            environment.remove(processId);
         }
     }
 

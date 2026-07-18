@@ -5,6 +5,7 @@ import javassist.expr.ExprEditor;
 import javassist.expr.FieldAccess;
 import javassist.expr.MethodCall;
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.GenerationRandom;
 
 import java.io.InputStream;
 import java.util.HashMap;
@@ -17,6 +18,20 @@ public class CloneWithJavassist {
     private static final String COMPONENT_PREFIX = "component/";
 
     public static byte[] cloneClass(String componentName, String newClassName) throws Exception {
+        return cloneClassInternal(componentName, newClassName);
+    }
+
+    /**
+     * 使用稳定 seed 生成成员名变体。同一节点、组件与类名产生相同字节码，
+     * 不同节点则获得不同的字段名和方法名组合。
+     */
+    public static byte[] cloneClass(String componentName, String newClassName, long seed) throws Exception {
+        try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(seed)) {
+            return cloneClassInternal(componentName, newClassName);
+        }
+    }
+
+    private static byte[] cloneClassInternal(String componentName, String newClassName) throws Exception {
         String resourcePath = COMPONENT_PREFIX + componentName + ".payload";
         InputStream is = openResource(resourcePath);
         if (is == null) {
@@ -27,7 +42,6 @@ public class CloneWithJavassist {
             ClassPool pool = ClassPool.getDefault();
             CtClass cc = pool.makeClass(in);
             cc.setName(newClassName);
-            cc.getClassFile().setVersionToJava5();
             randomizeNames(cc);
             try {
                 return cc.toBytecode();
@@ -41,13 +55,11 @@ public class CloneWithJavassist {
      * 对 Component 字节码做方法名和字段名随机化：
      *
      * 不能随机化：
-     *   - run()        Runnable 接口约束，LeoCore 通过 ((Runnable)obj).run() 调用
-     *   - params       run() 模板体直接引用，随机化需同时重写 run() 体，暂跳过
-     *   - results      同上
+     *   - run() 和其他接口方法：接口契约要求保留名称
      *
      * 可以随机化：
      *   - invoke() 及所有其他方法（setName 改声明，ExprEditor 更新调用点）
-     *   - 除 params/results 之外的所有字段（setName 改声明，ExprEditor 更新访问点）
+     *   - 所有字段（setName 改声明，ExprEditor 更新访问点）
      */
     static void randomizeNames(final CtClass cc) throws Exception {
         final Set<String> used = new HashSet<String>();

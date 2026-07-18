@@ -183,10 +183,29 @@ $sendStream = static function ($method, $url, $headers, $body, $connectTimeout, 
     if ($truncated) { $meta['truncated'] = true; $meta['truncateReason'] = 'response exceeds 10MB limit'; }
     return $finish($parsed[0], $parsed[1], $parsed[2], $responseBody, $meta);
 };
+$defaultProfile = static function () {
+    $family = defined('PHP_OS_FAMILY') ? constant('PHP_OS_FAMILY') : (strpos(strtoupper(PHP_OS), 'WIN') === 0 ? 'Windows' : PHP_OS);
+    $selector = hexdec(substr(hash('sha256', __FILE__ . '|http-profile'), 0, 2)) % 2;
+    if ($family === 'Darwin') {
+        $version = $selector === 0 ? '17.5' : '17.6';
+        $agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/' . $version . ' Safari/605.1.15';
+        $accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+    } elseif ($family === 'Windows') {
+        $browser = $selector === 0 ? 'Chrome/124.0.0.0 Safari/537.36' : 'Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
+        $agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' . $browser;
+        $accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
+    } else {
+        $version = $selector === 0 ? '124.0' : '125.0';
+        $agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:' . $version . ') Gecko/20100101 Firefox/' . $version;
+        $accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8';
+    }
+    return ['User-Agent' => $agent, 'Accept' => $accept,
+        'Accept-Language' => $selector === 0 ? 'zh-CN,zh;q=0.9,en;q=0.7' : 'en-US,en;q=0.9'];
+};
 return [
     'id' => 'HttpRequestComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use (
-        $get, $available, $normalizeHeaders, $headerExists, $sendCurl, $sendStream
+        $get, $available, $normalizeHeaders, $headerExists, $sendCurl, $sendStream, $defaultProfile
     ) {
         $method = strtoupper(trim((string)$get($params, 'method', 'GET')));
         $url = trim((string)$get($params, 'url', ''));
@@ -196,9 +215,8 @@ return [
         $readTimeout = max(100, min(300000, (int)$get($params, 'readTimeout', 30000)));
         $followRedirects = (bool)$get($params, 'followRedirects', true);
         $headers = $normalizeHeaders($get($params, 'headers', []));
-        if (!$headerExists($headers, 'User-Agent')) $headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36';
-        if (!$headerExists($headers, 'Accept')) $headers['Accept'] = 'text/html,application/xhtml+xml,application/json,application/xml;q=0.9,*/*;q=0.8';
-        if (!$headerExists($headers, 'Accept-Language')) $headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8';
+        $profile = $defaultProfile();
+        foreach ($profile as $name => $value) if (!$headerExists($headers, $name)) $headers[$name] = $value;
         $body = array_key_exists('body', $params) ? (string)$params['body'] : null;
         if ($body !== null && strlen($body) > 10 * 1024 * 1024) throw new LengthException('request body exceeds 10MB limit');
         if ($available('curl_init')) return $sendCurl($method, $url, $headers, $body,

@@ -15,7 +15,7 @@ public class UrlStrategy {
 
     /**
      * 是否启用 URL 随机化。
-     * false（默认）= 始终使用 RequestLayer.rUrl，向后兼容。
+     * false（默认）= 始终使用 RequestLayer.url。
      */
     private boolean enabled = false;
 

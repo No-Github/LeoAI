@@ -2,6 +2,7 @@ package org.leo.core.component;
 
 import java.io.*;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -39,7 +40,7 @@ public class DecompressComponent implements Runnable {
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap();
             results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -96,6 +97,9 @@ public class DecompressComponent implements Runnable {
                 ensureSafeTarget(outDir, newFile, zipEntry.getName());
                 
                 if (zipEntry.isDirectory()) {
+                    if (newFile.exists() && !newFile.isDirectory()) {
+                        throw new IOException("归档目录与现有文件冲突: " + zipEntry.getName());
+                    }
                     if (!newFile.exists() && !newFile.mkdirs()) {
                         throw new IOException("无法创建目录: " + newFile.getAbsolutePath());
                     }
@@ -155,13 +159,14 @@ public class DecompressComponent implements Runnable {
         }
         
         GZIPInputStream gzis = null;
+        File tempFile = createSiblingTemp(outputFileObj);
         FileOutputStream fos = null;
         long totalSize = 0;
         
         boolean completed = false;
         try {
             gzis = new GZIPInputStream(new FileInputStream(gzipFile));
-            fos = new FileOutputStream(outputFile);
+            fos = new FileOutputStream(tempFile);
             
             byte[] buffer = new byte[BUFFER_SIZE];
             int length;
@@ -170,13 +175,14 @@ public class DecompressComponent implements Runnable {
                 totalSize += length;
                 ensureExtractionLimit(totalSize, totalSize, outputFileObj.getName());
             }
+            closeStream(fos);
+            fos = null;
+            replaceFile(tempFile, outputFileObj);
             completed = true;
         } finally {
             closeStream(gzis);
             closeStream(fos);
-            if (!completed && outputFileObj.exists()) {
-                outputFileObj.delete();
-            }
+            if (!completed && tempFile.exists()) tempFile.delete();
         }
         
         results.put("code", 200);
@@ -249,10 +255,11 @@ public class DecompressComponent implements Runnable {
      */
     private long writeFile(ZipInputStream zis, File newFile, long currentTotal) throws IOException {
         long fileSize = 0;
+        File tempFile = createSiblingTemp(newFile);
         FileOutputStream fos = null;
         boolean completed = false;
         try {
-            fos = new FileOutputStream(newFile);
+            fos = new FileOutputStream(tempFile);
             byte[] buffer = new byte[BUFFER_SIZE];
             int length;
             while ((length = zis.read(buffer)) > 0) {
@@ -260,12 +267,13 @@ public class DecompressComponent implements Runnable {
                 fileSize += length;
                 ensureExtractionLimit(fileSize, currentTotal + fileSize, newFile.getName());
             }
+            closeStream(fos);
+            fos = null;
+            replaceFile(tempFile, newFile);
             completed = true;
         } finally {
             closeStream(fos);
-            if (!completed && newFile.exists()) {
-                newFile.delete();
-            }
+            if (!completed && tempFile.exists()) tempFile.delete();
         }
         return fileSize;
     }
@@ -345,6 +353,9 @@ public class DecompressComponent implements Runnable {
             ensureSafeTarget(outDir, target, entryName);
 
             if (typeFlag == '5' || entryName.endsWith("/")) {
+                if (target.exists() && !target.isDirectory()) {
+                    throw new IOException("归档目录与现有文件冲突: " + entryName);
+                }
                 if (!target.exists() && !target.mkdirs()) {
                     throw new IOException("无法创建目录: " + target.getAbsolutePath());
                 }
@@ -357,19 +368,21 @@ public class DecompressComponent implements Runnable {
                         throw new IOException("无法创建父目录: " + parent.getAbsolutePath());
                     }
                 }
+                File tempFile = createSiblingTemp(target);
                 FileOutputStream fos = null;
                 boolean completed = false;
                 try {
-                    fos = new FileOutputStream(target);
+                    fos = new FileOutputStream(tempFile);
                     long written = copyExact(in, fos, size);
+                    closeStream(fos);
+                    fos = null;
+                    replaceFile(tempFile, target);
                     totalSize += written;
                     fileCount++;
                     completed = true;
                 } finally {
                     closeStream(fos);
-                    if (!completed && target.exists()) {
-                        target.delete();
-                    }
+                    if (!completed && tempFile.exists()) tempFile.delete();
                 }
                 skipPadding(in, size);
             } else {
@@ -497,10 +510,45 @@ public class DecompressComponent implements Runnable {
         }
     }
 
+    private File createSiblingTemp(File target) throws IOException {
+        File absolute = target.getAbsoluteFile();
+        File parent = absolute.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.isDirectory()) {
+            throw new IOException("无法创建输出目录: " + parent.getAbsolutePath());
+        }
+        return File.createTempFile(".leo-decompress-", ".tmp", parent);
+    }
+
+    /** 用同目录临时文件替换目标；目标已存在时先备份，失败则恢复。 */
+    private void replaceFile(File tempFile, File target) throws IOException {
+        if (target.exists() && !target.isFile()) {
+            throw new IOException("输出目标不是普通文件: " + target.getAbsolutePath());
+        }
+
+        File backup = null;
+        if (target.exists()) {
+            backup = createSiblingTemp(target);
+            if (!backup.delete() || !target.renameTo(backup)) {
+                throw new IOException("无法备份现有输出文件: " + target.getAbsolutePath());
+            }
+        }
+
+        if (!tempFile.renameTo(target)) {
+            if (backup != null && !backup.renameTo(target)) {
+                throw new IOException("替换输出文件失败且备份恢复失败: " + target.getAbsolutePath());
+            }
+            throw new IOException("无法替换输出文件: " + target.getAbsolutePath());
+        }
+
+        if (backup != null && !backup.delete()) {
+            backup.deleteOnExit();
+        }
+    }
+
     private String normalizeFormat(String format, String src) {
-        String value = format == null ? "" : format.trim().toLowerCase();
+        String value = format == null ? "" : format.trim().toLowerCase(Locale.ENGLISH);
         if (value.length() == 0 && src != null) {
-            String lowerSrc = src.toLowerCase();
+            String lowerSrc = src.toLowerCase(Locale.ENGLISH);
             if (lowerSrc.endsWith(".tar.gz") || lowerSrc.endsWith(".tgz")) {
                 value = "tar.gz";
             } else if (lowerSrc.endsWith(".gzip") || lowerSrc.endsWith(".gz")) {
@@ -525,15 +573,14 @@ public class DecompressComponent implements Runnable {
      */
     public void invoke() throws Exception {
         // 参数验证
-        Object srcObj = params.get("src");
-        Object desObj = params.get("des");
-        Object formatObj = params.get("format");
-        String format = formatObj == null ? null : formatObj.toString();
-        if (!(srcObj instanceof byte[]) || !(desObj instanceof byte[])) {
-            throw new IllegalArgumentException("src 和 des 必须是 UTF-8 byte[]");
+        String src = getStringParam("src");
+        String des = getStringParam("des");
+        String format = getStringParam("format");
+        if (src == null || src.trim().length() == 0 || des == null || des.trim().length() == 0) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "src 和 des 不能为空");
+            return;
         }
-        String src = new String((byte[]) srcObj, "utf-8");
-        String des = new String((byte[]) desObj, "utf-8");
         format = normalizeFormat(format, src);
         
         try {
@@ -546,11 +593,21 @@ public class DecompressComponent implements Runnable {
             } else if ("tar".equalsIgnoreCase(format)) {
                 tarDecompress(src, des);
             } else {
-                throw new IllegalArgumentException("不支持的解压格式: " + format + " (支持: zip, gzip, tar.gz, tar)");
+                results.put("code", Integer.valueOf(400));
+                results.put("msg", "不支持的解压格式: " + format + " (支持: zip, gzip, tar.gz, tar)");
+                return;
             }
         } catch (Exception e) {
             results.put("code", 500);
             results.put("msg", e.getMessage());
         }
+    }
+
+    private String getStringParam(String key) throws UnsupportedEncodingException {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof String) return (String) value;
+        if (value instanceof byte[]) return new String((byte[]) value, "UTF-8");
+        return String.valueOf(value);
     }
 }

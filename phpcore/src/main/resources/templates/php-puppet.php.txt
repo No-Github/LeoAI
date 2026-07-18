@@ -11,15 +11,21 @@
 
 @error_reporting(0);
 @ini_set('display_errors', '0');
+$request = null;
+$failure = function($value) {
+    return ['requestId' => is_array($value) && isset($value['requestId'])
+        ? (string)$value['requestId'] : '', 'code' => 500, 'error' => []];
+};
 try {
     {{HEADER_GUARD}}
     $body = file_get_contents('php://input');
     if ($body === false || $body === '') throw new InvalidArgumentException();
-    $response = {{CORE_ENTRY}}(leo_request_decode($body));
+    $request = leo_request_decode($body);
+    $response = {{CORE_ENTRY}}($request);
 } catch (Exception $error) {
-    $response = ['code' => 500];
+    $response = $failure($request);
 } catch (Throwable $error) {
-    $response = ['code' => 500];
+    $response = $failure($request);
 }
 
 http_response_code({{RESPONSE_CODE}});

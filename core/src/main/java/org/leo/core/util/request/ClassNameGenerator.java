@@ -1,33 +1,116 @@
 package org.leo.core.util.request;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Set;
 
 public class ClassNameGenerator {
 
-    private static final String[] PACKAGE_PART_1 = {"javax", "org", "com", "net", "sun", "edu", "info", "cn"};
-    private static final String[] PACKAGE_PART_2 = {"access", "file","https","servlet", "google", "http", "resources", "utils", "sql", "websocket", "jsp", "modeler", "f1le", "codec", "apache", "net", "springframework", "i0", "pools"};
-    private static final String[] PACKAGE_PART_3 = {"javax", "json","list","jmx","file", "number", "fasterxml", "servlet", "api", "http", "descriptor", "server", "services","jsp", "tomcat", "log", "modeler", "buf", "binary", "ibatis", "beans", "junit", "jdbc", "pool", "jmx", "stream", "xml"};
-    private static final String[] BASE_CLASS_NAMES = {"CurrencyStyleFormatter", "Path", "CSSUtil", "JsUtil", "JsonUtil", "MathUtil", "JsonParseException", "Status", "Utils", "HttpUtils", "Cookies", "Cloneables", "Serializables", "Decoders", "CaptureLogs", "BaseModelMBeans", "FeatureInfos", "Registrys", "MbeansDescriptorsIntrospectionSources", "Asn2Parser", "ConfigFileLoaders", "GenericNamingResourcesFactorys", "JSONUtil"};
-    private static final String[] LAMBDA_NAMES = {"$$Lambda$1", "$$Lambda$2", "$$Lambda$3", "$$Lambda$4", "$$Lambda$5", "$$Lambda$6", "$$Lambda$7", "$$Lambda$8", "$$Lambda$9", "$$Lambda$10"};
     private static final Set<String> generatedClassNames = new HashSet<String>();
+
+    /**
+     * Component 使用独立的应用类名画像，避免把保留命名空间、Servlet 名称和
+     * Java 8 lambda 后缀混在同一个 Java 6 class 名中。每个数组下标代表一个
+     * 完整且一致的应用包族，同一 sessionKey 始终选择同一包族。
+     */
+    private static final String[] COMPONENT_PACKAGE_FAMILIES = {
+            "com.vertex.platform.web",
+            "org.riverstone.application.runtime",
+            "net.clearwater.service.core",
+            "com.blueoak.framework.support",
+            "org.highland.platform.internal",
+            "com.redwood.application.web"
+    };
+    private static final String[] COMPONENT_PACKAGE_LEAVES = {
+            "context", "support", "adapter", "handler", "resolver", "model", "service", "util"
+    };
+    private static final String[] COMPONENT_CLASS_PREFIXES = {
+            "Default", "Standard", "Local", "Simple", "Generic", "Shared", "Internal", "Base"
+    };
+    private static final String[] COMPONENT_CLASS_SUBJECTS = {
+            "Request", "Response", "Session", "Context", "Resource", "Message", "Endpoint", "Runtime",
+            "Service", "Configuration", "Application", "Operation", "Connection", "Process", "Task", "State"
+    };
+    private static final String[] COMPONENT_CLASS_ROLES = {
+            "Handler", "Resolver", "Adapter", "Provider", "Processor", "Manager", "Controller", "Coordinator",
+            "Dispatcher", "Accessor", "Registry", "Factory", "Builder", "Support", "Helper", "Listener"
+    };
+    private static final String[] COMPONENT_CLASS_QUALIFIERS = {
+            "Context", "State", "Data", "Lifecycle", "Resource", "Message", "Property", "Configuration",
+            "Session", "Request", "Response", "Task", "Event", "Service", "Runtime", "Metadata"
+    };
 
     public static String generateServletStyleClassName() {
         Random random = GenerationRandom.current();
         String className;
         do {
-            className = String.format("%s.%s.%s.%s.%s",
-                    PACKAGE_PART_1[random.nextInt(PACKAGE_PART_1.length)],
-                    PACKAGE_PART_2[random.nextInt(PACKAGE_PART_2.length)],
-                    PACKAGE_PART_3[random.nextInt(PACKAGE_PART_3.length)],
-                    BASE_CLASS_NAMES[random.nextInt(BASE_CLASS_NAMES.length)],
-                    LAMBDA_NAMES[random.nextInt(LAMBDA_NAMES.length)]);
+            className = COMPONENT_PACKAGE_FAMILIES[random.nextInt(COMPONENT_PACKAGE_FAMILIES.length)]
+                    + "." + COMPONENT_PACKAGE_LEAVES[random.nextInt(COMPONENT_PACKAGE_LEAVES.length)]
+                    + "." + COMPONENT_CLASS_PREFIXES[random.nextInt(COMPONENT_CLASS_PREFIXES.length)]
+                    + COMPONENT_CLASS_SUBJECTS[random.nextInt(COMPONENT_CLASS_SUBJECTS.length)]
+                    + COMPONENT_CLASS_QUALIFIERS[random.nextInt(COMPONENT_CLASS_QUALIFIERS.length)]
+                    + COMPONENT_CLASS_ROLES[random.nextInt(COMPONENT_CLASS_ROLES.length)];
         } while (!GenerationRandom.isSeeded() && generatedClassNames.contains(className));
         if (!GenerationRandom.isSeeded()) {
             generatedClassNames.add(className);
         }
         return className;
+    }
+
+    /**
+     * 为 Java Component 生成会话稳定、组件间离散的应用风格类名。
+     *
+     * <p>包族只由 sessionKey 决定，因此同一节点上的所有 Component 命名风格一致；
+     * 包叶与类名由 sessionKey + componentName 决定，从而在重试和服务重启后保持稳定。</p>
+     */
+    public static String generateComponentClassName(String sessionKey, String componentName) {
+        byte[] sessionDigest = digest(normalize(sessionKey) + "|component-profile");
+        byte[] componentDigest = digest(normalize(sessionKey) + "|" + normalize(componentName)
+                + "|component-class");
+
+        String packageName = COMPONENT_PACKAGE_FAMILIES[index(sessionDigest, 0,
+                COMPONENT_PACKAGE_FAMILIES.length)]
+                + "." + COMPONENT_PACKAGE_LEAVES[index(componentDigest, 0,
+                COMPONENT_PACKAGE_LEAVES.length)];
+        String simpleName = COMPONENT_CLASS_PREFIXES[index(componentDigest, 1,
+                COMPONENT_CLASS_PREFIXES.length)]
+                + COMPONENT_CLASS_SUBJECTS[index(componentDigest, 2,
+                COMPONENT_CLASS_SUBJECTS.length)]
+                + COMPONENT_CLASS_QUALIFIERS[index(componentDigest, 3,
+                COMPONENT_CLASS_QUALIFIERS.length)]
+                + COMPONENT_CLASS_ROLES[index(componentDigest, 4,
+                COMPONENT_CLASS_ROLES.length)];
+        return packageName + "." + simpleName;
+    }
+
+    /** 返回适合驱动确定性成员变体的稳定 64 位 seed。 */
+    public static long stableSeed(String value) {
+        byte[] digest = digest(normalize(value));
+        long seed = 0L;
+        for (int i = 0; i < 8; i++) {
+            seed = (seed << 8) | (digest[i] & 0xffL);
+        }
+        return seed;
+    }
+
+    private static String normalize(String value) {
+        return value == null || value.trim().isEmpty() ? "bootstrap" : value.trim();
+    }
+
+    private static int index(byte[] digest, int offset, int length) {
+        return (digest[offset] & 0xff) % length;
+    }
+
+    private static byte[] digest(String value) {
+        try {
+            return MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
 

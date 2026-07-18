@@ -74,7 +74,13 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     public void invoke() throws IOException {
-        int op = ((Number) params.get("op")).intValue();
+        Object opObj = params.get("op");
+        if (!(opObj instanceof Number)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "op must be a number");
+            return;
+        }
+        int op = ((Number) opObj).intValue();
         if (op == OP_START_LISTEN) {
             handleStartListen();
         } else if (op == OP_STOP_LISTEN) {
@@ -96,7 +102,8 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     private void handleStartListen() {
-        String listenId = (String) params.get("listenId");
+        String listenId = getRequiredString("listenId");
+        if (listenId == null) return;
         Object portObj = params.get("listenPort");
         if (!(portObj instanceof Number)) {
             results.put("code", Integer.valueOf(400));
@@ -104,14 +111,15 @@ public class ReverseTunnelComponent implements Runnable {
             return;
         }
         int listenPort = ((Number) portObj).intValue();
-        String bindAddr = (String) params.get("bindAddr");
+        Object bindAddrObj = params.get("bindAddr");
+        if (bindAddrObj != null && !(bindAddrObj instanceof String)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "bindAddr must be a string");
+            return;
+        }
+        String bindAddr = (String) bindAddrObj;
         if (bindAddr == null || bindAddr.length() == 0) {
             bindAddr = "127.0.0.1";
-        }
-        if (listenId == null || listenId.length() == 0) {
-            results.put("code", Integer.valueOf(400));
-            results.put("msg", "listenId required");
-            return;
         }
         if (listenPort < 0 || listenPort > 65535) {
             results.put("code", Integer.valueOf(400));
@@ -119,7 +127,7 @@ public class ReverseTunnelComponent implements Runnable {
             return;
         }
         if (listenMap.containsKey(listenId)) {
-            results.put("code", Integer.valueOf(400));
+            results.put("code", Integer.valueOf(409));
             results.put("msg", "listenId already exists");
             return;
         }
@@ -129,19 +137,21 @@ public class ReverseTunnelComponent implements Runnable {
             ssc.configureBlocking(false);
             ssc.socket().setReuseAddress(true);
             ssc.socket().bind(new InetSocketAddress(bindAddr, listenPort));
-            Object existing = ((ConcurrentHashMap) listenMap).putIfAbsent(listenId, ssc);
-            if (existing != null) {
-                ssc.close();
-                results.put("code", Integer.valueOf(409));
-                results.put("msg", "listenId already exists");
-                return;
-            }
             int actualPort = ssc.socket().getLocalPort();
             HashMap info = new HashMap();
             info.put("listenId", listenId);
             info.put("listenPort", Integer.valueOf(actualPort));
             info.put("bindAddr", bindAddr);
-            listenInfoMap.put(listenId, info);
+            synchronized (listenMap) {
+                if (listenMap.containsKey(listenId)) {
+                    ssc.close();
+                    results.put("code", Integer.valueOf(409));
+                    results.put("msg", "listenId already exists");
+                    return;
+                }
+                listenMap.put(listenId, ssc);
+                listenInfoMap.put(listenId, info);
+            }
             results.put("code", Integer.valueOf(200));
             results.put("msg", "listening");
             results.put("listenPort", Integer.valueOf(actualPort));
@@ -154,9 +164,13 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     private void handleStopListen() {
-        String listenId = (String) params.get("listenId");
-        ServerSocketChannel ssc = (ServerSocketChannel) listenMap.remove(listenId);
-        listenInfoMap.remove(listenId);
+        String listenId = getRequiredString("listenId");
+        if (listenId == null) return;
+        ServerSocketChannel ssc;
+        synchronized (listenMap) {
+            ssc = (ServerSocketChannel) listenMap.remove(listenId);
+            listenInfoMap.remove(listenId);
+        }
         if (ssc == null) {
             results.put("code", Integer.valueOf(404));
             results.put("msg", "listenId not found");
@@ -170,13 +184,7 @@ public class ReverseTunnelComponent implements Runnable {
             Map.Entry e = (Map.Entry) it.next();
             if (listenId.equals(e.getValue())) {
                 String connId = (String) e.getKey();
-                SocketChannel sc = (SocketChannel) connMap.remove(connId);
-                connLastActivity.remove(connId);
-                if (sc != null) {
-                    try { sc.socket().close(); } catch (IOException ignored) {}
-                    closed++;
-                }
-                it.remove();
+                if (closeConnection(connId)) closed++;
             }
         }
         results.put("code", Integer.valueOf(200));
@@ -186,7 +194,8 @@ public class ReverseTunnelComponent implements Runnable {
 
     private void handleAccept() throws IOException {
         sweepIdleConns();
-        String listenId = (String) params.get("listenId");
+        String listenId = getRequiredString("listenId");
+        if (listenId == null) return;
         ServerSocketChannel ssc = (ServerSocketChannel) listenMap.get(listenId);
         if (ssc == null) {
             results.put("code", Integer.valueOf(404));
@@ -198,12 +207,23 @@ public class ReverseTunnelComponent implements Runnable {
         while (newConns.size() < MAX_ACCEPT_PER_CALL) {
             SocketChannel sc = ssc.accept();
             if (sc == null) break;
-            sc.configureBlocking(false);
-            sc.socket().setTcpNoDelay(true);
+            try {
+                sc.configureBlocking(false);
+                sc.socket().setTcpNoDelay(true);
+            } catch (IOException error) {
+                try { sc.close(); } catch (IOException ignored) {}
+                continue;
+            }
             String connId = generateConnId(listenId);
-            connMap.put(connId, sc);
-            connToListen.put(connId, listenId);
-            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            synchronized (listenMap) {
+                if (listenMap.get(listenId) != ssc) {
+                    try { sc.close(); } catch (IOException ignored) {}
+                    break;
+                }
+                connMap.put(connId, sc);
+                connToListen.put(connId, listenId);
+                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            }
             HashMap info = new HashMap();
             info.put("connId", connId);
             info.put("clientAddr", sc.socket().getInetAddress() != null
@@ -216,7 +236,8 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     private void handleRead() throws IOException {
-        String connId = (String) params.get("connId");
+        String connId = getRequiredString("connId");
+        if (connId == null) return;
         SocketChannel sc = (SocketChannel) connMap.get(connId);
         if (sc == null) {
             results.put("code", Integer.valueOf(404));
@@ -224,12 +245,20 @@ public class ReverseTunnelComponent implements Runnable {
             return;
         }
         ByteBuffer buf = ByteBuffer.allocate(BUFFER_SIZE);
-        int len = sc.read(buf);
+        int len;
+        try {
+            len = sc.read(buf);
+        } catch (IOException error) {
+            closeConnection(connId);
+            throw error;
+        }
         if (len > 0) {
             buf.flip();
             byte[] data = new byte[buf.remaining()];
             buf.get(data);
-            connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            if (connMap.get(connId) == sc) {
+                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+            }
             results.put("code", Integer.valueOf(200));
             results.put("bytesRead", Integer.valueOf(data.length));
             results.put("data", data);
@@ -238,17 +267,15 @@ public class ReverseTunnelComponent implements Runnable {
             results.put("bytesRead", Integer.valueOf(0));
             results.put("data", new byte[0]);
         } else {
-            try { sc.socket().close(); } catch (IOException ignored) {}
-            connMap.remove(connId);
-            connToListen.remove(connId);
-            connLastActivity.remove(connId);
+            closeConnection(connId);
             results.put("code", Integer.valueOf(404));
             results.put("msg", "peer closed");
         }
     }
 
     private void handleWrite() throws IOException {
-        String connId = (String) params.get("connId");
+        String connId = getRequiredString("connId");
+        if (connId == null) return;
         SocketChannel sc = (SocketChannel) connMap.get(connId);
         if (sc == null) {
             results.put("code", Integer.valueOf(404));
@@ -256,24 +283,33 @@ public class ReverseTunnelComponent implements Runnable {
             return;
         }
         Object dataObj = params.get("data");
-        byte[] data = (byte[]) dataObj;
-        if (data == null) data = new byte[0];
+        if (dataObj != null && !(dataObj instanceof byte[])) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "data must be bytes");
+            return;
+        }
+        byte[] data = dataObj == null ? new byte[0] : (byte[]) dataObj;
         ByteBuffer buf = ByteBuffer.wrap(data);
         long deadline = System.currentTimeMillis() + 5000L;
         int written = 0;
         while (buf.hasRemaining()) {
-            int n = sc.write(buf);
+            int n;
+            try {
+                n = sc.write(buf);
+            } catch (IOException error) {
+                closeConnection(connId);
+                throw error;
+            }
             if (n > 0) {
                 written += n;
-                connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+                if (connMap.get(connId) == sc) {
+                    connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
+                }
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
                 // 写超时：关闭连接，避免 puppet 线程池被卡住
-                try { sc.socket().close(); } catch (IOException ignored) {}
-                connMap.remove(connId);
-                connToListen.remove(connId);
-                connLastActivity.remove(connId);
+                closeConnection(connId);
                 results.put("code", Integer.valueOf(500));
                 results.put("msg", "write timeout");
                 results.put("bytesWritten", Integer.valueOf(written));
@@ -281,10 +317,7 @@ public class ReverseTunnelComponent implements Runnable {
             }
             try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             if (Thread.currentThread().isInterrupted()) {
-                try { sc.close(); } catch (IOException ignored) {}
-                connMap.remove(connId);
-                connToListen.remove(connId);
-                connLastActivity.remove(connId);
+                closeConnection(connId);
                 results.put("code", Integer.valueOf(500));
                 results.put("msg", "write interrupted");
                 results.put("bytesWritten", Integer.valueOf(written));
@@ -296,14 +329,29 @@ public class ReverseTunnelComponent implements Runnable {
     }
 
     private void handleClose() {
-        String connId = (String) params.get("connId");
-        SocketChannel sc = (SocketChannel) connMap.remove(connId);
-        connToListen.remove(connId);
-        connLastActivity.remove(connId);
-        if (sc != null) {
-            try { sc.socket().close(); } catch (IOException ignored) {}
-        }
+        String connId = getRequiredString("connId");
+        if (connId == null) return;
+        closeConnection(connId);
         results.put("code", Integer.valueOf(200));
+    }
+
+    private String getRequiredString(String key) {
+        Object value = params.get(key);
+        if (value instanceof String && ((String) value).length() > 0) return (String) value;
+        results.put("code", Integer.valueOf(400));
+        results.put("msg", key + " required");
+        return null;
+    }
+
+    private static boolean closeConnection(String connId) {
+        SocketChannel sc = (SocketChannel) connMap.remove(connId);
+        connLastActivity.remove(connId);
+        connToListen.remove(connId);
+        if (sc != null) {
+            try { sc.close(); } catch (IOException ignored) {}
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -318,12 +366,7 @@ public class ReverseTunnelComponent implements Runnable {
             long last = ((Long) e.getValue()).longValue();
             if (now - last > IDLE_TIMEOUT_MS) {
                 String connId = (String) e.getKey();
-                SocketChannel sc = (SocketChannel) connMap.remove(connId);
-                connToListen.remove(connId);
-                it.remove();
-                if (sc != null) {
-                    try { sc.socket().close(); } catch (IOException ignored) {}
-                }
+                closeConnection(connId);
             }
         }
     }

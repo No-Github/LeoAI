@@ -6,6 +6,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -15,11 +16,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author LeoSpring
  * @version 2.1
  */
-public class PortScanComponent implements Runnable {
+public class PortScanComponent implements Runnable, ThreadFactory {
 
     private static final int MAX_THREADS = 64;
     private static final int MAX_TIMEOUT_MS = 300000;
     private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
     private HashMap params;
     private HashMap results;
@@ -53,7 +55,13 @@ public class PortScanComponent implements Runnable {
 
     public void invoke() throws Exception {
         cleanupStoppedTasks();
-        String methodName = (String) params.get("methodName");
+        Object methodObj = params.get("methodName");
+        if (!(methodObj instanceof String)) {
+            results.put("code", Integer.valueOf(400));
+            results.put("msg", "methodName required");
+            return;
+        }
+        String methodName = (String) methodObj;
         if ("startScan".equals(methodName)){
             String taskId=startScan(params);
             results.put("taskId",taskId);
@@ -76,7 +84,10 @@ public class PortScanComponent implements Runnable {
                 snapshot = new HashMap(scanTaskInfo);
             }
             AtomicInteger completedCount = (AtomicInteger) scanTaskInfo.get("completedCount");
-            snapshot.put("scannedCount", Integer.valueOf(completedCount != null ? completedCount.get() : 0));
+            Integer completed = Integer.valueOf(completedCount != null ? completedCount.get() : 0);
+            snapshot.put("scannedCount", completed);
+            snapshot.put("completedCount", completed);
+            snapshot.remove("executor");
             List ports = (List) scanTaskInfo.get("openPortList");
             if (ports != null) {
                 synchronized (ports) {
@@ -183,8 +194,11 @@ public class PortScanComponent implements Runnable {
         // 再次检查状态（可能在等待期间被终止）
         int count;
         try {
-            if (scanPort(scanHost,scanPort,scanTimeout)){
-                openPortList.add(scanPort);
+            boolean open = scanPort(scanHost,scanPort,scanTimeout);
+            synchronized (lock) {
+                if (open && !STATE_STOPPED.equals(scanTaskInfo.get("status"))) {
+                    openPortList.add(scanPort);
+                }
             }
         } finally {
             // 即使单个任务异常也必须推进计数，避免任务永久停在 RUNNING。
@@ -193,8 +207,7 @@ public class PortScanComponent implements Runnable {
         // 使用同步块确保状态更新的原子性
         synchronized (lock) {
             if (count >= portLength){
-                scanTaskInfo.put("status", STATE_STOPPED);
-                scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+                finishTask(scanTaskInfo, false);
             }
         }
     }
@@ -209,6 +222,11 @@ public class PortScanComponent implements Runnable {
         if (scanPorts == null || scanPorts.length == 0) {
             throw new IllegalArgumentException("scanPorts 不能为空");
         }
+        for (int i = 0; i < scanPorts.length; i++) {
+            if (scanPorts[i] < 1 || scanPorts[i] > 65535) {
+                throw new IllegalArgumentException("端口超出范围: " + scanPorts[i]);
+            }
+        }
         int scanTimeout= params.get("scanTimeout") instanceof Number
                 ? ((Number) params.get("scanTimeout")).intValue() : 3000;
         if (scanTimeout <= 0) scanTimeout = 3000;
@@ -218,7 +236,7 @@ public class PortScanComponent implements Runnable {
         if (threadsNum <= 0) threadsNum = 1;
         if (threadsNum > MAX_THREADS) threadsNum = MAX_THREADS;
         if (threadsNum > scanPorts.length) threadsNum = scanPorts.length;
-        ExecutorService pool = Executors.newFixedThreadPool(threadsNum);
+        ExecutorService pool = Executors.newFixedThreadPool(threadsNum, this);
 
         HashMap scanTaskInfo=new HashMap();
         String taskId=UUID.randomUUID().toString();
@@ -232,22 +250,24 @@ public class PortScanComponent implements Runnable {
         scanTaskInfo.put("openPortList",Collections.synchronizedList(new ArrayList()));
         // 使用原子计数器跟踪已完成的扫描数量
         scanTaskInfo.put("completedCount",new AtomicInteger(0));
+        scanTaskInfo.put("executor", pool);
         scanTasks.put(taskId,scanTaskInfo);
         try {
-            for (int scanPort: scanPorts) {
-                if (scanPort < 1 || scanPort > 65535) {
-                    throw new IllegalArgumentException("端口超出范围: " + scanPort);
-                }
-                pool.execute(new PortScanComponent(scanHost,scanPort,scanTimeout,taskId));
+            for (int i = 0; i < scanPorts.length; i++) {
+                pool.execute(new PortScanComponent(scanHost,scanPorts[i],scanTimeout,taskId));
             }
         } catch (RuntimeException e) {
-            scanTaskInfo.put("status", STATE_STOPPED);
-            scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
             pool.shutdownNow();
+            scanTasks.remove(taskId);
+            taskLocks.remove(taskId);
             throw e;
         }
         pool.shutdown();
         return taskId;
+    }
+
+    public Thread newThread(Runnable task) {
+        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
     }
 
     private Boolean scanPort(String host,int port,int scanTimeout){
@@ -315,10 +335,24 @@ public class PortScanComponent implements Runnable {
         synchronized (lock) {
             String status = (String) scanTaskInfo.get("status");
             if (STATE_STOPPED.equals(status)) throw new Exception("任务已终止");
-            scanTaskInfo.put("status", STATE_STOPPED);
-            scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
-            lock.notifyAll(); // 唤醒所有等待的线程
         }
+        finishTask(scanTaskInfo, true);
+    }
+
+    private static void finishTask(HashMap scanTaskInfo, boolean interrupt) {
+        Object taskId = scanTaskInfo.get("taskId");
+        Object lock = taskLocks.get(taskId);
+        Object monitor = lock != null ? lock : scanTaskInfo;
+        ExecutorService executor;
+        synchronized (monitor) {
+            scanTaskInfo.put("status", STATE_STOPPED);
+            if (scanTaskInfo.get("finishedAt") == null) {
+                scanTaskInfo.put("finishedAt", Long.valueOf(System.currentTimeMillis()));
+            }
+            executor = (ExecutorService) scanTaskInfo.remove("executor");
+            monitor.notifyAll();
+        }
+        if (interrupt && executor != null) executor.shutdownNow();
     }
 
     private void cleanupStoppedTasks() {
@@ -329,8 +363,9 @@ public class PortScanComponent implements Runnable {
             Map task = (Map) scanTasks.get(id);
             if (task == null || !STATE_STOPPED.equals(task.get("status"))) continue;
             Object finishedObj = task.get("finishedAt");
-            if (finishedObj instanceof Number
-                    && now - ((Number) finishedObj).longValue() > STOPPED_TASK_TTL_MILLIS) {
+            long age = finishedObj instanceof Number
+                    ? now - ((Number) finishedObj).longValue() : -1L;
+            if (age >= 0 && age > STOPPED_TASK_TTL_MILLIS) {
                 scanTasks.remove(id);
                 taskLocks.remove(id);
             }

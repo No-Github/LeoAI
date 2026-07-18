@@ -52,17 +52,11 @@ class RuntimeFoundationTest {
     }
 
     @Test
-    void mapsLegacyOperationsAndProtectsRpcParams() {
-        assertEquals(PuppetOperation.PING, PuppetOperation.fromLegacyMode(0));
-        assertEquals(PuppetOperation.COMPONENT_INVOKE, PuppetOperation.fromLegacyMode(3));
-        assertThrows(IllegalArgumentException.class, () -> PuppetOperation.fromLegacyMode(99));
-
+    void protectsRpcParams() {
         PuppetRpcRequest request = new PuppetRpcRequest(
-                PuppetRpcRequest.CURRENT_PROTOCOL_VERSION,
                 "request-1",
                 PuppetOperation.PING,
                 null,
-                1L,
                 null,
                 null,
                 Map.of("key", "value"));

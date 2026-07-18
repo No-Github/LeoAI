@@ -139,8 +139,6 @@ public class TomcatWebSocketInjector {
         Object o1 = constructor.newInstance(obj.getClass(), urlPattern);
         Object endpointConfig = invokeMethod(o1, "build", null, null);
 
-        invokeMethod(container, "setDefaultMaxTextMessageBufferSize", new Class[]{int.class}, new Object[]{52428800});
-        invokeMethod(container, "setDefaultMaxBinaryMessageBufferSize", new Class[]{int.class}, new Object[]{52428800});
         invokeMethod(container, "addEndpoint", new Class[]{serverEndpointConfigClass}, new Object[]{endpointConfig});
     }
 

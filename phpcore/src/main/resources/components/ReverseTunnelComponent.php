@@ -7,19 +7,23 @@ $rtAvailable = static function ($name) {
     return function_exists($name) && !in_array($name,
         array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
 };
-$rtBase = rtrim((string)sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR
-    . '.leo-php-reverse-' . substr(hash('sha256', __FILE__), 0, 12);
+$rtScope = substr(hash('sha256', __FILE__ . '|state'), 0, 14);
+$rtWorkerToken = substr(hash('sha256', __FILE__ . '|worker'), 0, 18);
+$rtBase = rtrim((string)sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . '.' . $rtScope;
+$rtName = static function ($label) {
+    return substr(hash('sha256', __FILE__ . '|file|' . $label), 0, 16) . '.dat';
+};
 $rtListenPath = static function ($listenId) use ($rtBase) {
     if (!is_string($listenId) || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $listenId)) {
         throw new InvalidArgumentException('invalid listenId');
     }
     return $rtBase . DIRECTORY_SEPARATOR . hash('sha256', $listenId);
 };
-$rtConnPath = static function ($directory, $connId) {
+$rtConnPath = static function ($directory, $connId) use ($rtName) {
     if (!is_string($connId) || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $connId)) {
         throw new InvalidArgumentException('invalid connId');
     }
-    return $directory . DIRECTORY_SEPARATOR . 'conns' . DIRECTORY_SEPARATOR . hash('sha256', $connId);
+    return $directory . DIRECTORY_SEPARATOR . $rtName('connections') . DIRECTORY_SEPARATOR . hash('sha256', $connId);
 };
 $rtReadJson = static function ($path) {
     $value = json_decode((string)@file_get_contents($path), true);
@@ -35,8 +39,17 @@ $rtWriteJson = static function ($path, $value) {
 };
 $rtAppend = static function ($path, $data) {
     if ($data === '') return 0;
-    $written = @file_put_contents($path, $data, FILE_APPEND | LOCK_EX);
-    if ($written === false) throw new RuntimeException('reverse queue write failed');
+    $limit = 8388608; $length = strlen($data);
+    $stream = @fopen($path, 'c+b');
+    if ($stream === false || !@flock($stream, LOCK_EX)) {
+        if ($stream !== false) fclose($stream); throw new RuntimeException('reverse queue write failed');
+    }
+    fseek($stream, 0, SEEK_END); $current = (int)ftell($stream);
+    if ($length > $limit || $current > $limit - $length) {
+        flock($stream, LOCK_UN); fclose($stream); throw new RuntimeException('reverse queue limit exceeded');
+    }
+    $written = @fwrite($stream, $data); fflush($stream); flock($stream, LOCK_UN); fclose($stream);
+    if ($written === false || $written !== $length) throw new RuntimeException('reverse queue write failed');
     return $written;
 };
 $rtTake = static function ($path, $limit) {
@@ -71,10 +84,34 @@ $rtRemoveTree = static function ($directory) use (&$rtRemoveTree) {
     }
     @rmdir($directory);
 };
-$rtLaunch = static function ($directory) use ($rtAvailable) {
+$rtCleanup = static function () use ($rtBase, $rtName, $rtReadJson, $rtRemoveTree) {
+    if (!is_dir($rtBase)) return;
+    foreach ((array)glob($rtBase . DIRECTORY_SEPARATOR . '*') as $directory) {
+        if (!is_dir($directory)) continue;
+        $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
+        $updated = is_array($status) && isset($status['updatedAt']) ? (int)$status['updatedAt'] : (int)@filemtime($directory);
+        $heartbeat = (int)@filemtime($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
+        $updated = max($updated, $heartbeat);
+        $state = is_array($status) && isset($status['state']) ? (string)$status['state'] : '';
+        $ttl = in_array($state, ['closed', 'failed'], true) ? 300 : 1800;
+        if ($updated > 0 && time() - $updated > $ttl) { $rtRemoveTree($directory); continue; }
+        $connections = $directory . DIRECTORY_SEPARATOR . $rtName('connections');
+        foreach ((array)glob($connections . DIRECTORY_SEPARATOR . '*') as $connection) {
+            $connectionStatus = $rtReadJson($connection . DIRECTORY_SEPARATOR . $rtName('status'));
+            $connectionState = is_array($connectionStatus) && isset($connectionStatus['state'])
+                ? (string)$connectionStatus['state'] : '';
+            $connectionUpdated = is_array($connectionStatus) && isset($connectionStatus['updatedAt'])
+                ? (int)$connectionStatus['updatedAt'] : (int)@filemtime($connection);
+            if ($connectionState !== 'open' && $connectionUpdated > 0 && time() - $connectionUpdated > 300) {
+                $rtRemoveTree($connection);
+            }
+        }
+    }
+};
+$rtLaunch = static function ($directory) use ($rtAvailable, $rtWorkerToken) {
     $php = defined('PHP_BINARY') && PHP_BINARY !== '' ? PHP_BINARY : 'php';
     $runner = escapeshellarg($php) . ' ' . escapeshellarg(__FILE__)
-        . ' --leo-reverse-worker ' . escapeshellarg($directory);
+        . ' ' . escapeshellarg($rtWorkerToken) . ' ' . escapeshellarg($directory);
     if (DIRECTORY_SEPARATOR === '\\') {
         if ($rtAvailable('popen')) {
             $handle = @popen('start /B "" ' . $runner . ' >NUL 2>&1', 'r');
@@ -97,28 +134,29 @@ $rtLaunch = static function ($directory) use ($rtAvailable) {
     }
     return false;
 };
-$rtCloseClient = static function ($connId, &$clients, $paths, $rtWriteJson) {
+$rtCloseClient = static function ($connId, &$clients, $paths, $rtWriteJson, $rtName) {
     if (isset($clients[$connId]) && is_resource($clients[$connId])) @fclose($clients[$connId]);
     unset($clients[$connId]);
     if (isset($paths[$connId])) {
-        $rtWriteJson($paths[$connId] . DIRECTORY_SEPARATOR . 'status.json',
+        $rtWriteJson($paths[$connId] . DIRECTORY_SEPARATOR . $rtName('status'),
             ['state' => 'closed', 'updatedAt' => time()]);
         unset($paths[$connId]);
     }
 };
 $rtWorker = static function ($directory) use (
-    $rtReadJson, $rtWriteJson, $rtAppend, $rtTake, $rtCloseClient
+    $rtName, $rtReadJson, $rtWriteJson, $rtAppend, $rtTake, $rtCloseClient
 ) {
-    $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'config.json');
+    $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('config'));
     if (!is_array($config)) return 2;
     $bindAddr = (string)$config['bindAddr']; $port = (int)$config['listenPort'];
     $uriHost = strpos($bindAddr, ':') !== false && $bindAddr[0] !== '[' ? '[' . $bindAddr . ']' : $bindAddr;
     $errno = 0; $error = '';
     $server = @stream_socket_server('tcp://' . $uriHost . ':' . $port, $errno, $error,
         STREAM_SERVER_BIND | STREAM_SERVER_LISTEN);
-    $statusPath = $directory . DIRECTORY_SEPARATOR . 'status.json';
+    $statusPath = $directory . DIRECTORY_SEPARATOR . $rtName('status');
     if (!is_resource($server)) {
-        $rtWriteJson($statusPath, ['state' => 'failed', 'msg' => $error !== '' ? $error : (string)$errno]);
+        $rtWriteJson($statusPath, ['state' => 'failed', 'msg' => $error !== '' ? $error : (string)$errno,
+            'updatedAt' => time()]);
         return 3;
     }
     stream_set_blocking($server, false);
@@ -127,8 +165,8 @@ $rtWorker = static function ($directory) use (
     $rtWriteJson($statusPath, ['state' => 'open', 'pid' => getmypid(), 'listenPort' => $actualPort,
         'bindAddr' => $bindAddr, 'updatedAt' => time()]);
     $clients = []; $paths = []; $lastActivity = time();
-    $stop = $directory . DIRECTORY_SEPARATOR . 'stop';
-    $heartbeat = $directory . DIRECTORY_SEPARATOR . 'heartbeat';
+    $stop = $directory . DIRECTORY_SEPARATOR . $rtName('stop');
+    $heartbeat = $directory . DIRECTORY_SEPARATOR . $rtName('heartbeat');
     $failureMessage = null;
     try {
         while (!is_file($stop)) {
@@ -143,17 +181,18 @@ $rtWorker = static function ($directory) use (
                     do {
                         $peer = ''; $client = @stream_socket_accept($server, 0, $peer);
                         if (!is_resource($client)) break;
+                        if (count($clients) >= 256) { fclose($client); continue; }
                         stream_set_blocking($client, false);
                         $connId = md5(uniqid((string)mt_rand(), true) . $peer);
-                        $connDirectory = $directory . DIRECTORY_SEPARATOR . 'conns' . DIRECTORY_SEPARATOR . hash('sha256', $connId);
+                        $connDirectory = $directory . DIRECTORY_SEPARATOR . $rtName('connections') . DIRECTORY_SEPARATOR . hash('sha256', $connId);
                         @mkdir($connDirectory, 0700, true);
-                        @file_put_contents($connDirectory . DIRECTORY_SEPARATOR . 'in.queue', '', LOCK_EX);
-                        @file_put_contents($connDirectory . DIRECTORY_SEPARATOR . 'out.queue', '', LOCK_EX);
-                        $rtWriteJson($connDirectory . DIRECTORY_SEPARATOR . 'status.json', ['state' => 'open', 'updatedAt' => time()]);
+                        @file_put_contents($connDirectory . DIRECTORY_SEPARATOR . $rtName('input'), '', LOCK_EX);
+                        @file_put_contents($connDirectory . DIRECTORY_SEPARATOR . $rtName('output'), '', LOCK_EX);
+                        $rtWriteJson($connDirectory . DIRECTORY_SEPARATOR . $rtName('status'), ['state' => 'open', 'updatedAt' => time()]);
                         $clients[$connId] = $client; $paths[$connId] = $connDirectory;
                         $clientAddr = $peer; $clientPort = 0; $lastColon = strrpos($peer, ':');
                         if ($lastColon !== false) { $clientAddr = trim(substr($peer, 0, $lastColon), '[]'); $clientPort = (int)substr($peer, $lastColon + 1); }
-                        $rtAppend($directory . DIRECTORY_SEPARATOR . 'accept.queue', json_encode([
+                        $rtAppend($directory . DIRECTORY_SEPARATOR . $rtName('accept'), json_encode([
                             'connId' => $connId, 'clientAddr' => $clientAddr, 'clientPort' => $clientPort
                         ]) . "\n");
                         $lastActivity = time();
@@ -164,24 +203,24 @@ $rtWorker = static function ($directory) use (
                     if ($socket !== $ready) continue;
                     $data = @fread($socket, 65536);
                     if ($data === false || ($data === '' && feof($socket))) {
-                        $rtCloseClient($connId, $clients, $paths, $rtWriteJson);
+                        $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName);
                     } elseif ($data !== '') {
-                        $rtAppend($paths[$connId] . DIRECTORY_SEPARATOR . 'in.queue', $data); $lastActivity = time();
+                        $rtAppend($paths[$connId] . DIRECTORY_SEPARATOR . $rtName('input'), $data); $lastActivity = time();
                     }
                     break;
                 }
             }
             foreach (array_keys($clients) as $connId) {
                 $connDirectory = $paths[$connId];
-                if (is_file($connDirectory . DIRECTORY_SEPARATOR . 'stop')) {
-                    $rtCloseClient($connId, $clients, $paths, $rtWriteJson); continue;
+                if (is_file($connDirectory . DIRECTORY_SEPARATOR . $rtName('stop'))) {
+                    $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); continue;
                 }
-                $data = $rtTake($connDirectory . DIRECTORY_SEPARATOR . 'out.queue', 65536);
+                $data = $rtTake($connDirectory . DIRECTORY_SEPARATOR . $rtName('output'), 65536);
                 if ($data === '') continue;
                 $offset = 0; $length = strlen($data);
                 while ($offset < $length && isset($clients[$connId])) {
                     $written = @fwrite($clients[$connId], substr($data, $offset));
-                    if ($written === false) { $rtCloseClient($connId, $clients, $paths, $rtWriteJson); break; }
+                    if ($written === false) { $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName); break; }
                     if ($written === 0) { usleep(10000); continue; }
                     $offset += $written; $lastActivity = time();
                 }
@@ -189,9 +228,12 @@ $rtWorker = static function ($directory) use (
         }
     } catch (Exception $failure) {
         $failureMessage = $failure->getMessage();
+    } finally {
+        foreach (array_keys($clients) as $connId) {
+            $rtCloseClient($connId, $clients, $paths, $rtWriteJson, $rtName);
+        }
+        if (is_resource($server)) fclose($server);
     }
-    foreach (array_keys($clients) as $connId) $rtCloseClient($connId, $clients, $paths, $rtWriteJson);
-    fclose($server);
     $finalStatus = ['state' => $failureMessage === null ? 'closed' : 'failed',
         'listenPort' => $actualPort, 'bindAddr' => $bindAddr, 'updatedAt' => time()];
     if ($failureMessage !== null) $finalStatus['msg'] = $failureMessage;
@@ -199,16 +241,17 @@ $rtWorker = static function ($directory) use (
     return 0;
 };
 
-if (PHP_SAPI === 'cli' && isset($argv[1]) && $argv[1] === '--leo-reverse-worker') {
+if (PHP_SAPI === 'cli' && isset($argv[1]) && hash_equals($rtWorkerToken, (string)$argv[1])) {
     exit($rtWorker(isset($argv[2]) ? $argv[2] : ''));
 }
 
 return [
     'id' => 'ReverseTunnelComponent', 'version' => '1.0.0',
     'handle' => static function ($action, $params) use (
-        $rtGet, $rtBase, $rtListenPath, $rtConnPath, $rtReadJson, $rtWriteJson,
-        $rtAppend, $rtTake, $rtTakeLines, $rtRemoveTree, $rtLaunch
+        $rtGet, $rtBase, $rtListenPath, $rtConnPath, $rtName, $rtReadJson, $rtWriteJson,
+        $rtAppend, $rtTake, $rtTakeLines, $rtRemoveTree, $rtCleanup, $rtLaunch
     ) {
+        $rtCleanup();
         $op = (int)$rtGet($params, 'op', -1);
         if ($op === 0) {
             $listenId = (string)$rtGet($params, 'listenId', ''); $directory = $rtListenPath($listenId);
@@ -217,42 +260,47 @@ return [
                 return ['code' => 400, 'msg' => 'invalid listen address'];
             }
             if (!is_dir($rtBase) && !@mkdir($rtBase, 0700, true) && !is_dir($rtBase)) return ['code' => 500, 'msg' => 'listener state unavailable'];
+            $entries = array_filter((array)glob($rtBase . DIRECTORY_SEPARATOR . '*'), 'is_dir');
+            if (!is_dir($directory) && count($entries) >= 32) return ['code' => 429, 'msg' => 'listener limit reached'];
             if (is_dir($directory)) {
-                $current = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'status.json');
-                if (is_array($current) && $current['state'] === 'open') return ['code' => 409, 'msg' => 'listenId exists'];
+                $current = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
+                if (is_array($current) && in_array($current['state'], ['starting', 'open'], true)) {
+                    return ['code' => 409, 'msg' => 'listenId exists'];
+                }
                 $rtRemoveTree($directory);
             }
-            @mkdir($directory . DIRECTORY_SEPARATOR . 'conns', 0700, true);
-            @file_put_contents($directory . DIRECTORY_SEPARATOR . 'accept.queue', '', LOCK_EX);
-            @touch($directory . DIRECTORY_SEPARATOR . 'heartbeat');
-            $rtWriteJson($directory . DIRECTORY_SEPARATOR . 'config.json', ['listenId' => $listenId, 'listenPort' => $port, 'bindAddr' => $bindAddr]);
-            $rtWriteJson($directory . DIRECTORY_SEPARATOR . 'status.json', ['state' => 'starting', 'updatedAt' => time()]);
+            @mkdir($directory . DIRECTORY_SEPARATOR . $rtName('connections'), 0700, true);
+            @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('accept'), '', LOCK_EX);
+            @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
+            $rtWriteJson($directory . DIRECTORY_SEPARATOR . $rtName('config'), ['listenId' => $listenId, 'listenPort' => $port, 'bindAddr' => $bindAddr]);
+            $rtWriteJson($directory . DIRECTORY_SEPARATOR . $rtName('status'), ['state' => 'starting', 'updatedAt' => time()]);
             if (!$rtLaunch($directory)) { $rtRemoveTree($directory); return ['code' => 503, 'msg' => 'background worker unavailable']; }
             $deadline = microtime(true) + 5.0;
             do {
-                usleep(20000); $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'status.json');
+                usleep(20000); $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
                 if (is_array($status) && $status['state'] === 'open') return ['code' => 200, 'msg' => 'listening',
                     'listenPort' => (int)$status['listenPort'], 'bindAddr' => (string)$status['bindAddr']];
                 if (is_array($status) && $status['state'] === 'failed') return ['code' => 500, 'msg' => $status['msg']];
             } while (microtime(true) < $deadline);
+            @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX);
             return ['code' => 504, 'msg' => 'listener startup timeout'];
         }
         if ($op === 1 || $op === 2) {
             $listenId = (string)$rtGet($params, 'listenId', ''); $directory = $rtListenPath($listenId);
-            $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'status.json');
+            $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
             if (!is_array($status) || $status['state'] !== 'open') return ['code' => 404, 'msg' => 'listenId not found'];
-            if ($op === 1) { @file_put_contents($directory . DIRECTORY_SEPARATOR . 'stop', '1', LOCK_EX); return ['code' => 200, 'msg' => 'stopped']; }
-            @touch($directory . DIRECTORY_SEPARATOR . 'heartbeat');
-            return ['code' => 200, 'newConns' => $rtTakeLines($directory . DIRECTORY_SEPARATOR . 'accept.queue', 256)];
+            if ($op === 1) { @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX); return ['code' => 200, 'msg' => 'stopped']; }
+            @touch($directory . DIRECTORY_SEPARATOR . $rtName('heartbeat'));
+            return ['code' => 200, 'newConns' => $rtTakeLines($directory . DIRECTORY_SEPARATOR . $rtName('accept'), 256)];
         }
         if ($op >= 3 && $op <= 5) {
             $connId = (string)$rtGet($params, 'connId', '');
-            $matches = (array)glob($rtBase . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . 'conns'
+            $matches = (array)glob($rtBase . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . $rtName('connections')
                 . DIRECTORY_SEPARATOR . hash('sha256', $connId));
             if (count($matches) === 0) return ['code' => 404, 'msg' => 'connId not found'];
-            $directory = $matches[0]; $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'status.json');
+            $directory = $matches[0]; $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
             if ($op === 3) {
-                $data = $rtTake($directory . DIRECTORY_SEPARATOR . 'in.queue', 65536);
+                $data = $rtTake($directory . DIRECTORY_SEPARATOR . $rtName('input'), 65536);
                 if ($data !== '') return ['code' => 200, 'bytesRead' => strlen($data), 'data' => leo_binary($data)];
                 return is_array($status) && $status['state'] === 'open'
                     ? ['code' => 204, 'bytesRead' => 0, 'data' => leo_binary('')]
@@ -261,16 +309,16 @@ return [
             if ($op === 4) {
                 if (!is_array($status) || $status['state'] !== 'open') return ['code' => 404, 'msg' => 'peer closed'];
                 $data = $rtGet($params, 'data', ''); if (!is_string($data)) return ['code' => 400, 'msg' => 'data must be binary'];
-                return ['code' => 200, 'bytesWritten' => $rtAppend($directory . DIRECTORY_SEPARATOR . 'out.queue', $data)];
+                return ['code' => 200, 'bytesWritten' => $rtAppend($directory . DIRECTORY_SEPARATOR . $rtName('output'), $data)];
             }
-            @file_put_contents($directory . DIRECTORY_SEPARATOR . 'stop', '1', LOCK_EX);
+            @file_put_contents($directory . DIRECTORY_SEPARATOR . $rtName('stop'), '1', LOCK_EX);
             return ['code' => 200, 'msg' => 'closed'];
         }
         if ($op === 6) {
             $listens = [];
             foreach ((array)glob($rtBase . DIRECTORY_SEPARATOR . '*') as $directory) {
-                $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'status.json');
-                $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . 'config.json');
+                $status = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('status'));
+                $config = $rtReadJson($directory . DIRECTORY_SEPARATOR . $rtName('config'));
                 if (is_array($status) && is_array($config) && $status['state'] === 'open') $listens[] = [
                     'listenId' => $config['listenId'], 'listenPort' => $status['listenPort'], 'bindAddr' => $status['bindAddr']
                 ];

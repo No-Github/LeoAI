@@ -48,6 +48,12 @@ class PhpHttpRequestComponentTest {
             exchange.sendResponseHeaders(302, -1);
             exchange.close();
         });
+        server.createContext("/headers", exchange -> {
+            String value = exchange.getRequestHeaders().getFirst("User-Agent") + "|"
+                    + exchange.getRequestHeaders().getFirst("Accept-Language") + "|"
+                    + exchange.getRequestHeaders().getFirst("Accept");
+            respond(exchange, 200, "text/plain", value.getBytes(StandardCharsets.UTF_8));
+        });
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
     }
@@ -114,6 +120,23 @@ class PhpHttpRequestComponentTest {
             component = original;
             Files.deleteIfExists(streamOnly);
         }
+    }
+
+    @Test
+    void usesStableOsConsistentDefaultsAndPreservesExplicitProfile() throws Exception {
+        Map<String, Object> defaults = invoke(Map.of("method", "GET", "url", baseUrl + "/headers"));
+        String body = String.valueOf(defaults.get("body"));
+        String[] fields = body.split("\\|", 3);
+        assertEquals(3, fields.length);
+        assertTrue(fields[0].startsWith("Mozilla/5.0"));
+        assertTrue(fields[0].contains("Macintosh") || fields[0].contains("Windows NT") || fields[0].contains("Linux"));
+        assertTrue(fields[1].startsWith("zh-CN") || fields[1].startsWith("en-US"));
+        assertTrue(fields[2].contains("text/html"));
+        assertTrue(!fields[0].contains("Chrome/131"));
+
+        Map<String, Object> explicit = invoke(Map.of("method", "GET", "url", baseUrl + "/headers",
+                "headers", Map.of("User-Agent", "FixtureClient/1.0", "Accept-Language", "fr-FR")));
+        assertTrue(String.valueOf(explicit.get("body")).startsWith("FixtureClient/1.0|fr-FR|"));
     }
 
     private void echo(HttpExchange exchange) throws IOException {

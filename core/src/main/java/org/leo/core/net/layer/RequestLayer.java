@@ -5,18 +5,18 @@ import org.leo.core.entity.Disguise;
 import java.util.Map;
 
 public class RequestLayer {
-    private String rUrl;
+    private String url;
     private Map<String, String> headers;
     private Disguise disguise;
 
-    public RequestLayer(String rUrl, Map<String, String> headers, Disguise disguise) {
-        this.rUrl = rUrl;
+    public RequestLayer(String url, Map<String, String> headers, Disguise disguise) {
+        this.url = url;
         this.headers = headers;
         this.disguise = disguise;
     }
 
-    public String getRUrl() {
-        return rUrl;
+    public String getUrl() {
+        return url;
     }
 
     public Map<String, String> getHeaders() {

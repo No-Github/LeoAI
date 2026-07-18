@@ -72,6 +72,15 @@ public class PaddingStrategy {
      */
     private LengthDistribution lengthDistribution = LengthDistribution.UNIFORM;
 
+    /** 是否优先把编码后的请求补齐到固定长度桶。 */
+    private boolean bucketed = true;
+
+    /** 编码请求使用的长度桶，单位为字节。 */
+    private int[] bucketSizes = {1024, 2048, 4096, 8192};
+
+    /** Padding 参与计算时允许的最大总请求大小。 */
+    private int maxTotalBytes = 8192;
+
     // ==================== 枚举定义 ====================
 
     /**
@@ -123,6 +132,41 @@ public class PaddingStrategy {
 
     public PaddingStrategy setLengthDistribution(LengthDistribution lengthDistribution) {
         this.lengthDistribution = lengthDistribution;
+        return this;
+    }
+
+    public boolean isBucketed() {
+        return bucketed;
+    }
+
+    public PaddingStrategy setBucketed(boolean bucketed) {
+        this.bucketed = bucketed;
+        return this;
+    }
+
+    public int[] getBucketSizes() {
+        return bucketSizes == null ? new int[0] : bucketSizes.clone();
+    }
+
+    public PaddingStrategy setBucketSizes(int[] bucketSizes) {
+        if (bucketSizes == null) {
+            this.bucketSizes = new int[0];
+            return this;
+        }
+        this.bucketSizes = java.util.Arrays.stream(bucketSizes)
+                .filter(value -> value > 0)
+                .distinct()
+                .sorted()
+                .toArray();
+        return this;
+    }
+
+    public int getMaxTotalBytes() {
+        return maxTotalBytes;
+    }
+
+    public PaddingStrategy setMaxTotalBytes(int maxTotalBytes) {
+        this.maxTotalBytes = Math.max(0, maxTotalBytes);
         return this;
     }
 }

@@ -1,5 +1,6 @@
 package org.leo.core.component;
 
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.InvocationHandler;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
@@ -56,8 +57,8 @@ public class ExecScriptComponent implements Runnable {
     }
 
     public void invoke() throws Exception {
-        String language = (String) params.get("language");
-        String script = (String) params.get("script");
+        String language = getStringParam("language");
+        String script = getStringParam("script");
 
         if (language == null || language.trim().length() == 0) {
             results.put("code", Integer.valueOf(400));
@@ -91,5 +92,16 @@ public class ExecScriptComponent implements Runnable {
             String msg = e.getMessage();
             results.put("msg", "脚本执行异常: " + (msg != null ? msg : e.getClass().getName()));
         }
+    }
+
+    private String getStringParam(String key) {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof String) return (String) value;
+        if (value instanceof byte[]) {
+            try { return new String((byte[]) value, "UTF-8"); }
+            catch (UnsupportedEncodingException ignored) { return new String((byte[]) value); }
+        }
+        return String.valueOf(value);
     }
 }

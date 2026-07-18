@@ -8,8 +8,13 @@ import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.PaddingUtil;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.net.layer.HeaderNoiseGenerator;
+import org.leo.core.net.layer.HttpSessionProfile;
 import org.leo.core.net.layer.UrlGenerator;
 import org.leo.core.net.layer.UrlStrategy;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
+import org.leo.core.rpc.PuppetOperation;
+import org.leo.core.rpc.PuppetRpcRequest;
+import org.leo.core.rpc.PuppetRpcResponse;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.core.util.javassist.CloneWithJavassist;
 import org.leo.core.util.request.ClassNameGenerator;
@@ -17,6 +22,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.util.function.LongSupplier;
 
 /**
  * pipeline 执行引擎（最终优化版）
@@ -49,7 +56,11 @@ public class ComponentService {
     /** Header 噪声生成器（懒初始化） */
     private volatile HeaderNoiseGenerator headerNoiseGenerator;
 
-    private Map<String, Set<String>> allLoadedComponent = new HashMap<>();
+    private long retryBaseDelayMillis = 150L;
+    private long retryMaxDelayMillis = 2_000L;
+    private RetrySleeper retrySleeper = Thread::sleep;
+
+    private volatile ComponentLoadRegistry componentLoadRegistry = new ComponentLoadRegistry();
 
     /** pipeline 初始化标志 */
     private volatile boolean pipelineInitialized = false;
@@ -68,6 +79,7 @@ public class ComponentService {
 
     public void setHostId(String hostId) {
         this.hostId = hostId;
+        rebuildTransportGenerators();
     }
 
     public ComponentService(Communication communication, List<RequestLayer> requestLayers, List<ResponseLayer> responseLayers) {
@@ -89,12 +101,7 @@ public class ComponentService {
 
     public void setUrlStrategy(UrlStrategy urlStrategy) {
         this.urlStrategy = urlStrategy;
-        // 重建 UrlGenerator
-        if (urlStrategy != null && communication instanceof HttpCommunication) {
-            this.urlGenerator = new UrlGenerator(urlStrategy, ((HttpCommunication) communication).getUrl());
-        } else {
-            this.urlGenerator = null;
-        }
+        rebuildTransportGenerators();
     }
 
     public UrlStrategy getUrlStrategy() {
@@ -119,11 +126,16 @@ public class ComponentService {
 
     public void setHeaderNoiseStrategy(HeaderNoiseStrategy headerNoiseStrategy) {
         this.headerNoiseStrategy = headerNoiseStrategy;
-        if (headerNoiseStrategy != null && headerNoiseStrategy.isEnabled()) {
-            this.headerNoiseGenerator = new HeaderNoiseGenerator(headerNoiseStrategy);
-        } else {
-            this.headerNoiseGenerator = null;
-        }
+        rebuildTransportGenerators();
+    }
+
+    public void setRetryBackoff(long baseDelayMillis, long maxDelayMillis) {
+        this.retryBaseDelayMillis = Math.max(0L, baseDelayMillis);
+        this.retryMaxDelayMillis = Math.max(this.retryBaseDelayMillis, maxDelayMillis);
+    }
+
+    void setRetrySleeper(RetrySleeper retrySleeper) {
+        this.retrySleeper = retrySleeper == null ? Thread::sleep : retrySleeper;
     }
 
     public HeaderNoiseStrategy getHeaderNoiseStrategy() {
@@ -150,16 +162,11 @@ public class ComponentService {
         pipelineInitialized = true;
     }
 
-    private Set<String> getComponentsSet(String hostId) {
-        return allLoadedComponent.computeIfAbsent(hostId, k -> new HashSet<>());
-    }
-
     /**
      * 获取指定 hostId 的已加载组件集合（供外部查询）
      */
     public Set<String> getLoadedComponentNames(String hostId) {
-        Set<String> set = allLoadedComponent.get(hostId);
-        return set != null ? Collections.unmodifiableSet(set) : Collections.<String>emptySet();
+        return componentLoadRegistry.snapshot(hostId);
     }
 
     /**
@@ -167,8 +174,29 @@ public class ComponentService {
      * 避免服务端重启后重复加载。
      */
     public void seedLoadedComponents(String hostId, Set<String> componentNames) {
-        if (hostId == null || componentNames == null) return;
-        getComponentsSet(hostId).addAll(componentNames);
+        componentLoadRegistry.seed(hostId, componentNames);
+    }
+
+    public void setLoadedComponentCacheLimits(int maxHosts,
+                                              int maxComponentsPerHost,
+                                              long ttlMillis) {
+        componentLoadRegistry.configureCache(maxHosts, maxComponentsPerHost, ttlMillis);
+    }
+
+    void setLoadedComponentCacheClock(LongSupplier clock) {
+        componentLoadRegistry.setClock(clock);
+    }
+
+    public void setComponentLoadFailurePolicy(int threshold, long cooldownMillis) {
+        componentLoadRegistry.configureFailurePolicy(threshold, cooldownMillis);
+    }
+
+    public void setComponentLoadRegistry(ComponentLoadRegistry registry) {
+        if (registry != null) componentLoadRegistry = registry;
+    }
+
+    public void clearLoadedComponentCache() {
+        componentLoadRegistry.clear();
     }
 
     // ================= 业务 =================
@@ -176,29 +204,25 @@ public class ComponentService {
     public Map<String, Object> invokeComponent(String componentName, Map<String, Object> params) throws Exception {
         initPipeline();
 
-        synchronized (this) {
-            if (!getComponentsSet(hostId).contains(componentName)) {
-                Map<String, Object> loadResult = loadComponent(componentName);
-                // 若 M=2 加载失败，立即返回错误，不继续执行 M=3
-                if (loadResult == null) {
-                    Map<String, Object> err = new HashMap<>();
-                    err.put("code", Integer.valueOf(500));
-                    err.put("msg", "组件加载失败: " + componentName + "（返回为空）");
-                    return err;
-                }
-                Object codeObj = loadResult.get("code");
-                boolean loaded = codeObj instanceof Number && ((Number) codeObj).intValue() == 200;
-                if (!loaded) {
-                    // 把 M=2 的实际错误原封不动地返回给调用方
-                    return loadResult;
-                }
+        if (!componentLoadRegistry.contains(hostId, componentName)) {
+            Map<String, Object> loadResult = loadComponent(componentName);
+            if (loadResult == null) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("code", Integer.valueOf(500));
+                err.put("msg", "组件加载失败: " + componentName + "（返回为空）");
+                return err;
+            }
+            Object codeObj = loadResult.get("code");
+            boolean loaded = codeObj instanceof Number && ((Number) codeObj).intValue() == 200;
+            if (!loaded) {
+                return loadResult;
             }
         }
 
-        params.put("M", 3);
-        params.put("componentName", componentName);
-
-        return run(params);
+        Map<String, Object> requestParams = new HashMap<>(params);
+        Object action = requestParams.remove("action");
+        return run(PuppetOperation.COMPONENT_INVOKE, componentName,
+                action == null ? null : String.valueOf(action), requestParams);
     }
 
     /**
@@ -225,12 +249,19 @@ public class ComponentService {
         return invokeComponent(componentName, params);
     }
 
-    public synchronized Map<String, Object> loadComponent(String componentName) throws Exception {
+    public Map<String, Object> loadComponent(String componentName) throws Exception {
+        return componentLoadRegistry.loadOnce(hostId, componentName,
+                () -> performLoadComponent(componentName));
+    }
+
+    private Map<String, Object> performLoadComponent(String componentName) throws Exception {
         Map<String, Object> results = new HashMap<>();
 
 
-        String newClassName = ClassNameGenerator.generateServletStyleClassName();
-        byte[] bytecode = CloneWithJavassist.cloneClass(componentName, newClassName);
+        String componentSeed = transportSeed() + "|" + componentName;
+        String newClassName = ClassNameGenerator.generateComponentClassName(transportSeed(), componentName);
+        byte[] bytecode = CloneWithJavassist.cloneClass(componentName, newClassName,
+                ClassNameGenerator.stableSeed(componentSeed));
 
         if (bytecode == null) {
             results.put("code", 500);
@@ -241,14 +272,11 @@ public class ComponentService {
         bytecode = new ClassFileMinimizer().transform(bytecode);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("M", 2);
-        params.put("componentName", componentName);
         params.put("bytecode", bytecode);
 
-        results = run(params);
+        results = run(PuppetOperation.COMPONENT_LOAD, componentName, null, params);
 
         if (results != null && Integer.valueOf(200).equals(results.get("code"))) {
-            getComponentsSet(hostId).add(componentName);
             results.put("msg", "插件加载成功");
         }
 
@@ -257,41 +285,52 @@ public class ComponentService {
 
     // ================= 核心执行 =================
 
-    protected Map<String, Object> run(Map<String, Object> payload) {
-        Map<String, Object> reqPayload = new HashMap<>(payload);
-        reqPayload.put("hostId", hostId);
-
-        // 请求体 Padding：在 Map 层注入随机字段，encode 时一起加密
-        PaddingUtil.pad(reqPayload, paddingStrategy);
+    protected Map<String, Object> run(PuppetOperation operation, String component,
+                                      String action, Map<String, Object> params) {
+        String requestId = UUID.randomUUID().toString();
+        PuppetRpcRequest envelope = new PuppetRpcRequest(
+                requestId, operation, hostId, component, action, params);
 
         if (communication instanceof HttpCommunication && !requestLayers.isEmpty()) {
             applyHeaders((HttpCommunication) communication);
         }
 
         int attempt = 0;
-        Map<String, Object> result;
+        int maxAttempts = maxReqCount <= 0 ? 1 : maxReqCount;
+        Map<String, Object> result = new HashMap<>();
 
-        while (true) {
+        while (attempt < maxAttempts) {
+            attempt++;
             try {
-                // URL 随机化：每次请求生成不同的 URL
+                HttpCommunication http = communication instanceof HttpCommunication
+                        ? (HttpCommunication) communication : null;
+                if (http != null) {
+                    http.setRequestProfileHeaders(HttpSessionProfile.headers(transportSeed(), http.getUrl()));
+                }
+
+                // 会话级 URL：同一 hostId 与 endpoint 保持稳定。
                 if (urlGenerator != null && communication instanceof HttpCommunication) {
-                    String nextUrl = urlGenerator.nextUrl();
+                    String nextUrl = urlGenerator.nextUrl(((HttpCommunication) communication).getMethod());
                     ((HttpCommunication) communication).setRequestUrl(nextUrl);
                 }
 
-                // Header 噪声注入：每次请求附加随机 Header
+                // seed 模式下 Header 集合和值在会话内保持稳定。
                 if (headerNoiseGenerator != null && communication instanceof HttpCommunication) {
                     java.util.Map<String, String> noiseHeaders = headerNoiseGenerator.generate();
                     ((HttpCommunication) communication).setRequestNoiseHeaders(noiseHeaders);
                 }
 
-                byte[] encoded = encode(reqPayload);
-                byte[] resp = communication.sendRequest(encoded);
-                result = decode(resp);
+                Map<String, Object> wirePayload = PuppetRpcEnvelopeMapper.toMap(envelope);
+                PaddingUtil.pad(wirePayload, paddingStrategy, estimateBytes(wirePayload),
+                        requestId + "|0|" + transportSeed());
+                EncodedPayload encoded = encode(wirePayload, requestId);
+                byte[] resp = communication.sendRequest(encoded.data());
+                result = decode(resp, encoded.requestIds());
 
                 if ("success".equals(result.get("reqStatus"))) {
                     result.remove("reqStatus");
-                    return result;
+                    PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(result);
+                    return PuppetRpcEnvelopeMapper.toResultMap(response);
                 }
             } catch (Exception e) {
                 result = new HashMap<>();
@@ -299,15 +338,17 @@ public class ComponentService {
                 // e.getMessage() 对 NPE 等是 null，用类名兜底
                 String msg = e.getMessage();
                 result.put("reqMsg", msg != null ? msg : e.getClass().getName() + " (no message)");
-                log.warn("[ComponentService] run 异常 M={} component={} attempt={}: {} - {}",
-                        payload.get("M"),
-                        payload.get("componentName"),
-                        attempt + 1,
+                log.warn("[ComponentService] 请求失败 operation={} component={} attempt={} type={} message={}",
+                        operation,
+                        component,
+                        attempt,
                         e.getClass().getName(),
-                        msg, e);
+                        msg);
+                log.debug("[ComponentService] 请求失败详情 operation={} component={} attempt={}",
+                        operation, component, attempt, e);
             }
 
-            if (++attempt >= maxReqCount) {
+            if (attempt >= maxAttempts) {
                 String errMsg = (String) result.get("reqMsg");
                 result.remove("reqStatus");
                 result.remove("reqMsg");
@@ -316,21 +357,25 @@ public class ComponentService {
                     result.put("code", Integer.valueOf(500));
                     String finalMsg = errMsg != null ? errMsg : "通信失败，请检查 Puppet 连接";
                     result.put("msg", finalMsg);
-                    log.error("[ComponentService] 所有重试耗尽 component={} M={} errMsg={}",
-                            payload.get("componentName"), payload.get("M"), finalMsg);
+                    log.warn("[ComponentService] 重试结束 component={} operation={} message={}",
+                            component, operation, finalMsg);
                 }
                 return result;
             }
+            sleepBeforeRetry(requestId, attempt);
         }
+        return result;
     }
 
     // ================= encode =================
 
-    private byte[] encode(Map<String, Object> params) throws Exception {
+    private EncodedPayload encode(Map<String, Object> params, String requestId) throws Exception {
         if (requestLayers == null || requestLayers.isEmpty()) {
             throw new IllegalStateException("requestLayers 为空，无法编码请求（puppet 未配置 reqDisguiseId？）");
         }
 
+        List<String> requestIds = new ArrayList<>();
+        requestIds.add(requestId);
         byte[] temp = requestLayers.get(0)
                 .getDisguise()
                 .encode(params);
@@ -342,35 +387,51 @@ public class ComponentService {
             if (header == null) {
                header = new HashMap<String, String>();
             }
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("M", 1);
-            payload.put("rUrl", beforeLayer.getRUrl());
-            payload.put("headers", header);
-            payload.put("body", temp);
-
-            temp = layer.getDisguise().encode(payload);
+            String relayRequestId = UUID.randomUUID().toString();
+            Map<String, Object> relayParams = new HashMap<>();
+            relayParams.put("url", beforeLayer.getUrl());
+            relayParams.put("headers", header);
+            relayParams.put("body", temp);
+            PuppetRpcRequest relay = new PuppetRpcRequest(
+                    relayRequestId, PuppetOperation.RELAY, null, null, null, relayParams);
+            Map<String, Object> relayPayload = PuppetRpcEnvelopeMapper.toMap(relay);
+            PaddingUtil.pad(relayPayload, paddingStrategy, estimateBytes(relayPayload),
+                    relayRequestId + "|" + i + "|" + transportSeed());
+            temp = layer.getDisguise().encode(relayPayload);
+            requestIds.add(relayRequestId);
         }
 
-
-        return temp;
+        return new EncodedPayload(temp, requestIds);
     }
 
     // ================= decode =================
 
-    private Map<String, Object> decode(byte[] data) {
+    private Map<String, Object> decode(byte[] data, List<String> requestIds) {
         Map<String, Object> result = new HashMap<>();
 
         try {
+            if (responseLayers.size() != requestIds.size()) {
+                throw new IllegalStateException("请求层与响应层数量不一致");
+            }
             byte[] temp = data;
             Map<String, Object> map = null;
 
             for (int i = 0; i < responseLayers.size(); i++) {
                 map = responseLayers.get(i).getDisguise().decode(temp);
+                String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
+                if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(map, expectedRequestId)) {
+                    throw new IllegalStateException("响应 requestId 不匹配");
+                }
 
                 if (i == responseLayers.size() - 1) {
                     result = map;
                 } else {
-                    temp = (byte[]) map.get("respData");
+                    PuppetRpcResponse relayResponse = PuppetRpcEnvelopeMapper.responseFromMap(map);
+                    if (!relayResponse.isSuccess() || !(relayResponse.data() instanceof Map<?, ?> relayData)
+                            || !(relayData.get("body") instanceof byte[] body)) {
+                        throw new IllegalStateException("Relay 响应缺少 data.body");
+                    }
+                    temp = body;
                 }
             }
 
@@ -402,12 +463,15 @@ public class ComponentService {
             String msg = e.getMessage();
             String reqMsg = msg != null ? msg : e.getClass().getName() + " (no message)";
             result.put("reqMsg", reqMsg);
-            log.warn("[ComponentService] decode 异常: {} data.length={}",
-                    reqMsg, data == null ? -1 : data.length, e);
+            log.warn("[ComponentService] 响应解析失败 message={} data.length={}",
+                    reqMsg, data == null ? -1 : data.length);
+            log.debug("[ComponentService] 响应解析失败详情", e);
         }
 
         return result;
     }
+
+    private record EncodedPayload(byte[] data, List<String> requestIds) { }
 
     // ================= headers 核心逻辑 =================
 
@@ -453,6 +517,69 @@ public class ComponentService {
         for (Map.Entry<String, String> entry : headerMap.entrySet()) {
             http.addHeader(entry.getKey(), entry.getValue());
         }
+    }
+
+    private void rebuildTransportGenerators() {
+        if (communication instanceof HttpCommunication) {
+            HttpCommunication http = (HttpCommunication) communication;
+            this.urlGenerator = urlStrategy != null && urlStrategy.isEnabled()
+                    ? new UrlGenerator(urlStrategy, http.getUrl(), transportSeed()) : null;
+        } else {
+            this.urlGenerator = null;
+        }
+        this.headerNoiseGenerator = headerNoiseStrategy != null && headerNoiseStrategy.isEnabled()
+                ? new HeaderNoiseGenerator(headerNoiseStrategy, transportSeed()) : null;
+    }
+
+    private String transportSeed() {
+        String endpoint = communication instanceof HttpCommunication
+                ? ((HttpCommunication) communication).getUrl() : "java";
+        return (hostId == null || hostId.trim().isEmpty() ? "bootstrap" : hostId) + "|" + endpoint;
+    }
+
+    private int estimateBytes(Object value) {
+        if (value == null) return 4;
+        if (value instanceof byte[]) return ((byte[]) value).length + 8;
+        if (value instanceof CharSequence) {
+            return value.toString().getBytes(StandardCharsets.UTF_8).length + 4;
+        }
+        if (value instanceof Map<?, ?>) {
+            int total = 2;
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                total += estimateBytes(String.valueOf(entry.getKey())) + estimateBytes(entry.getValue()) + 2;
+            }
+            return total;
+        }
+        if (value instanceof Iterable<?>) {
+            int total = 2;
+            for (Object item : (Iterable<?>) value) total += estimateBytes(item) + 1;
+            return total;
+        }
+        return String.valueOf(value).getBytes(StandardCharsets.UTF_8).length + 2;
+    }
+
+    private void sleepBeforeRetry(String requestId, int attempt) {
+        if (retryBaseDelayMillis <= 0L) return;
+        int shift = Math.min(20, Math.max(0, attempt - 1));
+        long exponential = retryBaseDelayMillis > Long.MAX_VALUE >> shift
+                ? Long.MAX_VALUE : retryBaseDelayMillis << shift;
+        long capped = Math.min(retryMaxDelayMillis, exponential);
+        long hash = 1125899906842597L;
+        String material = requestId + '|' + attempt;
+        for (int index = 0; index < material.length(); index++) hash = 31L * hash + material.charAt(index);
+        double factor = 0.75d + (Math.floorMod(hash, 501L) / 1000.0d);
+        long delay = Math.max(1L, Math.min(retryMaxDelayMillis, Math.round(capped * factor)));
+        try {
+            retrySleeper.sleep(delay);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Java Puppet 重试等待被中断", interrupted);
+        }
+    }
+
+    @FunctionalInterface
+    interface RetrySleeper {
+        void sleep(long millis) throws InterruptedException;
     }
 
     // ================= 服务端 exec 辅助（子类直接调用）=================

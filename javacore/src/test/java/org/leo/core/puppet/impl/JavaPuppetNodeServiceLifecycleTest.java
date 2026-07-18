@@ -24,12 +24,13 @@ class JavaPuppetNodeServiceLifecycleTest {
         node.addLoadedComponent("host-before-init", Set.of("ExistingComponent"));
         node.initService();
 
+        List<ComponentService> services = componentServices(node);
         try {
-            List<ComponentService> services = componentServices(node);
             assertEquals(31, services.size());
             assertTrue(services.stream().allMatch(service ->
                     "host-before-init".equals(service.getHostId())));
             assertTrue(services.stream().allMatch(service -> service.getMaxReqCount() == 7));
+            assertEquals(1, services.stream().map(this::loadRegistry).distinct().count());
             assertTrue(services.stream().allMatch(service ->
                     service.getLoadedComponentNames("host-before-init").contains("ExistingComponent")));
 
@@ -46,6 +47,9 @@ class JavaPuppetNodeServiceLifecycleTest {
         } finally {
             node.close();
         }
+        assertTrue(services.stream().allMatch(service ->
+                service.getLoadedComponentNames("host-before-init").isEmpty()));
+        assertTrue(node.getLoadedComponents().isEmpty());
     }
 
     private List<ComponentService> componentServices(JavaPuppetNode node) throws Exception {
@@ -57,5 +61,15 @@ class JavaPuppetNodeServiceLifecycleTest {
             if (service != null) services.add(service);
         }
         return services;
+    }
+
+    private Object loadRegistry(ComponentService service) {
+        try {
+            Field field = ComponentService.class.getDeclaredField("componentLoadRegistry");
+            field.setAccessible(true);
+            return field.get(service);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
     }
 }

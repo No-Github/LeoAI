@@ -2,6 +2,8 @@ package org.leo.core.net.impl;
 
 import okhttp3.*;
 import org.leo.core.net.Communication;
+import org.leo.core.net.TransportException;
+import org.leo.core.net.TransportLimits;
 import org.leo.core.net.layer.TlsFingerprintStrategy;
 import org.leo.core.util.request.RefererGenerator;
 import org.leo.core.util.request.UserAgentGenerator;
@@ -11,17 +13,23 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.*;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.Proxy;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 
 /**
  * HTTP通信实现类
@@ -37,8 +45,6 @@ public class HttpCommunication implements Communication {
     // HTTP方法常量
     private static final String METHOD_GET = "GET";
     private static final String METHOD_POST = "POST";
-    private static final String METHOD_PUT = "PUT";
-    private static final String METHOD_DELETE = "DELETE";
     
     // 协议常量
     private static final String PROTOCOL_TLS = "TLS";
@@ -47,16 +53,12 @@ public class HttpCommunication implements Communication {
     private static final int CONNECTION_POOL_SIZE = 10;
     private static final int CONNECTION_POOL_KEEP_ALIVE_MINUTES = 5;
     
-    // 超时配置常量（秒）
-    private static final int CONNECT_TIMEOUT_SECONDS = 10;
-    private static final int READ_TIMEOUT_SECONDS = 30;
-    private static final int WRITE_TIMEOUT_SECONDS = 30;
-
     private volatile OkHttpClient httpClient;
 
     private final String url;
     private final String method;
     private final Map<String, String> headers;
+    private final Set<String> explicitHeaderNames = ConcurrentHashMap.newKeySet();
     private final Proxy proxy;
 
     /** TLS 指纹伪装策略 */
@@ -67,6 +69,9 @@ public class HttpCommunication implements Communication {
 
     /** per-request 噪声 Header（每次请求前设置，用完清除） */
     private final ThreadLocal<Map<String, String>> requestNoiseHeaders = new ThreadLocal<>();
+
+    /** 会话画像 Header；按请求覆盖自动默认值，用完清除。 */
+    private final ThreadLocal<Map<String, String>> requestProfileHeaders = new ThreadLocal<>();
 
     /** 从 Set-Cookie 学习到的 Cookie，按 name/domain/path 存储并按请求 URL 作用域匹配。 */
     private final Map<String, Cookie> responseCookies = new ConcurrentHashMap<>();
@@ -83,16 +88,18 @@ public class HttpCommunication implements Communication {
         this.url = url;
         this.method = (method == null || method.equals("")) ? METHOD_POST : method.toUpperCase();
         this.headers = headers != null ? new ConcurrentHashMap<>(headers) : new ConcurrentHashMap<>();
+        this.headers.keySet().stream().filter(java.util.Objects::nonNull)
+                .map(name -> name.toLowerCase(Locale.ROOT)).forEach(explicitHeaderNames::add);
         this.proxy = proxy;
 
         if (this.getHeader("User-Agent") == null) {
-            this.addHeader("User-Agent", UserAgentGenerator.generateRandomUserAgent());
+            this.headers.put("User-Agent", UserAgentGenerator.generateRandomUserAgent());
         }
         if (this.getHeader("Referer") == null) {
-            this.addHeader("Referer", RefererGenerator.generateRandomReferer(this.getUrl()));
+            this.headers.put("Referer", RefererGenerator.generateRandomReferer(this.getUrl()));
         }
         if (this.getHeader("Accept-Encoding") == null) {
-            this.addHeader("Accept-Encoding", "gzip, deflate");
+            this.headers.put("Accept-Encoding", "gzip");
         }
         // httpClient 延迟初始化：等 TLS 策略设置完毕后，首次 sendRequest 时构建
     }
@@ -152,13 +159,13 @@ public class HttpCommunication implements Communication {
                 builder.connectionPool(new ConnectionPool(CONNECTION_POOL_SIZE, CONNECTION_POOL_KEEP_ALIVE_MINUTES, TimeUnit.MINUTES));
 
                 // 超时设置
-                builder.connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                        .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                        .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                builder.connectTimeout(TransportLimits.CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                        .readTimeout(TransportLimits.READ_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                        .writeTimeout(TransportLimits.WRITE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
 
                 // 响应体容错：吸收 chunked 截断 / Content-Length 不一致 / 对端提前关流
                 // 等 HTTP 帧层异常，把已收到的主体字节交给应用层
-                builder.addInterceptor(new TolerantBodyInterceptor());
+                builder.addInterceptor(new TolerantBodyInterceptor(TransportLimits.MAX_MESSAGE_BYTES));
 
                 httpClient = builder.build();
 
@@ -175,6 +182,7 @@ public class HttpCommunication implements Communication {
 
     @Override
     public byte[] sendRequest(byte[] data) throws Exception {
+        TransportLimits.requireMessageSize(data);
         // 确保 httpClient 已初始化
         if (httpClient == null) {
             initClient();
@@ -204,6 +212,18 @@ public class HttpCommunication implements Communication {
 
         // 设置 headers
         addHeaders(builder, headers, configuredCookieHeaders);
+
+        // 会话画像覆盖自动生成的默认 Header，但显式配置始终优先。
+        Map<String, String> profileHeaders = requestProfileHeaders.get();
+        requestProfileHeaders.remove();
+        if (profileHeaders != null) {
+            for (Map.Entry<String, String> entry : profileHeaders.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null
+                        && !hasExplicitHeader(entry.getKey())) {
+                    builder.header(entry.getKey(), entry.getValue());
+                }
+            }
+        }
 
         // 注入噪声 Header（一次性，用完清除）
         Map<String, String> noiseHeaders = requestNoiseHeaders.get();
@@ -245,32 +265,47 @@ public class HttpCommunication implements Communication {
             String contentEncoding = response.header("Content-Encoding");
             logger.debug("[HttpCommunication] 响应 status={} Content-Encoding={} rawLen={}",
                     response.code(), contentEncoding, rawBytes.length);
-            if ("gzip".equalsIgnoreCase(contentEncoding)) {
-                if (rawBytes.length == 0) {
-                    logger.warn("[HttpCommunication] Content-Encoding:gzip 但响应体为空 url={}", url);
-                    return rawBytes;
-                }
-                try (ByteArrayInputStream bais = new ByteArrayInputStream(rawBytes);
-                     GZIPInputStream gzip = new GZIPInputStream(bais);
-                     ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-                    byte[] buffer = new byte[8192];
-                    int len;
-                    while ((len = gzip.read(buffer)) != -1) {
-                        baos.write(buffer, 0, len);
-                    }
-                    rawBytes = baos.toByteArray();
-                } catch (java.io.EOFException eof) {
-                    // gzip trailer 截断：极少数情况，TolerantBodyInterceptor 之后仍可能因
-                    // 原始 gzip 字节流缺末尾 CRC32/ISIZE 而抛 EOF，记录后兜底返回已解压字节
-                    logger.warn("[HttpCommunication] gzip trailer 截断，已忽略 url={}", url, eof);
-                }
-            }
-            return rawBytes;
+            return decodeContent(rawBytes, contentEncoding, targetUrl);
         } finally {
             if (response != null) {
                 response.close();
             }
         }
+    }
+
+    private byte[] decodeContent(byte[] rawBytes, String contentEncoding, String targetUrl)
+            throws IOException {
+        if (rawBytes.length == 0 || contentEncoding == null || contentEncoding.isBlank()
+                || "identity".equalsIgnoreCase(contentEncoding)) {
+            return rawBytes;
+        }
+        InputStream decoder;
+        if ("gzip".equalsIgnoreCase(contentEncoding)) {
+            decoder = new GZIPInputStream(new ByteArrayInputStream(rawBytes));
+        } else if ("deflate".equalsIgnoreCase(contentEncoding)) {
+            decoder = new InflaterInputStream(new ByteArrayInputStream(rawBytes));
+        } else {
+            throw new TransportException(TransportException.Reason.FRAME_INVALID,
+                    "不支持的 Content-Encoding: " + contentEncoding);
+        }
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream(
+                Math.min(rawBytes.length * 2, TransportLimits.MAX_MESSAGE_BYTES));
+        byte[] buffer = new byte[8192];
+        try (InputStream input = decoder) {
+            int length;
+            while ((length = input.read(buffer)) != -1) {
+                if (length > TransportLimits.MAX_MESSAGE_BYTES - output.size()) {
+                    throw new TransportException(TransportException.Reason.MESSAGE_TOO_LARGE,
+                            "HTTP 解压响应超过限制: " + TransportLimits.MAX_MESSAGE_BYTES);
+                }
+                output.write(buffer, 0, length);
+            }
+        } catch (EOFException eof) {
+            logger.warn("[HttpCommunication] 压缩响应尾部截断，保留已解压 {} 字节 url={}",
+                    output.size(), targetUrl);
+        }
+        return output.toByteArray();
     }
 
     // -----------------------
@@ -282,7 +317,10 @@ public class HttpCommunication implements Communication {
      */
     public void addHeader(String key, String value) {
         if (key != null && value != null) {
+            this.headers.keySet().removeIf(existing -> existing != null
+                    && existing.equalsIgnoreCase(key) && !existing.equals(key));
             this.headers.put(key, value);
+            this.explicitHeaderNames.add(key.toLowerCase(Locale.ROOT));
         }
     }
 
@@ -290,7 +328,15 @@ public class HttpCommunication implements Communication {
      * 获取HTTP请求头
      */
     public String getHeader(String key) {
-        return this.headers.get(key);
+        if (key == null) return null;
+        String direct = this.headers.get(key);
+        if (direct != null) return direct;
+        for (Map.Entry<String, String> entry : this.headers.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     /**
@@ -298,6 +344,14 @@ public class HttpCommunication implements Communication {
      */
     public String getUrl() {
         return url;
+    }
+
+    public String getMethod() {
+        return method;
+    }
+
+    public boolean hasExplicitHeader(String name) {
+        return name != null && explicitHeaderNames.contains(name.toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -316,7 +370,18 @@ public class HttpCommunication implements Communication {
      */
     public void setRequestNoiseHeaders(Map<String, String> noiseHeaders) {
         if (noiseHeaders != null && !noiseHeaders.isEmpty()) {
-            requestNoiseHeaders.set(noiseHeaders);
+            requestNoiseHeaders.set(new LinkedHashMap<>(noiseHeaders));
+        } else {
+            requestNoiseHeaders.remove();
+        }
+    }
+
+    /** 设置下一次请求的会话画像 Header；调用者显式配置的同名 Header 保持最高优先级。 */
+    public void setRequestProfileHeaders(Map<String, String> profileHeaders) {
+        if (profileHeaders != null && !profileHeaders.isEmpty()) {
+            requestProfileHeaders.set(new LinkedHashMap<>(profileHeaders));
+        } else {
+            requestProfileHeaders.remove();
         }
     }
 

@@ -8,13 +8,28 @@ import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.HttpSenderCapable;
 import org.leo.core.puppet.capability.HttpProxyCapable;
+import org.leo.core.puppet.capability.DiskCapable;
+import org.leo.core.puppet.capability.EventLogCapable;
+import org.leo.core.puppet.capability.FirewallCapable;
 import org.leo.core.puppet.capability.LocalForwardCapable;
+import org.leo.core.puppet.capability.NetworkConnectionCapable;
+import org.leo.core.puppet.capability.NetworkInfoCapable;
+import org.leo.core.puppet.capability.ProcessCapable;
+import org.leo.core.puppet.capability.RegistryCapable;
 import org.leo.core.puppet.capability.ReverseTunnelCapable;
+import org.leo.core.puppet.capability.ScanCapable;
+import org.leo.core.puppet.capability.ScheduledTaskCapable;
+import org.leo.core.puppet.capability.ServiceCapable;
 import org.leo.core.puppet.capability.Socks5ProxyCapable;
 import org.leo.core.puppet.capability.SqlCapable;
+import org.leo.core.puppet.capability.UserAccountCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
+import org.leo.core.rpc.PuppetOperation;
+import org.leo.core.rpc.PuppetRpcRequest;
 import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
+import org.leo.phpcore.component.PhpComponentVariantBuilder;
 import org.leo.phpcore.rpc.PhpRpcClient;
 
 import java.util.ArrayList;
@@ -32,27 +47,163 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PhpPuppetNodeTest {
 
     @Test
+    void restoresOpaquePingAliasesAndUsesEndpointVariantForInvocations() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        String host = "variant-host";
+        String alias = new PhpComponentVariantBuilder().alias("BasicInfoComponent", host);
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            if (decoded.request().operation() == PuppetOperation.PING) {
+                return response(decoded, Map.of("code", 200, "hostId", host, "components", List.of(alias)));
+            }
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(decoded.execution());
+            return response(decoded, Map.of("code", 200));
+        };
+        PhpPuppetNode node = node(communication, portable);
+
+        Map<String, Object> ping = node.testConnection();
+        node.getBasicInfo();
+
+        assertEquals(List.of("BasicInfoComponent"), ping.get("components"));
+        assertTrue(node.getLoadedComponents().contains("BasicInfoComponent"));
+        assertEquals(alias, invokes.get(0).get("componentName"));
+        assertFalse(String.valueOf(invokes.get(0).get("componentKey")).startsWith("BasicInfoComponent"));
+    }
+
+    @Test
+    void exposesAndRoutesAdministrationCapabilities() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200));
+        };
+        PhpPuppetNode node = node(communication, portable);
+
+        assertTrue(node instanceof RegistryCapable);
+        assertTrue(node instanceof EventLogCapable);
+        assertTrue(node instanceof FirewallCapable);
+        assertTrue(node instanceof UserAccountCapable);
+        node.queryRegistry("HKCU\\Software", true);
+        node.queryEventLog("/var/log/app.log", 50, "error", "ERROR", null, null,
+                null, "auto", 65536, 10L, "newer", 400, 599, "10.", "/api");
+        node.aggregateEventLog("/var/log/app.log", "combined", "status", 10, 1000,
+                65536, null, null, null, null, null, false);
+        node.metaEventLog("/var/log/app.log", "combined", 20, true);
+        node.getFirewallStatus();
+        node.listFirewallRules("in", "public");
+        node.listUsers();
+        node.whoami();
+
+        assertEquals(List.of("RegistryComponent", "EventLogComponent", "EventLogComponent",
+                        "EventLogComponent", "FirewallComponent", "FirewallComponent",
+                        "UserAccountComponent", "UserAccountComponent"),
+                invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
+        assertEquals(List.of("query", "query", "aggregate", "meta", "status", "list",
+                        "listUsers", "whoami"),
+                invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
+        assertEquals(10L, ((Number) invokes.get(1).get("cursor")).longValue());
+        assertEquals(400, invokes.get(1).get("minStatus"));
+        assertEquals("status", invokes.get(2).get("groupBy"));
+        assertEquals("public", invokes.get(5).get("profile"));
+    }
+
+    @Test
+    void exposesAndRoutesOperationalCapabilities() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200));
+        };
+        PhpPuppetNode node = node(communication, portable);
+
+        assertTrue(node instanceof NetworkConnectionCapable);
+        assertTrue(node instanceof ScanCapable);
+        assertTrue(node instanceof ServiceCapable);
+        assertTrue(node instanceof ScheduledTaskCapable);
+        node.listNetworkConnections("LISTEN", "TCP", "8080", "12", "php", "10.", true, 100);
+        node.networkConnectionSummary();
+        node.startScanPort("127.0.0.1", new int[]{80, 443}, 500, 2);
+        node.queryScanPortResult("scan-task");
+        node.scanReachableHost(new ArrayList<>(List.of("127.0.0.1")), 500);
+        node.listServices();
+        node.createService("demo", "/opt/demo", "Demo", "auto");
+        node.listScheduledTasks();
+        node.createScheduledTaskLinux("*/5 * * * *", "/opt/demo --check");
+
+        assertEquals(List.of("NetworkConnectionComponent", "NetworkConnectionComponent",
+                        "ScanComponent", "ScanComponent", "ScanComponent", "ServiceComponent",
+                        "ServiceComponent", "ScheduledTaskComponent", "ScheduledTaskComponent"),
+                invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
+        assertEquals(List.of("list", "summary", "start", "query", "reachable", "list",
+                        "create", "list", "createLinux"),
+                invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
+        assertEquals(true, invokes.get(0).get("listeningOnly"));
+        assertEquals(100, invokes.get(0).get("maxEntries"));
+        assertEquals("*/5 * * * *", invokes.get(8).get("cronExpression"));
+    }
+
+    @Test
+    void exposesAndRoutesSystemCapabilities() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200));
+        };
+        PhpPuppetNode node = node(communication, portable);
+
+        assertTrue(node instanceof ProcessCapable);
+        assertTrue(node instanceof NetworkInfoCapable);
+        assertTrue(node instanceof DiskCapable);
+        node.listProcesses();
+        node.findProcesses("php", 123, 8080);
+        node.killProcess(123, true);
+        node.collectNetworkInfo();
+        node.listMountDisks();
+
+        assertEquals(List.of("ProcessComponent", "ProcessComponent", "ProcessComponent",
+                        "NetworkInfoComponent", "DiskComponent"),
+                invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
+        assertEquals(List.of("list", "find", "kill", "collect", "list"),
+                invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
+        assertEquals("php", invokes.get(1).get("name"));
+        assertEquals(123, invokes.get(1).get("pid"));
+        assertEquals(8080, invokes.get(1).get("port"));
+        assertEquals(true, invokes.get(2).get("force"));
+    }
+
+    @Test
     void invokesByDigestAndLoadsOnlyWhenTargetCacheMisses() throws Exception {
-        List<Integer> methods = new ArrayList<>();
+        List<PuppetOperation> methods = new ArrayList<>();
         Set<String> cachedKeys = new HashSet<>();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            int method = ((Number) request.get("M")).intValue();
-            methods.add(method);
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            PuppetOperation operation = decoded.request().operation();
+            methods.add(operation);
             String componentKey = String.valueOf(request.get("componentKey"));
-            if (method == 2) {
+            if (operation == PuppetOperation.COMPONENT_LOAD) {
                 assertEquals("BasicInfoComponent", request.get("componentName"));
                 assertEquals(80, componentKey.length());
                 assertFalse(request.containsKey("componentDigest"));
                 assertTrue(String.valueOf(request.get("source")).startsWith("<?php"));
                 cachedKeys.add(componentKey);
-                return response(Map.of("code", 200, "cached", false));
+                return response(decoded, Map.of("code", 200, "cached", false));
             }
             if (!cachedKeys.contains(componentKey)) {
-                return response(Map.of("code", 424));
+                return response(decoded, Map.of("code", 424));
             }
-            return response(Map.of("code", 200,
+            return response(decoded, Map.of("code", 200,
                     "BasicInfo", Map.of("OSInfo", Map.of("OSName", "test"))));
         };
         PhpPuppetNode node = node(communication, portable);
@@ -60,24 +211,25 @@ class PhpPuppetNodeTest {
         node.getBasicInfo();
         node.getBasicInfo();
 
-        assertEquals(List.of(3, 2, 3, 3), methods);
+        assertEquals(List.of(PuppetOperation.COMPONENT_INVOKE, PuppetOperation.COMPONENT_LOAD,
+                PuppetOperation.COMPONENT_INVOKE, PuppetOperation.COMPONENT_INVOKE), methods);
         assertTrue(node.getLoadedComponents().contains("BasicInfoComponent"));
         assertTrue(node.getAvailableComponents().contains("PluginComponent"));
     }
 
     @Test
     void reloadsOnceWhenPreviouslyAvailableComponentDisappears() throws Exception {
-        List<Integer> methods = new ArrayList<>();
+        List<PuppetOperation> methods = new ArrayList<>();
         AtomicInteger invokes = new AtomicInteger();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            int method = ((Number) request.get("M")).intValue();
-            methods.add(method);
-            if (method == 3 && invokes.getAndIncrement() == 1) {
-                return response(Map.of("code", 424));
+            DecodedRequest decoded = decodeRequest(bytes);
+            PuppetOperation operation = decoded.request().operation();
+            methods.add(operation);
+            if (operation == PuppetOperation.COMPONENT_INVOKE && invokes.getAndIncrement() == 1) {
+                return response(decoded, Map.of("code", 424));
             }
-            return response(Map.of("code", 200, "output", "ok"));
+            return response(decoded, Map.of("code", 200, "output", "ok"));
         };
         PhpPuppetNode node = node(communication, portable);
 
@@ -85,17 +237,18 @@ class PhpPuppetNodeTest {
         Map<String, Object> result = node.execSimpleCommand("echo second");
 
         assertEquals("ok", result.get("output"));
-        assertEquals(List.of(3, 3, 2, 3), methods);
+        assertEquals(List.of(PuppetOperation.COMPONENT_INVOKE, PuppetOperation.COMPONENT_INVOKE,
+                PuppetOperation.COMPONENT_LOAD, PuppetOperation.COMPONENT_INVOKE), methods);
     }
 
     @Test
     void testConnectionUsesMethodZeroAndUnloadOnlyClearsPlatformState() throws Exception {
-        List<Integer> methods = new ArrayList<>();
+        List<PuppetOperation> methods = new ArrayList<>();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            methods.add(((Number) request.get("M")).intValue());
-            return response(Map.of("code", 200, "hostId", "php-host",
+            DecodedRequest decoded = decodeRequest(bytes);
+            methods.add(decoded.request().operation());
+            return response(decoded, Map.of("code", 200, "hostId", "php-host",
                     "components", List.of("FileComponent")));
         };
         PhpPuppetNode node = node(communication, portable);
@@ -105,7 +258,7 @@ class PhpPuppetNodeTest {
         assertTrue(node.getLoadedComponents().contains("FileComponent"));
         node.unloadComponent("FileComponent");
         assertFalse(node.getLoadedComponents().contains("FileComponent"));
-        assertEquals(List.of(0), methods);
+        assertEquals(List.of(PuppetOperation.PING), methods);
     }
 
     @Test
@@ -113,9 +266,10 @@ class PhpPuppetNodeTest {
         List<Map<String, Object>> invokes = new ArrayList<>();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            if (((Number) request.get("M")).intValue() == 3) invokes.add(request);
-            return response(Map.of("code", 200));
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200));
         };
         PhpPuppetNode node = node(communication, portable);
 
@@ -136,9 +290,10 @@ class PhpPuppetNodeTest {
         List<Map<String, Object>> invokes = new ArrayList<>();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            if (((Number) request.get("M")).intValue() == 3) invokes.add(request);
-            return response(Map.of("code", 200, "statusCode", 202,
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200, "statusCode", 202,
                     "bodyType", "text", "body", "accepted"));
         };
         PhpPuppetNode node = node(communication, portable);
@@ -169,9 +324,10 @@ class PhpPuppetNodeTest {
         List<Map<String, Object>> invokes = new ArrayList<>();
         Disguise portable = new PortableDisguise();
         Communication communication = bytes -> {
-            Map<String, Object> request = PortableJsonCodec.decode(bytes);
-            if (((Number) request.get("M")).intValue() == 3) invokes.add(request);
-            return response(Map.of("code", 200, "columns", List.of(), "rows", List.of(),
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of("code", 200, "columns", List.of(), "rows", List.of(),
                     "rowCount", 0, "affectedRows", 1));
         };
         PhpPuppetNode node = node(communication, portable);
@@ -202,9 +358,22 @@ class PhpPuppetNodeTest {
         return new PhpPuppetNode(client, new PhpComponentArtifactRegistry());
     }
 
-    private byte[] response(Map<String, Object> data) {
-        return PortableJsonCodec.encode(data);
+    private DecodedRequest decodeRequest(byte[] bytes) {
+        Map<String, Object> wire = PortableJsonCodec.decode(bytes);
+        PuppetRpcRequest request = PuppetRpcEnvelopeMapper.requestFromMap(wire);
+        Map<String, Object> execution = new LinkedHashMap<>(request.params());
+        if (request.component() != null) execution.put("componentName", request.component());
+        if (request.action() != null) execution.put("action", request.action());
+        if (request.hostId() != null) execution.put("hostId", request.hostId());
+        return new DecodedRequest(execution, request);
     }
+
+    private byte[] response(DecodedRequest request, Map<String, Object> data) {
+        return PortableJsonCodec.encode(PuppetRpcEnvelopeMapper.toMap(
+                PuppetRpcEnvelopeMapper.responseFromResult(request.request().requestId(), data)));
+    }
+
+    private record DecodedRequest(Map<String, Object> execution, PuppetRpcRequest request) { }
 
     private static final class PortableDisguise extends Disguise {
         @Override

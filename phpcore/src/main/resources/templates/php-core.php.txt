@@ -1,4 +1,4 @@
-/* Minimal phpcore: M=0 test, M=1 forward, M=2 load, M=3 invoke. */
+/* Minimal phpcore execution envelope: ping, relay, load and invoke. */
 
 function phpcore_id() {
     return md5(__FILE__ . php_uname());
@@ -6,7 +6,7 @@ function phpcore_id() {
 
 function phpcore_dir($create = false) {
     $dir = rtrim((string)sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR
-        . '.pc-' . substr(md5(__FILE__), 0, 8);
+        . '.{{CACHE_NAMESPACE}}';
     if ($create && !is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
         throw new RuntimeException();
     }
@@ -17,7 +17,31 @@ function phpcore_dir($create = false) {
 function phpcore_path($params, $create = false) {
     $key = isset($params['componentKey']) ? (string)$params['componentKey'] : '';
     if (!preg_match('/^[a-f0-9]{80}$/', $key)) throw new InvalidArgumentException();
-    return phpcore_dir($create) . DIRECTORY_SEPARATOR . $key . '.php';
+    $name = substr(md5('{{CACHE_NAMESPACE}}|' . substr($key, 0, 16)), 0, 10)
+        . substr(md5('{{CACHE_NAMESPACE}}|' . $key), 0, 30);
+    return phpcore_dir($create) . DIRECTORY_SEPARATOR . $name . '.{{CACHE_SUFFIX}}';
+}
+
+function phpcore_sweep($keep = null) {
+    $dir = phpcore_dir();
+    if (!is_dir($dir)) return;
+    $now = time();
+    foreach ((array)glob($dir . DIRECTORY_SEPARATOR . '.{{CACHE_TEMP_PREFIX}}*') as $temporary) {
+        if ($now - (int)@filemtime($temporary) > 300) @unlink($temporary);
+    }
+    $files = [];
+    foreach ((array)glob($dir . DIRECTORY_SEPARATOR . '*.{{CACHE_SUFFIX}}') as $path) {
+        $modified = (int)@filemtime($path);
+        if ($path !== $keep && $modified > 0 && $now - $modified > 604800) {
+            @unlink($path); continue;
+        }
+        $files[] = $path;
+    }
+    usort($files, static function ($left, $right) { return (int)@filemtime($left) - (int)@filemtime($right); });
+    while (count($files) > 48) {
+        $path = array_shift($files);
+        if ($path === $keep) $files[] = $path; else @unlink($path);
+    }
 }
 
 function phpcore_open($params) {
@@ -28,12 +52,15 @@ function phpcore_open($params) {
         || $component['id'] !== $params['componentName'] || !is_callable($component['handle'])) {
         throw new RuntimeException();
     }
+    $modified = (int)@filemtime($path);
+    if ($modified > 0 && time() - $modified > 300) @touch($path);
     return $component;
 }
 
 function phpcore_test() {
+    phpcore_sweep();
     $components = [];
-    foreach ((array)glob(phpcore_dir() . DIRECTORY_SEPARATOR . '*.php') as $path) {
+    foreach ((array)glob(phpcore_dir() . DIRECTORY_SEPARATOR . '*.{{CACHE_SUFFIX}}') as $path) {
         $component = @include $path;
         if (is_array($component) && isset($component['id'], $component['handle'])
             && is_string($component['id']) && is_callable($component['handle'])) {
@@ -51,7 +78,7 @@ function phpcore_load($params) {
     if (strpos(ltrim($source), '<?php') !== 0) {
         throw new InvalidArgumentException();
     }
-    $temporary = tempnam(phpcore_dir(true), '.pc-');
+    $temporary = tempnam(phpcore_dir(true), '.{{CACHE_TEMP_PREFIX}}');
     if ($temporary === false) throw new RuntimeException();
     try {
         if (file_put_contents($temporary, $source, LOCK_EX) !== strlen($source)) {
@@ -66,9 +93,11 @@ function phpcore_load($params) {
         if (!@rename($temporary, $path)) throw new RuntimeException();
         $temporary = null;
         $key = (string)$params['componentKey'];
-        foreach ((array)glob(phpcore_dir() . DIRECTORY_SEPARATOR . substr($key, 0, 16) . '*.php') as $old) {
+        $family = substr(md5('{{CACHE_NAMESPACE}}|' . substr($key, 0, 16)), 0, 10);
+        foreach ((array)glob(phpcore_dir() . DIRECTORY_SEPARATOR . $family . '*.{{CACHE_SUFFIX}}') as $old) {
             if ($old !== $path) @unlink($old);
         }
+        phpcore_sweep($path);
         return ['code' => 200, 'cached' => false];
     } finally {
         if ($temporary !== null) @unlink($temporary);
@@ -86,7 +115,7 @@ function phpcore_invoke($params) {
 }
 
 function phpcore_forward($params) {
-    $url = isset($params['rUrl']) ? (string)$params['rUrl'] : '';
+    $url = isset($params['url']) ? (string)$params['url'] : '';
     $body = isset($params['body']) && is_string($params['body']) ? $params['body'] : '';
     if ($url === '') throw new InvalidArgumentException();
     $headers = isset($params['headers']) && is_array($params['headers']) ? $params['headers'] : [];
@@ -111,17 +140,38 @@ function phpcore_forward($params) {
         $response = @file_get_contents($url, false, $context);
         if ($response === false) throw new RuntimeException();
     }
-    return ['code' => 200, 'reqUrl' => $url, 'respData' => leo_binary($response)];
+    return ['code' => 200, 'url' => $url, 'body' => leo_binary($response)];
 }
 
-function phpcore_run($params) {
-    if (!is_array($params)) throw new InvalidArgumentException();
-    $method = isset($params['M']) ? (int)$params['M'] : -1;
-    if (($method === 2 || $method === 3) && isset($params['hostId']) && $params['hostId'] !== ''
-        && $params['hostId'] !== phpcore_id()) return ['code' => 403];
-    if ($method === 0) return phpcore_test();
-    if ($method === 1) return phpcore_forward($params);
-    if ($method === 2) return phpcore_load($params);
-    if ($method === 3) return phpcore_invoke($params);
-    return ['code' => 404];
+function phpcore_envelope_response($requestId, $result) {
+    if (!is_array($result)) $result = ['code' => 500];
+    $code = isset($result['code']) ? (int)$result['code'] : 500;
+    unset($result['code']);
+    $response = ['requestId' => (string)$requestId, 'code' => $code];
+    if ($code >= 200 && $code < 300) {
+        $response['data'] = $result;
+    } else {
+        $response['error'] = $result;
+    }
+    return $response;
+}
+
+function phpcore_run($request) {
+    if (!is_array($request)) throw new InvalidArgumentException();
+    $requestId = isset($request['requestId']) ? (string)$request['requestId'] : '';
+    $operation = isset($request['operation']) ? (string)$request['operation'] : '';
+    if ($requestId === '' || $operation === '') throw new InvalidArgumentException();
+    $params = isset($request['params']) && is_array($request['params']) ? $request['params'] : [];
+    if (isset($request['hostId'])) $params['hostId'] = $request['hostId'];
+    if (isset($request['component'])) $params['componentName'] = $request['component'];
+    if (isset($request['action'])) $params['action'] = $request['action'];
+    if (($operation === 'COMPONENT_LOAD' || $operation === 'COMPONENT_INVOKE')
+        && isset($params['hostId']) && $params['hostId'] !== ''
+        && $params['hostId'] !== phpcore_id()) $result = ['code' => 403];
+    elseif ($operation === 'PING') $result = phpcore_test();
+    elseif ($operation === 'RELAY') $result = phpcore_forward($params);
+    elseif ($operation === 'COMPONENT_LOAD') $result = phpcore_load($params);
+    elseif ($operation === 'COMPONENT_INVOKE') $result = phpcore_invoke($params);
+    else $result = ['code' => 404];
+    return phpcore_envelope_response($requestId, $result);
 }

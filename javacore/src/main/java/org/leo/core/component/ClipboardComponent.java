@@ -1,11 +1,14 @@
 package org.leo.core.component;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 剪贴板操作组件
@@ -25,13 +28,20 @@ import java.util.Map;
  */
 public class ClipboardComponent implements Runnable {
 
+    private static final int MAX_CONTENT_CHARS = 1024 * 1024;
+    private static final int MAX_COMMAND_OUTPUT_CHARS = 65536;
+    private static final long COMMAND_TIMEOUT_MS = 30000L;
+    private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
+
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
     // execCommand 工作线程通信字段（防止阻塞 HTTP 请求线程）
     private volatile boolean execCmdMode = false;
     private volatile boolean execCmdDone = false;
+    private volatile boolean execCmdCancelled = false;
     private String execCmdInput;
+    private byte[] execCmdStdin;
     private volatile String execCmdOutput;
     private volatile Process execCmdProcess;
 
@@ -46,7 +56,7 @@ public class ClipboardComponent implements Runnable {
         } catch (Throwable t) {
             if (results == null) results = new java.util.HashMap<String, Object>();
             results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage());
+            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
@@ -59,6 +69,7 @@ public class ClipboardComponent implements Runnable {
         if (action == null || action.length() == 0) {
             action = "read";
         }
+        action = action.trim().toLowerCase(Locale.ENGLISH);
 
         if ("read".equals(action)) {
             doRead();
@@ -141,6 +152,11 @@ public class ClipboardComponent implements Runnable {
             results.put("msg", "content parameter is required");
             return;
         }
+        if (content.length() > MAX_CONTENT_CHARS) {
+            results.put("code", Integer.valueOf(413));
+            results.put("msg", "content 超过 1MB 字符上限");
+            return;
+        }
 
         boolean isWindows = isWindowsOs();
         boolean isMac = isMacOs();
@@ -169,28 +185,28 @@ public class ClipboardComponent implements Runnable {
     }
 
     private boolean writeWindows(String content) {
-        String escaped = content.replace("'", "''");
-        String output = execCommand("powershell -Command \"Set-Clipboard -Value '" + escaped + "'\"");
+        String output = execCommand(
+                "powershell -NoProfile -Command \"[Console]::InputEncoding=[Text.Encoding]::UTF8; "
+                        + "Set-Clipboard -Value ([Console]::In.ReadToEnd())\"",
+                toUtf8(content));
         return output != null;
     }
 
     private boolean writeMac(String content) {
-        String escaped = content.replace("'", "'\\''");
-        String output = execCommand("echo '" + escaped + "' | pbcopy 2>/dev/null");
+        String output = execCommand("pbcopy 2>/dev/null", toUtf8(content));
         return output != null;
     }
 
     private boolean writeLinux(String content) {
-        String escaped = content.replace("'", "'\\''");
-        String cmd = "echo '" + escaped + "'";
+        byte[] input = toUtf8(content);
         // 尝试 xclip
-        String output = execCommand(cmd + " | xclip -selection clipboard 2>/dev/null && echo OK");
+        String output = execCommand("xclip -selection clipboard 2>/dev/null && echo OK", input);
         if (output != null && output.contains("OK")) return true;
         // 尝试 xsel
-        output = execCommand(cmd + " | xsel --clipboard --input 2>/dev/null && echo OK");
+        output = execCommand("xsel --clipboard --input 2>/dev/null && echo OK", input);
         if (output != null && output.contains("OK")) return true;
         // 尝试 wl-copy (Wayland)
-        output = execCommand(cmd + " | wl-copy 2>/dev/null && echo OK");
+        output = execCommand("wl-copy 2>/dev/null && echo OK", input);
         if (output != null && output.contains("OK")) return true;
         return false;
     }
@@ -203,6 +219,7 @@ public class ClipboardComponent implements Runnable {
         if (duration > 60) duration = 60;
         int interval = getIntParam("interval", 1);
         if (interval < 1) interval = 1;
+        if (interval > 60) interval = 60;
 
         ArrayList<HashMap<String, Object>> snapshots = new ArrayList<HashMap<String, Object>>();
         String lastContent = null;
@@ -228,7 +245,12 @@ public class ClipboardComponent implements Runnable {
                 lastContent = current;
             }
 
-            try { Thread.sleep(interval * 1000L); } catch (Exception ignored) {}
+            try {
+                Thread.sleep(interval * 1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
 
         HashMap<String, Object> data = new HashMap<String, Object>();
@@ -265,22 +287,34 @@ public class ClipboardComponent implements Runnable {
     // ==================== 工具方法 ====================
 
     private String execCommand(String command) {
+        return execCommand(command, null);
+    }
+
+    private synchronized String execCommand(String command, byte[] stdin) {
+        // 上一个超时 worker 尚未退出时不复用共享状态，避免串写下一次命令结果。
+        if (execCmdMode && !execCmdDone) return null;
         execCmdInput = command;
+        execCmdStdin = stdin;
         execCmdOutput = null;
         execCmdDone = false;
+        execCmdCancelled = false;
         execCmdProcess = null;
         execCmdMode = true; // volatile write: happens-before worker thread start
-        Thread worker = new Thread(this);
+        Thread worker = new Thread(this,
+                getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
         worker.setDaemon(true);
         worker.start();
-        long deadline = System.currentTimeMillis() + 30000L;
+        long deadline = System.currentTimeMillis() + COMMAND_TIMEOUT_MS;
         while (!execCmdDone && System.currentTimeMillis() < deadline) {
             try { Thread.sleep(50L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
         if (!execCmdDone) {
+            execCmdCancelled = true;
             Process process = execCmdProcess;
             if (process != null) {
                 try { process.destroy(); } catch (Exception ignored) {}
+                try { process.getOutputStream().close(); } catch (Exception ignored) {}
+                try { process.getInputStream().close(); } catch (Exception ignored) {}
             }
             worker.interrupt();
             long graceDeadline = System.currentTimeMillis() + 1000L;
@@ -297,7 +331,9 @@ public class ClipboardComponent implements Runnable {
     private void execCmdWorker() {
         Process proc = null;
         InputStream is = null;
+        OutputStream os = null;
         try {
+            if (execCmdCancelled) return;
             String[] cmd;
             String osName = System.getProperty("os.name", "").toLowerCase();
             if (osName.contains("win")) {
@@ -309,17 +345,27 @@ public class ClipboardComponent implements Runnable {
             builder.redirectErrorStream(true);
             proc = builder.start();
             execCmdProcess = proc;
-            try { proc.getOutputStream().close(); } catch (Exception ignored) {}
+            if (execCmdCancelled) {
+                try { proc.destroy(); } catch (Exception ignored) {}
+                return;
+            }
+            os = proc.getOutputStream();
+            if (execCmdStdin != null && execCmdStdin.length > 0) {
+                os.write(execCmdStdin);
+                os.flush();
+            }
+            try { os.close(); } catch (Exception ignored) {}
+            os = null;
             is = proc.getInputStream();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(is, isWindowsOs() ? detectWindowsCharset() : "UTF-8"));
+            InputStreamReader reader = new InputStreamReader(
+                    is, isWindowsOs() ? detectWindowsCharset() : "UTF-8");
             StringBuffer sb = new StringBuffer();
-            String line;
-            int lineCount = 0;
-            while ((line = reader.readLine()) != null) {
-                if (lineCount < 2000) {
-                    if (lineCount > 0) sb.append("\n");
-                    sb.append(line);
-                    lineCount++;
+            char[] buffer = new char[2048];
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                int remaining = MAX_COMMAND_OUTPUT_CHARS - sb.length();
+                if (remaining > 0) {
+                    sb.append(buffer, 0, read < remaining ? read : remaining);
                 }
             }
             int exitCode = -1;
@@ -328,9 +374,11 @@ public class ClipboardComponent implements Runnable {
         } catch (Exception e) {
             execCmdOutput = null;
         } finally {
+            if (os != null) { try { os.close(); } catch (Exception ignored) {} }
             if (is != null) { try { is.close(); } catch (Exception ignored) {} }
             if (proc != null) { try { proc.destroy(); } catch (Exception ignored) {} }
             execCmdProcess = null;
+            execCmdMode = false;
             execCmdDone = true;
         }
     }
@@ -352,14 +400,21 @@ public class ClipboardComponent implements Runnable {
 
     private String getStringParam(String key) {
         Object val = params.get(key);
-        return val != null ? String.valueOf(val) : null;
+        if (val == null) return null;
+        if (val instanceof String) return (String) val;
+        if (val instanceof byte[]) {
+            try { return new String((byte[]) val, "UTF-8"); }
+            catch (UnsupportedEncodingException ignored) { return new String((byte[]) val); }
+        }
+        return String.valueOf(val);
     }
 
     private int getIntParam(String key, int defaultVal) {
         Object val = params.get(key);
         if (val == null) return defaultVal;
         if (val instanceof Number) return ((Number) val).intValue();
-        try { return Integer.parseInt(String.valueOf(val)); }
+        String text = getStringParam(key);
+        try { return Integer.parseInt(text == null ? "" : text.trim()); }
         catch (NumberFormatException e) { return defaultVal; }
     }
 
@@ -369,6 +424,11 @@ public class ClipboardComponent implements Runnable {
         charset = System.getProperty("file.encoding");
         if (charset != null && charset.length() > 0) return charset;
         return "GBK";
+    }
+
+    private byte[] toUtf8(String value) {
+        try { return value.getBytes("UTF-8"); }
+        catch (UnsupportedEncodingException ignored) { return value.getBytes(); }
     }
 
     private boolean isWindowsOs() {

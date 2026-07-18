@@ -1,6 +1,9 @@
 package org.leo.core.net.layer;
 
 import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 /**
  * HTTP Header 噪声生成器。
@@ -17,9 +20,19 @@ public class HeaderNoiseGenerator {
     private static final String HEX_CHARS = "0123456789abcdef";
 
     private final HeaderNoiseStrategy strategy;
+    private final String sessionSeed;
 
     public HeaderNoiseGenerator(HeaderNoiseStrategy strategy) {
+        this(strategy, null);
+    }
+
+    /**
+     * 创建会话级 Header 生成器。传入 seed 后，同一会话会持续返回同一组 Header，
+     * 避免单个客户端在短时间内不断改变 Header 集合和值格式。
+     */
+    public HeaderNoiseGenerator(HeaderNoiseStrategy strategy, String seed) {
         this.strategy = strategy;
+        this.sessionSeed = seed == null || seed.isBlank() ? null : seed;
     }
 
     /**
@@ -33,7 +46,8 @@ public class HeaderNoiseGenerator {
             return Collections.emptyMap();
         }
 
-        int count = randomBetween(strategy.getMinHeaders(), strategy.getMaxHeaders());
+        Random random = sessionSeed == null ? RANDOM : new Random(seedLong(sessionSeed));
+        int count = randomBetween(strategy.getMinHeaders(), strategy.getMaxHeaders(), random);
         if (count <= 0) {
             return Collections.emptyMap();
         }
@@ -46,12 +60,12 @@ public class HeaderNoiseGenerator {
         for (int i = 0; i < prefixes.length; i++) {
             indices.add(i);
         }
-        Collections.shuffle(indices, RANDOM);
+        Collections.shuffle(indices, random);
 
         int limit = Math.min(count, prefixes.length);
         for (int i = 0; i < limit; i++) {
             String headerName = prefixes[indices.get(i)];
-            String headerValue = generateValue(strategy.getValueMode());
+            String headerValue = generateValue(strategy.getValueMode(), random);
             noiseHeaders.put(headerName, headerValue);
         }
 
@@ -60,47 +74,64 @@ public class HeaderNoiseGenerator {
 
     // ==================== 值生成 ====================
 
-    private String generateValue(HeaderNoiseStrategy.HeaderValueMode mode) {
+    private String generateValue(HeaderNoiseStrategy.HeaderValueMode mode, Random random) {
         switch (mode) {
             case UUID_LIKE:
-                return generateUuidLike();
+                return generateUuidLike(random);
             case NUMERIC:
-                return generateNumeric();
+                return generateNumeric(random);
             case RANDOM_ALPHANUM:
             default:
-                return generateAlphaNum(12 + RANDOM.nextInt(20));
+                return generateAlphaNum(12 + random.nextInt(20), random);
         }
     }
 
-    private String generateAlphaNum(int len) {
+    private String generateAlphaNum(int len, Random random) {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) {
-            sb.append(ALPHA_NUM.charAt(RANDOM.nextInt(ALPHA_NUM.length())));
+            sb.append(ALPHA_NUM.charAt(random.nextInt(ALPHA_NUM.length())));
         }
         return sb.toString();
     }
 
-    private String generateUuidLike() {
+    private String generateUuidLike(Random random) {
         // 格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-        return hexBlock(8) + "-" + hexBlock(4) + "-" + hexBlock(4) + "-" + hexBlock(4) + "-" + hexBlock(12);
+        return hexBlock(8, random) + "-" + hexBlock(4, random) + "-" + hexBlock(4, random)
+                + "-" + hexBlock(4, random) + "-" + hexBlock(12, random);
     }
 
-    private String hexBlock(int len) {
+    private String hexBlock(int len, Random random) {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) {
-            sb.append(HEX_CHARS.charAt(RANDOM.nextInt(16)));
+            sb.append(HEX_CHARS.charAt(random.nextInt(16)));
         }
         return sb.toString();
     }
 
-    private String generateNumeric() {
-        // 模拟时间戳或长数字串
-        long base = System.currentTimeMillis() + RANDOM.nextInt(100000);
+    private String generateNumeric(Random random) {
+        // seed 模式使用稳定的正数标识；旧模式继续生成近似时间戳值。
+        long base = sessionSeed == null
+                ? System.currentTimeMillis() + random.nextInt(100000)
+                : 1_700_000_000_000L + Math.floorMod(random.nextLong(), 100_000_000_000L);
         return String.valueOf(base);
     }
 
-    private int randomBetween(int min, int max) {
+    private int randomBetween(int min, int max, Random random) {
         if (min >= max) return min;
-        return min + RANDOM.nextInt(max - min + 1);
+        return min + random.nextInt(max - min + 1);
+    }
+
+    private long seedLong(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            long seed = 0L;
+            for (int index = 0; index < Long.BYTES; index++) {
+                seed = (seed << 8) | (digest[index] & 0xffL);
+            }
+            return seed;
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }
