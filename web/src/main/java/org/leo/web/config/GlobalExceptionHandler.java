@@ -1,5 +1,6 @@
 package org.leo.web.config;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
@@ -10,6 +11,7 @@ import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.HashMap;
 
@@ -45,6 +47,16 @@ public class GlobalExceptionHandler {
         logger.warn("请求参数错误: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.badRequest(e.getMessage()));
+    }
+
+    /** Missing static files are normal 404s, including stale hashed chunks requested by old tabs. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<HashMap<String, Object>> handleNoResourceFound(NoResourceFoundException e,
+                                                                          HttpServletResponse response) {
+        logger.debug("静态资源不存在: {}", e.getResourcePath());
+        response.setHeader("Cache-Control", "no-store");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.notFound("静态资源不存在"));
     }
 
     /**
