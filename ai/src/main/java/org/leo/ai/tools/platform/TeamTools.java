@@ -16,7 +16,7 @@ import java.util.Map;
  * 平台团队管理 AI 工具。
  *
  * <p>这些工具以平台管理员权限运行。
- * 只有 admin 可创建/删除团队；内置团队 adminteam 不可删除。
+ * 只有 admin 可创建/删除团队；内置团队 system-admin 不可删除。
  */
 @Component("platformTeamTools")
 public class TeamTools {
@@ -136,7 +136,7 @@ public class TeamTools {
         return buildResult("updated", updated, existing.getTeamId(), existing.getTeamName());
     }
 
-    @Tool("删除指定团队（仅 admin 可用）。删除前会清空团队成员的 teamId。内置 adminteam 不可删除。")
+    @Tool("删除指定团队（仅 admin 可用）。删除前会清空团队成员的 teamId。内置 system-admin 不可删除。")
     public Map<String, Object> deleteTeam(String teamId) {
         Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
         if (team == null) throw new IllegalArgumentException("团队不存在");

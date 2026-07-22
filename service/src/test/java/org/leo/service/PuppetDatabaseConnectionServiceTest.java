@@ -68,6 +68,7 @@ class PuppetDatabaseConnectionServiceTest {
                         "php", Map.of("dsn", "custom:inventory", "pdoDriver", "custom"))));
 
         service.applyConnectionSpec(connection, spec);
+        connection.setPassword(crypto.encrypt(connection.getPassword()));
         DatabaseConnectionSpec restored = service.toConnectionSpec(connection);
 
         assertEquals("db.internal", restored.getHost());

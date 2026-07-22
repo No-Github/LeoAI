@@ -110,13 +110,13 @@ public class UserService {
         return userMapper.delUser(userId.trim());
     }
 
-    /** Atomically records a successful login and optionally upgrades the password hash. */
-    public User recordSuccessfulLogin(String userId, String upgradedPasswordHash) {
+    /** Atomically records a successful login. */
+    public User recordSuccessfulLogin(String userId) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
         String now = now();
-        userMapper.recordSuccessfulLogin(userId.trim(), upgradedPasswordHash, now, now);
+        userMapper.recordSuccessfulLogin(userId.trim(), now, now);
         return getUserById(userId);
     }
 

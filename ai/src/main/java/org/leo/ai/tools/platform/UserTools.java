@@ -103,7 +103,7 @@ public class UserTools {
         return buildResult("created", created, user.getUserId(), user.getUserName());
     }
 
-    @Tool("更新平台用户。userId 必填，其余字段按需更新；password 不为空时自动 MD5 再存储。")
+    @Tool("更新平台用户。userId 必填，其余字段按需更新；password 不为空时自动安全哈希后存储。")
     public Map<String, Object> updateUser(String userId, String userName, String password,
                                            String privilege, String email, String phone,
                                            Integer status, String teamId, String remark) {
@@ -118,7 +118,7 @@ public class UserTools {
             existing.setUserName(userName.trim());
         }
         if (!isBlank(password)) {
-            existing.setPassword(PasswordUtil.md5(password));
+            existing.setPassword(PasswordUtil.hash(password));
         }
         if (!isBlank(privilege)) {
             String normalizedPrivilege = normalizePrivilege(privilege);

@@ -16,16 +16,7 @@ class PasswordUtilTest {
         assertNotEquals(first, second);
         assertTrue(PasswordUtil.verify("correct horse battery staple", first));
         assertFalse(PasswordUtil.verify("wrong", first));
-        assertFalse(PasswordUtil.needsRehash(first));
-    }
-
-    @Test
-    void acceptsLegacyMd5AndMarksItForUpgrade() {
-        String legacy = PasswordUtil.md5("legacy-password");
-
-        assertTrue(PasswordUtil.verify("legacy-password", legacy));
-        assertFalse(PasswordUtil.verify("wrong", legacy));
-        assertTrue(PasswordUtil.needsRehash(legacy));
+        assertFalse(PasswordUtil.verify("correct horse battery staple", "5f4dcc3b5aa765d61d8327deb882cf99"));
     }
 
     @Test
@@ -36,7 +27,5 @@ class PasswordUtilTest {
 
         assertFalse(PasswordUtil.verify("password", tinySalt));
         assertFalse(PasswordUtil.verify("password", excessiveWork));
-        assertTrue(PasswordUtil.needsRehash(tinySalt));
-        assertTrue(PasswordUtil.needsRehash(excessiveWork));
     }
 }

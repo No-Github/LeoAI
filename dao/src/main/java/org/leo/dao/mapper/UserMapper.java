@@ -60,11 +60,9 @@ public interface UserMapper {
                           @Param("remark") String remark,
                           @Param("userId") String userId);
 
-    @Update("UPDATE users SET password=COALESCE(#{password}, password), "
-            + "last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
+    @Update("UPDATE users SET last_login_time=#{lastLoginTime}, login_count=COALESCE(login_count, 0) + 1, "
             + "update_time=#{updateTime} WHERE user_id=#{userId}")
     boolean recordSuccessfulLogin(@Param("userId") String userId,
-                                  @Param("password") String password,
                                   @Param("lastLoginTime") String lastLoginTime,
                                   @Param("updateTime") String updateTime);
 }

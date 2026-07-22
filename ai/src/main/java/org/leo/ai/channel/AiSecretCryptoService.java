@@ -68,7 +68,10 @@ public class AiSecretCryptoService {
     }
 
     public String decrypt(String storedValue) {
-        if (storedValue == null || storedValue.isBlank() || !isEncrypted(storedValue)) return storedValue;
+        if (storedValue == null || storedValue.isBlank()) return storedValue;
+        if (!isEncrypted(storedValue)) {
+            throw new IllegalArgumentException("AI Secret 必须使用当前密文格式存储");
+        }
         try {
             byte[] payload = Base64.getDecoder().decode(storedValue.substring(PREFIX.length()));
             if (payload.length <= NONCE_BYTES) throw new IllegalArgumentException("密文长度无效");

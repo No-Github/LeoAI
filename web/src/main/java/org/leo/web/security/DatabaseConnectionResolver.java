@@ -18,7 +18,6 @@ import java.util.Objects;
 public final class DatabaseConnectionResolver {
 
     private static final String CONNECTION_ID = "connectionId";
-    private static final String LEGACY_PROFILE_ID = "profileId";
 
     private final PuppetDatabaseConnectionService connectionService;
 
@@ -56,8 +55,7 @@ public final class DatabaseConnectionResolver {
 
     public String reference(Map<String, Object> supplied) {
         if (supplied == null) return null;
-        String connectionId = text(supplied.get(CONNECTION_ID));
-        return connectionId == null ? text(supplied.get(LEGACY_PROFILE_ID)) : connectionId;
+        return text(supplied.get(CONNECTION_ID));
     }
 
     private String text(Object value) {

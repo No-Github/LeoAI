@@ -15,7 +15,6 @@ public final class PermissionPolicy {
     public static final String PRIVILEGE_LEADER = "leader";
     public static final String PERMISSION_PRIVATE = "private";
     public static final String PERMISSION_TEAM = "team";
-    public static final String PERMISSION_PROTECTED_LEGACY = "protected";
     private static final String PERMISSION_PUBLIC = "public";
 
     private PermissionPolicy() {
@@ -30,7 +29,7 @@ public final class PermissionPolicy {
     }
 
     public static boolean isTeamVisiblePermission(String permission) {
-        return PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED_LEGACY.equals(permission);
+        return PERMISSION_TEAM.equals(permission);
     }
 
     public static boolean canAccessSession(PuppetNodeSession session, User user) {

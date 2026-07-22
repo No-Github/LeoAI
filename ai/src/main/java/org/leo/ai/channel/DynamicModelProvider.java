@@ -14,7 +14,6 @@ import org.leo.core.entity.ProviderCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
@@ -31,7 +30,6 @@ import java.util.Objects;
  * 外部调用 {@link #refresh()} 可热切换底层模型。
  */
 @Component
-@DependsOn("aiModelCapabilitySchemaMigrator")
 public class DynamicModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicModelProvider.class);

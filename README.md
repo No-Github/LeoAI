@@ -10,10 +10,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
+[![PHP Runtime](https://img.shields.io/badge/PHP%20Puppet-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Puppet 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。平台 AI 可以将任务委派给指定 Puppet AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
+LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产、Puppet 操作控制台、平台级 AI、节点级 AI 副驾和团队协作整合在同一套 Web 工作台中。v1.0.0 引入平等的 Java/PHP Puppet 双运行时，平台根据节点能力动态装配控制台与 AI 工具；平台 AI 可以将任务委派给指定 Puppet AI，节点 AI 则在当前会话上下文中调用工具、持续回传执行过程并沉淀侦察结果。
 
 <img src="docs/images/screenshot-dashboard.png" alt="主界面截图" width="800" />
 
@@ -25,6 +26,8 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 
 ## 目录
 
+- [v1.0.0 版本亮点](#v100-版本亮点)
+- [Java/PHP 双运行时](#javaphp-双运行时)
 - [功能特性](#功能特性)
 - [工作方式](#工作方式)
 - [技术栈](#技术栈)
@@ -36,6 +39,54 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 - [安全建议](#安全建议)
 - [免责声明](#免责声明)
 - [License](#license)
+
+---
+
+## v1.0.0 版本亮点
+
+v1.0.0 是 LeoAI 首个正式开源版本，也是一次覆盖运行时、组件、平台服务、Web 控制台和部署方式的大版本升级。
+
+| 方向 | v1.0.0 主要变化 |
+|------|----------------|
+| **PHP Puppet** | 新增 PHP 5.6+ 单文件入口、HTTP RPC、按需 Component 与运行时能力注册；覆盖命令、文件、终端、数据库、网络、代理隧道和基础系统管理 |
+| **双运行时架构** | Java 与 PHP 通过同一 `PuppetRuntimeModule` SPI、Capability 契约和 RPC 响应协议接入，上层服务按能力工作，而非绑定具体运行时 |
+| **Component 稳定性** | Java/PHP Component 加入有界任务、TTL、资源注销、缓存上限和生命周期清理；Java 构建产物同步精简调试元数据与冗余常量 |
+| **控制台与 AI** | Puppet 路由、插件、文件传输、SQL、代理、后台任务和 AI SSE 统一到共享服务边界；界面按 Runtime Profile 展示可用功能 |
+| **全新数据库基线** | `schema.sql` 与 `data.sql` 直接建立 v1.0.0 最终结构，首次启动创建 SQLite、基础配置及管理员账户 |
+| **发布与部署** | Maven 模块、前端、Docker 和制品统一使用 `1.0.0`；正式制品为 `LeoAi-1.0.0.jar`，首次登录强制修改初始密码 |
+
+> **安装基线**：v1.0.0 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
+
+完整改动记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## Java/PHP 双运行时
+
+Java 与 PHP 是平等的 Puppet Runtime。共享模块只定义协议、会话和能力契约，具体实现分别位于 `javacore` 与 `phpcore`，`web` 负责最终组装。
+
+```mermaid
+graph TD
+    web["web：应用组合与 Web 控制台"] --> service["service / ai：共享业务与智能编排"]
+    web --> java["javacore：Java Puppet Runtime"]
+    web --> php["phpcore：PHP Puppet Runtime"]
+    service --> core["core：Runtime SPI / Capability / RPC / Session"]
+    java --> core
+    php --> core
+    web --> jmg["jmg：Java Shell 与内存马构建"]
+```
+
+| 能力 | Java Puppet | PHP Puppet |
+|------|-------------|------------|
+| **入口形态** | Java Core 与容器/脚本生成器 | PHP 5.6+ 单文件 HTTP 入口 |
+| **组件加载** | 独立 Java Component 字节码按需加载 | 独立 PHP Component 按 digest 懒加载 |
+| **命令与终端** | `ProcessBuilder`、PTY/pipe 会话 | `proc_open`、Python PTY/命令后端 |
+| **文件能力** | 浏览、编辑、分块传输、压缩与哈希 | 浏览、编辑、分块传输、压缩与哈希 |
+| **数据库** | 统一连接描述转换为 JDBC 参数 | 统一连接描述转换为 PDO DSN |
+| **网络能力** | HTTP、扫描、SOCKS5/HTTP 代理、正反向隧道 | HTTP、扫描、SOCKS5/HTTP 代理、正反向隧道 |
+| **能力发现** | Runtime Profile 动态声明 | Runtime Profile 动态声明 |
+
+PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相应 PDO Driver，压缩需要 `ZipArchive`，持续代理/隧道 Worker 至少需要 `shell_exec`、`exec` 或 `popen` 之一。更完整的模块边界与能力矩阵见 [docs/runtime-modules.md](docs/runtime-modules.md)。
 
 ---
 
@@ -219,7 +270,8 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 | **HTTP 客户端** | OkHttp 4 |
 | **字节码操作** | Javassist 3.30 |
 | **构建工具** | Maven（多模块）|
-| **运行环境** | Java 17+ |
+| **平台运行环境** | Java 17+ |
+| **Puppet Runtime** | Java Component、PHP 5.6+ Component |
 
 ---
 
@@ -232,6 +284,7 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 | **内存** | 建议 4 GB 以上 |
 | **磁盘** | 至少 500 MB 可用空间 |
 | **浏览器** | Chrome、Firefox、Edge 等现代浏览器 |
+| **PHP Puppet** | 目标环境 PHP 5.6+；按所用能力安装 PDO/ZipArchive 等扩展 |
 
 > 无需单独安装数据库：内置 SQLite，首次启动自动初始化。  
 > 无需额外部署前端：Web 界面已打包至 JAR 文件中。
@@ -241,6 +294,8 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 ## 快速开始
 
 ### 第一步：获取 JAR
+
+> v1.0.0 使用全新数据库基线。首次部署请准备新的运行目录或新的 SQLite 路径。
 
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
@@ -505,6 +560,7 @@ leo.ai.openai.thinking-enabled=false
 1. 登录后进入「**主工作台 → 主机资产**」
 2. 点击「**新增主机**」，填写：
    - **主机名称**：自定义标识
+   - **运行时类型**：根据入口选择 Java 或 PHP
    - **目标 URL**：目标 Puppet 地址（如 `http://target.com/shell`）
    - **通信协议**：HTTP / HTTP Chunked / WebSocket
    - **访问密钥**：与 Shell 端保持一致

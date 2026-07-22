@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
 
 /**
  * 用户登录控制器。
- * Passwords use salted PBKDF2 hashes; legacy MD5 rows are upgraded on login.
+ * Passwords use salted PBKDF2 hashes.
  */
 @RestController
 @RequestMapping("/platform/user")
@@ -61,9 +61,7 @@ public class LoginController {
         this.passwordPolicy = passwordPolicy;
     }
 
-    /**
-     * 用户登录。旧 MD5 记录会在验证成功后透明升级。
-     */
+    /** 用户登录。 */
     @PostMapping("/login")
     public Map<String, Object> login(HttpServletRequest request,
                                      @RequestBody LoginRequest body) {
@@ -89,9 +87,7 @@ public class LoginController {
             throw ApiException.forbidden("账号已禁用，请联系管理员");
         }
 
-        String upgradedPassword = PasswordUtil.needsRehash(user.getPassword())
-                ? PasswordUtil.hash(password) : null;
-        User refreshed = userService.recordSuccessfulLogin(user.getUserId(), upgradedPassword);
+        User refreshed = userService.recordSuccessfulLogin(user.getUserId());
         if (refreshed != null) user = refreshed;
         loginAttemptService.recordSuccess(username, remoteAddress);
 

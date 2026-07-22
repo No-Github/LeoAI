@@ -29,9 +29,9 @@ class AiSecretCryptoServiceTest {
     }
 
     @Test
-    void keepsLegacyPlaintextReadableDuringMigration() {
+    void rejectsPlaintextDatabaseValues() {
         AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
-        assertEquals("legacy-value", crypto.decrypt("legacy-value"));
+        assertThrows(IllegalArgumentException.class, () -> crypto.decrypt("plaintext-value"));
     }
 
     @Test

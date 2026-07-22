@@ -60,19 +60,6 @@ public final class DatabaseConnectionSpec {
         if (source == null) throw new IllegalArgumentException("connection 不能为空");
         Map<String, Object> nativeOptions = map(source.get("nativeOptions"));
 
-        // Compatibility is deliberately isolated here. Legacy JDBC fields are
-        // recorded only as a Java override and never interpreted by PHP.
-        String legacyUrl = string(source.get("url"));
-        String legacyDriver = string(source.get("driver"));
-        if (!legacyUrl.isBlank() || !legacyDriver.isBlank()) {
-            Map<String, Object> mergedNative = new LinkedHashMap<String, Object>(nativeOptions);
-            Map<String, Object> java = new LinkedHashMap<String, Object>(map(mergedNative.get("java")));
-            if (!legacyUrl.isBlank()) java.putIfAbsent("jdbcUrl", legacyUrl);
-            if (!legacyDriver.isBlank()) java.putIfAbsent("driverClass", legacyDriver);
-            mergedNative.put("java", java);
-            nativeOptions = mergedNative;
-        }
-
         return new DatabaseConnectionSpec(
                 string(source.get("type")),
                 string(source.get("variant")),

@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
     remark TEXT
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uk_users_user_name_nocase
+    ON users(user_name COLLATE NOCASE);
+
 -- 2. 团队表
 CREATE TABLE IF NOT EXISTS teams (
     team_id VARCHAR(50) PRIMARY KEY,
@@ -31,6 +34,10 @@ CREATE TABLE IF NOT EXISTS teams (
     update_time DATETIME NOT NULL,
     remark TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_teams_team_name_nocase
+    ON teams(team_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_teams_leader_id ON teams(leader_id);
 
 -- 3. 受控主机表 (Puppet)
 CREATE TABLE IF NOT EXISTS puppets (
@@ -50,7 +57,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     proxy_port INTEGER,
     balance_enabled INTEGER DEFAULT 0 CHECK (balance_enabled IN (0, 1)), -- 0:禁用 1:启用（负载均衡稳定功能）
     max_req_count INTEGER DEFAULT 0 CHECK (max_req_count >= 0),
-    permission VARCHAR(20) DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public', 'protected')), -- private, team, public（兼容旧值 protected）
+    permission VARCHAR(20) DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public')), -- private, team, public
     last_heartbeat DATETIME,
     heartbeat_interval INTEGER DEFAULT 30000 CHECK (heartbeat_interval > 0), -- 心跳间隔(毫秒)
     create_time DATETIME NOT NULL,
@@ -63,6 +70,10 @@ CREATE TABLE IF NOT EXISTS puppets (
     component_class_name_strategy TEXT, -- Java Component 运行时类名画像（JSON 格式）
     type VARCHAR(20) DEFAULT 'java' -- 节点运行时类型：java、php
 );
+
+CREATE INDEX IF NOT EXISTS idx_puppets_parent_id ON puppets(parent_puppet_id);
+CREATE INDEX IF NOT EXISTS idx_puppets_create_user_id ON puppets(create_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id);
 
 
 
@@ -87,6 +98,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_access_time DATETIME NOT NULL,
     expire_time DATETIME
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_puppet_id ON sessions(puppet_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
 
 
 -- =====================================================
@@ -197,6 +212,11 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     FOREIGN KEY (fallback_model_id) REFERENCES ai_model_configs(id) ON DELETE SET NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_ai_model_configs_provider_id
+    ON ai_model_configs(provider_id);
+CREATE INDEX IF NOT EXISTS idx_ai_model_configs_fallback_model_id
+    ON ai_model_configs(fallback_model_id);
+
 CREATE TABLE IF NOT EXISTS ai_model_capabilities (
     model_name VARCHAR(255) PRIMARY KEY,
     source VARCHAR(32) NOT NULL DEFAULT 'system',
@@ -302,6 +322,7 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     attachments_json TEXT,
     thinking_logs_json TEXT,
     tool_calls_json TEXT,
+    nodes_json TEXT,
     review_json TEXT,
     plan_json TEXT,
     FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE

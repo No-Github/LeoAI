@@ -10,10 +10,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange)](https://openjdk.org/)
+[![PHP Runtime](https://img.shields.io/badge/PHP%20Puppet-5.6%2B-777BB4)](https://www.php.net/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.13-brightgreen)](https://spring.io/projects/spring-boot)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.16.1-purple)](https://github.com/langchain4j/langchain4j)
 
-LeoAI is a post-exploitation management tool designed for red team operators. It deeply integrates Large Language Model (LLM) Agent capabilities to enable intelligent, automated post-exploitation workflows. Compared to traditional WebShell management tools, LeoAI provides enterprise-grade capabilities including AI-assisted decision making, multi-protocol communication, traffic obfuscation, and team collaboration — with a built-in web management interface that works out of the box.
+LeoAI is a post-exploitation management platform designed for red team operators and security research workflows. v1.0.0 introduces equal Java and PHP Puppet runtimes: the platform discovers each node's capabilities and assembles the console and AI tools accordingly. LeoAI combines AI-assisted decision making, multi-protocol communication, node operations, and team collaboration in a built-in web interface.
 
 <img src="docs/images/screenshot-dashboard.png" alt="Dashboard Screenshot" width="800" />
 
@@ -25,6 +26,8 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 
 ## Table of Contents
 
+- [v1.0.0 Highlights](#v100-highlights)
+- [Java/PHP Dual Runtime](#javaphp-dual-runtime)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Requirements](#requirements)
@@ -35,6 +38,54 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 - [Security Recommendations](#security-recommendations)
 - [Disclaimer](#disclaimer)
 - [License](#license)
+
+---
+
+## v1.0.0 Highlights
+
+v1.0.0 is LeoAI's first official open-source release and a major update spanning runtimes, components, platform services, the web console, and deployment.
+
+| Area | What changed in v1.0.0 |
+|------|-------------------------|
+| **PHP Puppet** | Adds a PHP 5.6+ single-file entry point, HTTP RPC, on-demand Components, and runtime capability registration for commands, files, terminals, databases, networking, tunnels, and core system administration |
+| **Dual-runtime architecture** | Java and PHP use the same `PuppetRuntimeModule` SPI, Capability contracts, and RPC response protocol; upper layers depend on capabilities rather than a concrete runtime |
+| **Component reliability** | Java/PHP Components now use bounded tasks, TTLs, resource deregistration, cache limits, and unified lifecycle cleanup; Java artifacts also remove redundant debug metadata and constants |
+| **Console and AI** | Puppet routing, plugins, file transfer, SQL, proxies, background tasks, and AI SSE use shared service boundaries; the UI exposes features from each node's Runtime Profile |
+| **Fresh database baseline** | `schema.sql` and `data.sql` create the final v1.0.0 structure directly, followed by base configuration and administrator bootstrap |
+| **Release packaging** | Maven modules, frontend assets, Docker configuration, and artifacts use version `1.0.0`; the release artifact is `LeoAi-1.0.0.jar` and the initial administrator password must be changed after login |
+
+> **Installation baseline:** v1.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
+
+---
+
+## Java/PHP Dual Runtime
+
+Java and PHP are equal Puppet runtimes. Shared modules define protocols, sessions, and capability contracts; concrete implementations live in `javacore` and `phpcore`, while `web` is the application composition root.
+
+```mermaid
+graph TD
+    web["web: application composition and console"] --> service["service / ai: shared business and orchestration"]
+    web --> java["javacore: Java Puppet Runtime"]
+    web --> php["phpcore: PHP Puppet Runtime"]
+    service --> core["core: Runtime SPI / Capability / RPC / Session"]
+    java --> core
+    php --> core
+    web --> jmg["jmg: Java shell and memory-shell generation"]
+```
+
+| Capability | Java Puppet | PHP Puppet |
+|------------|-------------|------------|
+| **Entry point** | Java Core plus container/script generators | PHP 5.6+ single-file HTTP entry point |
+| **Component loading** | Independent Java Component bytecode loaded on demand | Independent PHP Components loaded lazily by digest |
+| **Commands and terminal** | `ProcessBuilder`, PTY/pipe sessions | `proc_open`, Python PTY/command backend |
+| **Files** | Browse, edit, chunked transfer, archive, and hash | Browse, edit, chunked transfer, archive, and hash |
+| **Database** | Shared connection description converted to JDBC parameters | Shared connection description converted to a PDO DSN |
+| **Networking** | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels | HTTP, scans, SOCKS5/HTTP proxies, local/reverse tunnels |
+| **Discovery** | Declared dynamically through Runtime Profile | Declared dynamically through Runtime Profile |
+
+The exact PHP feature set depends on the target environment: database operations require the matching PDO driver, archives require `ZipArchive`, and persistent proxy/tunnel workers require at least one of `shell_exec`, `exec`, or `popen`. See [docs/runtime-modules.md](docs/runtime-modules.md) for module boundaries and the full capability matrix.
 
 ---
 
@@ -167,7 +218,8 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 | **HTTP Client** | OkHttp 4 |
 | **Bytecode Manipulation** | Javassist 3.30 |
 | **Build Tool** | Maven (multi-module) |
-| **Runtime** | Java 17+ |
+| **Platform Runtime** | Java 17+ |
+| **Puppet Runtimes** | Java Components, PHP 5.6+ Components |
 
 ---
 
@@ -180,6 +232,7 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 | **Memory** | 4 GB or more recommended |
 | **Disk Space** | At least 500 MB available |
 | **Browser** | Modern browsers: Chrome, Firefox, Edge, etc. |
+| **PHP Puppet** | PHP 5.6+ on the target; PDO/ZipArchive and related extensions as required by the selected capabilities |
 
 > No separate database installation needed: SQLite is embedded and auto-initialized on first launch.  
 > No separate frontend deployment needed: the web interface is bundled inside the JAR.
@@ -189,6 +242,8 @@ LeoAI is a post-exploitation management tool designed for red team operators. It
 ## Quick Start
 
 ### Step 1: Get the JAR
+
+> v1.0.0 uses a fresh database baseline. For the first official deployment, use a new working directory or a new SQLite path.
 
 Download the version you need from the [Releases](https://github.com/cha0upup/LeoAI/releases) page:
 
@@ -451,6 +506,7 @@ leo.ai.openai.thinking-enabled=false
 1. Log in and go to **Node Management**
 2. Click **Add Node** and fill in:
    - **Node Name**: a custom identifier
+   - **Runtime Type**: choose Java or PHP to match the generated entry point
    - **Target URL**: the target node address (e.g., `http://target.com/shell`)
    - **Protocol**: HTTP / HTTP Chunked / WebSocket
    - **Access Key**: must match the shell-side configuration
@@ -470,7 +526,7 @@ After entering a node, use the available tool modules:
 
 - **Virtual Terminal**: Run shell commands in multiple sessions with real-time streaming output; search output, clear screen, interrupt, close sessions, and reclaim backend processes on close/reset
 - **File Manager**: Tree browsing, upload/download, online editing, compress/decompress, file preview
-- **Database**: First add a JDBC connection under "System Config → Database Config", then select it in the console
+- **Database**: Add a shared connection profile in the database workspace; Java and PHP Puppets convert it to JDBC or PDO runtime parameters respectively
 - **Port Scanner**: Quick scan / custom port range / export results
 - **HTTP Requester**: Repeater for single requests, Fuzzer for bulk fuzzing
 

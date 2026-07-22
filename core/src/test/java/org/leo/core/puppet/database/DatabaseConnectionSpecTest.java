@@ -24,16 +24,6 @@ class DatabaseConnectionSpecTest {
     }
 
     @Test
-    void isolatesLegacyJdbcValuesAsJavaOnlyOverrides() {
-        DatabaseConnectionSpec spec = DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "sqlite", "file", "/tmp/example.sqlite",
-                "url", "jdbc:sqlite:/tmp/example.sqlite", "driver", "org.sqlite.JDBC"));
-
-        assertEquals("jdbc:sqlite:/tmp/example.sqlite", spec.nativeOptions("java").get("jdbcUrl"));
-        assertTrue(spec.nativeOptions("php").isEmpty());
-    }
-
-    @Test
     void validatesRequiredRuntimeNeutralLocator() {
         assertThrows(IllegalArgumentException.class,
                 () -> DatabaseConnectionSpec.fromMap(Map.of("type", "sqlite")));

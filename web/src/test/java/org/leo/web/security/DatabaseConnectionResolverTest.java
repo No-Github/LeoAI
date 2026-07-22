@@ -35,7 +35,7 @@ class DatabaseConnectionResolverTest {
     }
 
     @Test
-    void resolvesLegacyProfileReferencesOnlyAfterPuppetAndPermissionChecks() {
+    void resolvesConnectionReferencesOnlyAfterPuppetAndPermissionChecks() {
         PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
         PuppetDatabaseConnection saved = new PuppetDatabaseConnection();
@@ -51,10 +51,10 @@ class DatabaseConnectionResolverTest {
         when(service.toActiveConnectionSpec(saved)).thenReturn(spec);
 
         Map<String, Object> resolved = resolver.resolve(
-                Map.of("profileId", " connection-1 "), "puppet-1", owner);
+                Map.of("connectionId", " connection-1 "), "puppet-1", owner);
 
         assertEquals("db.internal", resolved.get("host"));
-        assertEquals("connection-1", resolver.reference(Map.of("profileId", " connection-1 ")));
+        assertEquals("connection-1", resolver.reference(Map.of("connectionId", " connection-1 ")));
     }
 
     @Test

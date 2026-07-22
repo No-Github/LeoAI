@@ -13,7 +13,7 @@ import java.util.List;
 /**
  * Puppet 管理服务。
  *
- * <p>Puppet permission 值：private / team / public（默认 private），兼容旧值 protected。
+ * <p>Puppet permission 值：private / team / public（默认 private）。
  */
 @Service
 public class PuppetService {

@@ -26,9 +26,7 @@ public class DatabaseCredentialCryptoService {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseCredentialCryptoService.class);
     static final String PREFIX = "enc:database:v1:";
-    static final String LEGACY_PREFIX = "enc:jdbc:v1:";
     private static final byte[] AAD = "leo-database-connection-secret:v1".getBytes(StandardCharsets.UTF_8);
-    private static final byte[] LEGACY_AAD = "leo-puppet-jdbc-secret:v1".getBytes(StandardCharsets.UTF_8);
     private static final int NONCE_BYTES = 12;
     private static final int KEY_BYTES = 32;
     private static final int GCM_TAG_BITS = 128;
@@ -37,8 +35,8 @@ public class DatabaseCredentialCryptoService {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public DatabaseCredentialCryptoService(
-            @Value("${leo.database.secrets.master-key:${leo.jdbc.secrets.master-key:}}") String configuredMasterKey,
-            @Value("${leo.database.secrets.key-file:${leo.jdbc.secrets.key-file:.leo/jdbc-secrets.key}}") String configuredKeyFile) {
+            @Value("${leo.database.secrets.master-key:}") String configuredMasterKey,
+            @Value("${leo.database.secrets.key-file:.leo/database-secrets.key}") String configuredKeyFile) {
         boolean externalKey = configuredMasterKey != null && !configuredMasterKey.isBlank();
         byte[] keyBytes = externalKey ? deriveKey(configuredMasterKey) : loadOrCreateKeyFile(configuredKeyFile);
         this.key = new SecretKeySpec(keyBytes, "AES");
@@ -68,11 +66,12 @@ public class DatabaseCredentialCryptoService {
     }
 
     public String decrypt(String storedValue) {
-        if (storedValue == null || storedValue.isBlank() || !isEncrypted(storedValue)) return storedValue;
+        if (storedValue == null || storedValue.isBlank()) return storedValue;
+        if (!isEncrypted(storedValue)) {
+            throw new IllegalArgumentException("Database Credential 必须使用当前密文格式存储");
+        }
         try {
-            boolean legacy = storedValue.startsWith(LEGACY_PREFIX);
-            String prefix = legacy ? LEGACY_PREFIX : PREFIX;
-            byte[] payload = Base64.getDecoder().decode(storedValue.substring(prefix.length()));
+            byte[] payload = Base64.getDecoder().decode(storedValue.substring(PREFIX.length()));
             if (payload.length <= NONCE_BYTES) throw new IllegalArgumentException("密文长度无效");
             byte[] nonce = new byte[NONCE_BYTES];
             byte[] ciphertext = new byte[payload.length - NONCE_BYTES];
@@ -80,16 +79,16 @@ public class DatabaseCredentialCryptoService {
             System.arraycopy(payload, NONCE_BYTES, ciphertext, 0, ciphertext.length);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, nonce));
-            cipher.updateAAD(legacy ? LEGACY_AAD : AAD);
+            cipher.updateAAD(AAD);
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException(
-                    "Database Credential 解密失败，请检查 LEO_DATABASE_MASTER_KEY（兼容 LEO_JDBC_MASTER_KEY）或本地密钥文件", e);
+                    "Database Credential 解密失败，请检查 LEO_DATABASE_MASTER_KEY 或本地密钥文件", e);
         }
     }
 
     public boolean isEncrypted(String value) {
-        return value != null && (value.startsWith(PREFIX) || value.startsWith(LEGACY_PREFIX));
+        return value != null && value.startsWith(PREFIX);
     }
 
     private static byte[] deriveKey(String masterKey) {
@@ -129,7 +128,7 @@ public class DatabaseCredentialCryptoService {
 
     private static Path normalizedKeyFile(String configuredKeyFile) {
         String value = configuredKeyFile == null || configuredKeyFile.isBlank()
-                ? ".leo/jdbc-secrets.key" : configuredKeyFile;
+                ? ".leo/database-secrets.key" : configuredKeyFile;
         return Path.of(value).toAbsolutePath().normalize();
     }
 

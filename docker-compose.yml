@@ -14,7 +14,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       LEO_PLUGIN_ENCRYPT_KEY: ${LEO_PLUGIN_ENCRYPT_KEY:-ikunikunikunikun}
-      LEO_DATABASE_MASTER_KEY: ${LEO_DATABASE_MASTER_KEY:-${LEO_JDBC_MASTER_KEY:-}}
+      LEO_DATABASE_MASTER_KEY: ${LEO_DATABASE_MASTER_KEY:-}
       SPRING_DATASOURCE_URL: jdbc:sqlite:/app/data/data.db
       VFSPATH: /app/data/root
       JAVA_OPTS: ${JAVA_OPTS:-}

@@ -23,8 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 
 class LoginControllerTest {
 
@@ -37,29 +35,24 @@ class LoginControllerTest {
             userService, teamService, permissionService, loginAttemptService, passwordPolicy);
 
     @Test
-    void upgradesLegacyPasswordAndRotatesSessionOnSuccessfulLogin() {
+    void recordsLoginAndRotatesSessionOnSuccessfulLogin() {
         User user = new User();
-        user.setUserId("legacy-user");
-        user.setUserName("legacy");
-        user.setPassword(PasswordUtil.md5("secret"));
+        user.setUserId("user-1");
+        user.setUserName("alice");
+        user.setPassword(PasswordUtil.hash("secret"));
         user.setStatus(1);
-        when(userService.getUserByName("legacy")).thenReturn(user);
-        when(userService.recordSuccessfulLogin(eq("legacy-user"), anyString()))
-                .thenAnswer(invocation -> {
-                    user.setPassword(invocation.getArgument(1));
-                    return user;
-                });
+        when(userService.getUserByName("alice")).thenReturn(user);
+        when(userService.recordSuccessfulLogin("user-1")).thenReturn(user);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.getSession(true);
         String previousSessionId = request.getSession().getId();
 
-        var response = controller.login(request, new LoginRequest("legacy", "secret"));
+        var response = controller.login(request, new LoginRequest("alice", "secret"));
 
         assertEquals(200, response.get("code"));
-        assertFalse(PasswordUtil.needsRehash(user.getPassword()));
         assertSame(user, request.getSession(false).getAttribute("user"));
-        verify(userService).recordSuccessfulLogin(eq("legacy-user"), anyString());
-        verify(loginAttemptService).recordSuccess("legacy", "127.0.0.1");
+        verify(userService).recordSuccessfulLogin("user-1");
+        verify(loginAttemptService).recordSuccess("alice", "127.0.0.1");
         // MockHttpServletRequest supports session rotation just like the servlet container.
         assertFalse(previousSessionId.equals(request.getSession(false).getId()));
         @SuppressWarnings("unchecked")

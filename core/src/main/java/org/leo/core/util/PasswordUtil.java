@@ -1,16 +1,12 @@
 package org.leo.core.util;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
-/**
- * Password hashing with transparent verification of legacy MD5 records.
- */
+/** Password hashing and verification for the current PBKDF2 storage format. */
 public final class PasswordUtil {
 
     private static final String PREFIX = "pbkdf2-sha256";
@@ -36,28 +32,10 @@ public final class PasswordUtil {
                 + Base64.getEncoder().withoutPadding().encodeToString(derived);
     }
 
-    /** Legacy helper retained only for verifying existing database rows. */
-    public static String md5(String input) {
-        if (input == null) return null;
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(32);
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b & 0xff));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("MD5 algorithm not available", e);
-        }
-    }
-
     public static boolean verify(String rawPassword, String storedPassword) {
         if (rawPassword == null || storedPassword == null) return false;
         if (!storedPassword.startsWith(PREFIX + "$")) {
-            return MessageDigest.isEqual(
-                    storedPassword.getBytes(StandardCharsets.UTF_8),
-                    md5(rawPassword).getBytes(StandardCharsets.UTF_8));
+            return false;
         }
         try {
             String[] parts = storedPassword.split("\\$", -1);
@@ -74,22 +52,6 @@ public final class PasswordUtil {
             return MessageDigest.isEqual(expected, actual);
         } catch (IllegalArgumentException e) {
             return false;
-        }
-    }
-
-    public static boolean needsRehash(String storedPassword) {
-        if (storedPassword == null || !storedPassword.startsWith(PREFIX + "$")) return true;
-        String[] parts = storedPassword.split("\\$", -1);
-        if (parts.length != 4) return true;
-        try {
-            int iterations = Integer.parseInt(parts[1]);
-            byte[] salt = Base64.getDecoder().decode(parts[2]);
-            byte[] key = Base64.getDecoder().decode(parts[3]);
-            return iterations < ITERATIONS || iterations > MAX_VERIFY_ITERATIONS
-                    || salt.length < MIN_SALT_BYTES || salt.length > MAX_SALT_BYTES
-                    || key.length < MIN_KEY_BYTES || key.length > MAX_KEY_BYTES;
-        } catch (IllegalArgumentException e) {
-            return true;
         }
     }
 

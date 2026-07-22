@@ -52,7 +52,6 @@ public class PuppetManageController {
     private static final String PRIVILEGE_LEADER = "leader";
     private static final String PERMISSION_PRIVATE = "private";
     private static final String PERMISSION_TEAM = "team";
-    private static final String PERMISSION_PROTECTED = "protected";
     private static final String PERMISSION_PUBLIC = "public";
     
     // 根节点ID
@@ -408,7 +407,7 @@ public class PuppetManageController {
     }
 
     private boolean isTeamVisiblePermission(String permission) {
-        return PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED.equals(permission);
+        return PERMISSION_TEAM.equals(permission);
     }
 
     private boolean isSameTeamPuppet(Puppet puppet, User user) {
@@ -429,7 +428,7 @@ public class PuppetManageController {
         if (PERMISSION_PUBLIC.equals(permission)) {
             return PERMISSION_PUBLIC;
         }
-        if (PERMISSION_TEAM.equals(permission) || PERMISSION_PROTECTED.equals(permission)) {
+        if (PERMISSION_TEAM.equals(permission)) {
             return PERMISSION_TEAM;
         }
         return PERMISSION_PRIVATE;

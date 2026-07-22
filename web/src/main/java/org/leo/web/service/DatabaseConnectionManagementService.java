@@ -49,8 +49,9 @@ public final class DatabaseConnectionManagementService {
         PuppetDatabaseConnection connection = existing == null
                 ? newConnection(user, puppetId) : existing;
         applyScope(connection, existing, user, params);
-        applyConnection(connection, params);
-        applyMetadata(connection, params, connectionId);
+        DatabaseConnectionSpec spec = connectionSpec(params);
+        connectionService.applyConnectionSpec(connection, spec);
+        applyMetadata(connection, params, connectionId, spec);
 
         if (!connectionService.saveOrUpdate(connection)) {
             throw ApiException.serverError("保存数据库连接失败");
@@ -121,22 +122,23 @@ public final class DatabaseConnectionManagementService {
         connection.setIsPublic(assignment.publicFlag());
     }
 
-    private void applyConnection(PuppetDatabaseConnection connection, Map<String, Object> params) {
+    private DatabaseConnectionSpec connectionSpec(Map<String, Object> params) {
         Object nested = params.get("connection");
         if (!(nested instanceof Map<?, ?> source)) {
             throw ApiException.badRequest("connection 不能为空");
         }
         Map<String, Object> values = new LinkedHashMap<String, Object>();
         source.forEach((key, value) -> values.put(String.valueOf(key), value));
-        connectionService.applyConnectionSpec(connection, DatabaseConnectionSpec.fromMap(values));
+        return DatabaseConnectionSpec.fromMap(values);
     }
 
     private void applyMetadata(PuppetDatabaseConnection connection,
                                Map<String, Object> params,
-                               String connectionId) {
+                               String connectionId,
+                               DatabaseConnectionSpec spec) {
         String connectionName = firstNonBlank(params, "connectionName", "connName");
         if (connectionName == null) {
-            connectionName = generateName(connectionService.toConnectionSpec(connection));
+            connectionName = generateName(spec);
         }
         if (connectionService.existsByName(connectionName, connectionId)) {
             connectionName = connectionName + "_" + System.currentTimeMillis();
