@@ -16,6 +16,7 @@ import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -82,6 +83,28 @@ class LoginInterceptorTest {
                 requestFor(user, "/platform/disguise-manager/preview"),
                 mock(HttpServletResponse.class),
                 handlerFor(AdminOnlyHandler.class)));
+    }
+
+    @Test
+    void restrictsRequiredPasswordChangeSessionToPasswordAndLogoutEndpoints() throws Exception {
+        User user = normalUser();
+        user.setPasswordChangeRequired(1);
+        HttpServletResponse blockedResponse = responseWithWriter();
+
+        assertFalse(interceptor.preHandle(
+                requestFor(user, "/platform/puppets"),
+                blockedResponse,
+                handlerFor(DefaultAdminHandler.class)));
+        verify(blockedResponse).setStatus(HttpServletResponse.SC_FORBIDDEN);
+
+        assertTrue(interceptor.preHandle(
+                requestFor(user, "/platform/user/change-password"),
+                mock(HttpServletResponse.class),
+                handlerFor(DefaultAdminHandler.class)));
+        assertTrue(interceptor.preHandle(
+                requestFor(user, "/platform/user/logout"),
+                mock(HttpServletResponse.class),
+                handlerFor(DefaultAdminHandler.class)));
     }
 
     private static User normalUser() {

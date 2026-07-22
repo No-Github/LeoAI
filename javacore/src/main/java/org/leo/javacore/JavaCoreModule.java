@@ -12,6 +12,7 @@ import org.leo.core.runtime.PuppetNodeCreationContext;
 import org.leo.core.runtime.PuppetRuntime;
 import org.leo.core.runtime.PuppetRuntimeModule;
 import org.leo.core.util.json.JsonUtil;
+import org.leo.core.util.request.ComponentClassNameStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -31,8 +32,9 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
     public AbstractPuppetNode createNode(Puppet puppet,
                                          User user,
                                          PuppetNodeCreationContext context) throws Exception {
-        Communication communication = context.createCommunication(puppet);
-        PuppetNodeCreationContext.TransportLayers layers = context.createTransportLayers(puppet);
+        PuppetNodeCreationContext.ConnectionPlan plan = context.createConnectionPlan(puppet);
+        Communication communication = plan.getCommunication();
+        PuppetNodeCreationContext.TransportLayers layers = plan.getTransportLayers();
 
         JavaPuppetNode node = new JavaPuppetNode();
         node.setPuppet(puppet);
@@ -52,6 +54,7 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
         applyUrlStrategy(puppet, node);
         applyPaddingStrategy(puppet, node);
         applyHeaderNoiseStrategy(puppet, node);
+        applyComponentClassNameStrategy(puppet, node);
     }
 
     private void applyUrlStrategy(Puppet puppet, JavaPuppetNode node) {
@@ -86,6 +89,19 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
             if (strategy != null) node.setHeaderNoiseStrategy(strategy);
         } catch (Exception e) {
             logger.warn("解析 Java Header 噪声策略失败, puppetId={}: {}",
+                    puppet.getPuppetId(), e.getMessage());
+        }
+    }
+
+    private void applyComponentClassNameStrategy(Puppet puppet, JavaPuppetNode node) {
+        String json = puppet.getComponentClassNameStrategy();
+        if (json == null || json.isBlank()) return;
+        try {
+            ComponentClassNameStrategy strategy = (ComponentClassNameStrategy) JsonUtil.fromJsonString(
+                    json, ComponentClassNameStrategy.class);
+            if (strategy != null) node.setComponentClassNameStrategy(strategy);
+        } catch (Exception e) {
+            logger.warn("解析 Java Component 类名画像失败, puppetId={}: {}",
                     puppet.getPuppetId(), e.getMessage());
         }
     }

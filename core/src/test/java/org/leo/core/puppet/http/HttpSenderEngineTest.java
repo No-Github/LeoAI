@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -136,6 +137,31 @@ class HttpSenderEngineTest {
                         "example.test", 80, false, 1, 0, null));
     }
 
+    @Test
+    void boundsTheSharedFuzzExecutorAcrossTasks() throws Exception {
+        SaturatedEngine saturated = new SaturatedEngine();
+        String raw = "POST / HTTP/1.1\r\nHost: example.test\r\n\r\n{{value}}";
+        try {
+            Map<String, Object> first = saturated.startFuzz(raw,
+                    Map.of("value", List.of("one")),
+                    "example.test", 80, false, 1, 0, null);
+            assertTrue(saturated.requestStarted.await(2, TimeUnit.SECONDS));
+            Map<String, Object> second = saturated.startFuzz(raw,
+                    Map.of("value", List.of("two")),
+                    "example.test", 80, false, 1, 0, null);
+
+            assertThrows(RejectedExecutionException.class,
+                    () -> saturated.startFuzz(raw, Map.of("value", List.of("three")),
+                            "example.test", 80, false, 1, 0, null));
+
+            saturated.stopFuzz(String.valueOf(first.get("taskId")));
+            saturated.stopFuzz(String.valueOf(second.get("taskId")));
+        } finally {
+            saturated.releaseRequest.countDown();
+            saturated.close();
+        }
+    }
+
     private Map<String, Object> waitUntilFinished(String taskId) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         Map<String, Object> state;
@@ -210,6 +236,25 @@ class HttpSenderEngineTest {
                                                      int connectTimeout, int readTimeout,
                                                      boolean followRedirects) throws Exception {
             calls.incrementAndGet();
+            requestStarted.countDown();
+            releaseRequest.await();
+            return Map.of("code", 200, "statusCode", 200, "body", "ok");
+        }
+    }
+
+    private static final class SaturatedEngine extends HttpSenderEngine {
+        private final CountDownLatch requestStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseRequest = new CountDownLatch(1);
+
+        private SaturatedEngine() {
+            super(1, 1);
+        }
+
+        @Override
+        protected Map<String, Object> executeRequest(String method, String url,
+                                                     Map<String, String> headers, String body,
+                                                     int connectTimeout, int readTimeout,
+                                                     boolean followRedirects) throws Exception {
             requestStarted.countDown();
             releaseRequest.await();
             return Map.of("code", 200, "statusCode", 200, "body", "ok");

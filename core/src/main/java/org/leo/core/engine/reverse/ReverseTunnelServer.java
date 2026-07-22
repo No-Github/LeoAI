@@ -10,11 +10,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -42,6 +45,7 @@ public class ReverseTunnelServer {
 
     private static final long DEFAULT_POLL_INTERVAL_MS = 150L;
     private static final int  DEFAULT_MAX_CONNS        = 200;
+    private static final int  DEFAULT_DIALER_THREADS   = 8;
 
     private final ComponentInvokeCapable puppetNode;
     private final String listenId;
@@ -54,7 +58,7 @@ public class ReverseTunnelServer {
 
     private volatile boolean running;
     private Thread pollThread;
-    private ExecutorService dialerExecutor;
+    private ThreadPoolExecutor dialerExecutor;
     private Runnable onDead;
 
     private final Socks5ProxyStatistics statistics;
@@ -63,6 +67,7 @@ public class ReverseTunnelServer {
     /** connId -> 本地 Socket（指向 forwardHost:forwardPort） */
     private final ConcurrentHashMap<String, Socket> localConns =
             new ConcurrentHashMap<String, Socket>();
+    private final Set<String> pendingConns = ConcurrentHashMap.newKeySet();
 
     public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
                                 int remoteListenPort,
@@ -140,14 +145,22 @@ public class ReverseTunnelServer {
         // START_LISTEN 已成功，后续初始化若失败必须回滚
         try {
             running = true;
-            dialerExecutor = Executors.newCachedThreadPool(new ThreadFactory() {
+            int dialerThreads = Math.max(1, Math.min(DEFAULT_DIALER_THREADS, maxConns));
+            dialerExecutor = new ThreadPoolExecutor(
+                    dialerThreads,
+                    dialerThreads,
+                    60L,
+                    TimeUnit.SECONDS,
+                    new ArrayBlockingQueue<Runnable>(maxConns),
+                    new ThreadFactory() {
                 private final AtomicInteger idx = new AtomicInteger();
                 public Thread newThread(Runnable r) {
                     Thread t = new Thread(r, "ReverseTunnel-Dialer-" + remoteListenPort + "-" + idx.incrementAndGet());
                     t.setDaemon(true);
                     return t;
                 }
-            });
+            }, new ThreadPoolExecutor.AbortPolicy());
+            dialerExecutor.allowCoreThreadTimeOut(true);
 
             pollThread = new Thread(new AcceptPollLoop(), "ReverseTunnel-Poll-" + remoteListenPort);
             pollThread.setDaemon(true);
@@ -214,8 +227,9 @@ public class ReverseTunnelServer {
             try { e.getValue().close(); } catch (Exception ignored) {}
         }
         localConns.clear();
+        pendingConns.clear();
 
-        ExecutorService executor = dialerExecutor;
+        ThreadPoolExecutor executor = dialerExecutor;
         dialerExecutor = null;
         if (executor != null) {
             try { executor.shutdownNow(); } catch (Exception ignored) {}
@@ -231,7 +245,49 @@ public class ReverseTunnelServer {
             return false;
         }
         localConns.put(connId, socket);
+        pendingConns.remove(connId);
         return true;
+    }
+
+    void completeLocalConnection(String connId, Socket socket) {
+        pendingConns.remove(connId);
+        if (socket != null) localConns.remove(connId, socket);
+        else localConns.remove(connId);
+        if (statistics != null) statistics.removeConnection(connId);
+        if (socket != null) {
+            try { socket.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void scheduleDialer(String connId, String clientAddr) {
+        if (!pendingConns.add(connId)) return;
+        if (!running || localConns.size() + pendingConns.size() > maxConns) {
+            pendingConns.remove(connId);
+            closeRemoteConnection(connId);
+            return;
+        }
+        ThreadPoolExecutor executor = dialerExecutor;
+        if (executor == null) {
+            pendingConns.remove(connId);
+            closeRemoteConnection(connId);
+            return;
+        }
+        try {
+            executor.execute(new DialerTask(this, connId, clientAddr));
+        } catch (RejectedExecutionException error) {
+            pendingConns.remove(connId);
+            closeRemoteConnection(connId);
+            logger.debug("反向隧道拨号队列繁忙，已关闭连接: connId={}", connId);
+        }
+    }
+
+    void closeRemoteConnection(String connId) {
+        try {
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("op", Integer.valueOf(OP_CLOSE));
+            params.put("connId", connId);
+            puppetNode.invokeComponent("ReverseTunnelComponent", params);
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -261,7 +317,7 @@ public class ReverseTunnelServer {
                                     final String connId = (String) info.get("connId");
                                     final String clientAddr = (String) info.get("clientAddr");
                                     if (connId == null) continue;
-                                    if (localConns.size() >= maxConns) {
+                                    if (localConns.size() + pendingConns.size() >= maxConns) {
                                         // 超出连接数上限，通知 puppet 关闭该连接
                                         logger.warn("反向隧道连接数已达上限 {}, 拒绝新连接 connId={}", maxConns, connId);
                                         try {
@@ -272,7 +328,7 @@ public class ReverseTunnelServer {
                                         } catch (Exception ignored) {}
                                         continue;
                                     }
-                                    dialerExecutor.submit(new DialerTask(ReverseTunnelServer.this, connId, clientAddr));
+                                    scheduleDialer(connId, clientAddr);
                                 }
                             }
                         }

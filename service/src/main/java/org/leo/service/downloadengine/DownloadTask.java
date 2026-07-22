@@ -1,17 +1,21 @@
 package org.leo.service.downloadengine;
 
 import org.leo.core.puppet.capability.FileCapable;
+import org.leo.service.concurrent.ServiceTaskExecutor;
 
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,6 +33,7 @@ public class DownloadTask {
     private final String sessionId;
     private final String taskId;
     private final DownloadStore store;
+    private final ServiceTaskExecutor taskExecutor;
 
     private final String filePath;
     private final int threads;
@@ -59,7 +64,8 @@ public class DownloadTask {
     private volatile long startAtMs;
     private volatile long endAtMs;
 
-    private ExecutorService executor;
+    private final List<Future<?>> workerFutures =
+            Collections.synchronizedList(new ArrayList<Future<?>>());
     private final Object writeLock = new Object();
 
     private DownloadTask(FileCapable fileNode,
@@ -72,6 +78,7 @@ public class DownloadTask {
                          long expectedLength,
                          String expectedMd5,
                          DownloadStore store,
+                         ServiceTaskExecutor taskExecutor,
                          BitSet doneChunks,
                          int totalChunks) {
         this.fileNode = fileNode;
@@ -85,6 +92,7 @@ public class DownloadTask {
         this.expectedLength = expectedLength;
         this.expectedMd5 = expectedMd5;
         this.store = store;
+        this.taskExecutor = taskExecutor;
         this.doneChunks = doneChunks;
         this.inProgressChunks = new BitSet(totalChunks);
         this.totalChunks = totalChunks;
@@ -100,14 +108,15 @@ public class DownloadTask {
                                                int chunkSize,
                                                long expectedLength,
                                                String expectedMd5,
-                                               DownloadStore store) throws Exception {
+                                               DownloadStore store,
+                                               ServiceTaskExecutor taskExecutor) throws Exception {
         Map<String, Object> meta = store.readMeta();
         if (meta != null) {
             String metaMd5 = Objects.toString(meta.get("expectedMd5"), null);
             long metaLen = toLong(meta.get("expectedLength"));
             String metaPath = Objects.toString(meta.get("filePath"), null);
             if (Objects.equals(metaPath, filePath) && Objects.equals(metaMd5, expectedMd5) && metaLen == expectedLength) {
-                return loadFromDisk(fileNode, sessionId, taskId, store);
+                return loadFromDisk(fileNode, sessionId, taskId, store, taskExecutor);
             }
         }
 
@@ -116,7 +125,8 @@ public class DownloadTask {
         BitSet done = new BitSet(totalChunks);
 
         DownloadTask task = new DownloadTask(
-                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
+                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize,
+                expectedLength, expectedMd5, store, taskExecutor, done, totalChunks
         );
         task.persistMeta(State.NEW);
         task.persistChunks();
@@ -124,7 +134,11 @@ public class DownloadTask {
         return task;
     }
 
-    public static DownloadTask loadFromDisk(FileCapable fileNode, String sessionId, String taskId, DownloadStore store) throws Exception {
+    public static DownloadTask loadFromDisk(FileCapable fileNode,
+                                            String sessionId,
+                                            String taskId,
+                                            DownloadStore store,
+                                            ServiceTaskExecutor taskExecutor) throws Exception {
         Map<String, Object> meta = store.readMeta();
         if (meta == null) {
             throw new IllegalStateException("任务元数据缺失: " + taskId);
@@ -145,7 +159,8 @@ public class DownloadTask {
         }
 
         DownloadTask task = new DownloadTask(
-                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize, expectedLength, expectedMd5, store, done, totalChunks
+                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize,
+                expectedLength, expectedMd5, store, taskExecutor, done, totalChunks
         );
         task.createAtMs = toLong(meta.get("createAtMs"));
         task.lastError = Objects.toString(meta.get("lastError"), null);
@@ -164,12 +179,6 @@ public class DownloadTask {
         if (state == State.COMPLETED) {
             return;
         }
-        this.executor = Executors.newFixedThreadPool(threads, r -> {
-            Thread t = new Thread(r);
-            t.setName("download-" + taskId);
-            t.setDaemon(true);
-            return t;
-        });
         this.state = State.RUNNING;
         this.startAtMs = System.currentTimeMillis();
         this.startAtForSpeedMs.set(this.startAtMs);
@@ -181,8 +190,15 @@ public class DownloadTask {
             return;
         }
 
-        for (int i = 0; i < threads; i++) {
-            executor.submit(this::workerLoop);
+        try {
+            workerFutures.addAll(taskExecutor.submitDownloadWorkers(threads, this::workerLoop));
+            if (cancelled.get() || state == State.COMPLETED
+                    || state == State.FAILED || state == State.CANCELLED) {
+                cancelWorkers();
+            }
+        } catch (RejectedExecutionException error) {
+            cancelled.set(true);
+            fail("下载任务队列繁忙");
         }
     }
 
@@ -190,10 +206,7 @@ public class DownloadTask {
         cancelled.set(true);
         state = State.CANCELLED;
         persistMetaQuiet(State.CANCELLED);
-        ExecutorService ex = executor;
-        if (ex != null) {
-            ex.shutdownNow();
-        }
+        cancelWorkers();
     }
 
     public Map<String, Object> snapshot() {
@@ -383,7 +396,7 @@ public class DownloadTask {
                 state = State.COMPLETED;
                 endAtMs = System.currentTimeMillis();
                 persistMeta(State.COMPLETED);
-                shutdownExecutor();
+                cancelWorkers();
             } catch (Exception e) {
                 fail("完成阶段失败: " + e.getMessage());
             }
@@ -403,13 +416,13 @@ public class DownloadTask {
         state = State.FAILED;
         endAtMs = System.currentTimeMillis();
         persistMetaQuiet(State.FAILED);
-        shutdownExecutor();
+        cancelWorkers();
     }
 
-    private void shutdownExecutor() {
-        ExecutorService ex = executor;
-        if (ex != null) {
-            ex.shutdownNow();
+    private void cancelWorkers() {
+        synchronized (workerFutures) {
+            taskExecutor.cancelDownloadWorkers(workerFutures);
+            workerFutures.clear();
         }
     }
 

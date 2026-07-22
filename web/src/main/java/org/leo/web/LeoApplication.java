@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 
 /**
- * LeoSpring 主应用类
+ * LeoAI 主应用类
  * 启用定时任务功能，支持日志清理等后台任务
  *
  * @author LeoSpring

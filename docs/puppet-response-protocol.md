@@ -310,11 +310,12 @@ Java插件参数为 `pluginBytecode, pluginParam`；PHP插件则使用 `source, 
 | FileComponent | action 10 md5 | `code, md5, filePath, fileSize` |
 | FileDownloadComponent | 无 | `code, data, offset, length, bytesRead, nextOffset, isComplete, msg?` |
 | FileUploadComponent | 无 | `code, bytesWritten, nextOffset, msg?` |
-| ResourceComponent | 无 | `code, resourcePath, size, data, bytecode, msg?` |
+| ResourceComponent | 无 | puppet: `code, resourcePath, size, data, msg?`；server: 同时提供 `data, bytecode` |
 | CompressComponent | 无 | `code, format, sourcePath, zipFile, msg` |
 | DecompressComponent | 无 | `code, format, fileCount, dirCount, totalSize` 加格式相关路径字段 |
 
-`ResourceComponent` 同时返回 `data` 与 `bytecode`，两者保存同一字节内容，用于兼容不同历史调用方。
+`ResourceComponent` 在 puppet 侧仅传输一份 `data`；`ResourceService` 在 server 侧将同一对象映射到
+`data` 与 `bytecode`，避免大字节数组重复序列化，同时保留历史调用兼容性。
 
 FileEnhanceComponent 使用数字 action：
 

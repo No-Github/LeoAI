@@ -26,7 +26,7 @@ public interface UserMapper {
     @Select("SELECT * FROM users")
     List<User> getAllUser();
 
-    @Insert("INSERT INTO users (user_id, user_name, password, privilege, email, phone, status, last_login_time, login_count, create_time, update_time, team_id, remark) VALUES (#{userId}, #{userName}, #{password}, #{privilege}, #{email}, #{phone}, #{status}, #{lastLoginTime}, #{loginCount}, #{createTime}, #{updateTime}, #{teamId}, #{remark})")
+    @Insert("INSERT INTO users (user_id, user_name, password, privilege, email, phone, status, last_login_time, login_count, password_change_required, create_time, update_time, team_id, remark) VALUES (#{userId}, #{userName}, #{password}, #{privilege}, #{email}, #{phone}, #{status}, #{lastLoginTime}, #{loginCount}, #{passwordChangeRequired}, #{createTime}, #{updateTime}, #{teamId}, #{remark})")
     boolean insertUser(@Param("userId") String userId, 
                       @Param("userName") String userName,
                       @Param("password") String password, 
@@ -36,6 +36,7 @@ public interface UserMapper {
                       @Param("status") Integer status,
                       @Param("lastLoginTime") String lastLoginTime,
                       @Param("loginCount") Integer loginCount,
+                      @Param("passwordChangeRequired") Integer passwordChangeRequired,
                       @Param("createTime") String createTime,
                       @Param("updateTime") String updateTime,
                       @Param("teamId") String teamId,
@@ -44,7 +45,7 @@ public interface UserMapper {
     @Delete("DELETE FROM users WHERE user_id = #{userId}")
     boolean delUser(@Param("userId") String userId);
 
-    @Update("UPDATE users SET user_name=#{userName}, password=#{password}, privilege=#{privilege}, email=#{email}, phone=#{phone}, status=#{status}, last_login_time=#{lastLoginTime}, login_count=#{loginCount}, update_time=#{updateTime}, team_id=#{teamId}, remark=#{remark} WHERE user_id=#{userId}")
+    @Update("UPDATE users SET user_name=#{userName}, password=#{password}, privilege=#{privilege}, email=#{email}, phone=#{phone}, status=#{status}, last_login_time=#{lastLoginTime}, login_count=#{loginCount}, password_change_required=#{passwordChangeRequired}, update_time=#{updateTime}, team_id=#{teamId}, remark=#{remark} WHERE user_id=#{userId}")
     boolean updateUserById(@Param("userName") String userName,
                           @Param("password") String password, 
                           @Param("privilege") String privilege,
@@ -53,6 +54,7 @@ public interface UserMapper {
                           @Param("status") Integer status,
                           @Param("lastLoginTime") String lastLoginTime,
                           @Param("loginCount") Integer loginCount,
+                          @Param("passwordChangeRequired") Integer passwordChangeRequired,
                           @Param("updateTime") String updateTime,
                           @Param("teamId") String teamId,
                           @Param("remark") String remark,

@@ -41,14 +41,15 @@ import java.util.Map;
 public class PuppetNodeFactory implements PuppetNodeCreationContext {
 
     private static final Logger logger = LoggerFactory.getLogger(PuppetNodeFactory.class);
-    private static final int MAX_PARENT_DEPTH = 100;
     private static final int PROXY_ENABLED = 1;
     private final PuppetService puppetService;
+    private final PuppetRouteResolver routeResolver;
     private final Map<PuppetRuntime, PuppetRuntimeModule> runtimeModules;
 
     public PuppetNodeFactory(PuppetService puppetService,
                              List<PuppetRuntimeModule> runtimeModules) {
         this.puppetService = puppetService;
+        this.routeResolver = new PuppetRouteResolver(puppetService);
         this.runtimeModules = indexRuntimeModules(runtimeModules);
     }
 
@@ -95,17 +96,7 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
     }
 
     public Puppet resolveTransportPuppet(Puppet puppet) {
-        Puppet current = puppet;
-        int depth = 0;
-        while (current != null && depth < MAX_PARENT_DEPTH) {
-            String parentId = current.getParentPuppetId();
-            if (parentId == null || parentId.isBlank() || "root".equals(parentId)) {
-                return current;
-            }
-            current = puppetService.findPuppetById(parentId);
-            depth++;
-        }
-        return puppet;
+        return routeResolver.resolve(puppet).transport();
     }
 
     public Proxy getProxy(Puppet puppet) {
@@ -147,7 +138,8 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
 
     @Override
     public Communication createCommunication(Puppet puppet) throws Exception {
-        Puppet transportPuppet = resolveTransportPuppet(puppet);
+        PuppetRouteResolver.Route route = routeResolver.resolve(puppet);
+        Puppet transportPuppet = route.transport();
         Communication communication = getCommunication(transportPuppet, getProxy(transportPuppet));
         if (communication == null) {
             throw new IllegalArgumentException("无法创建通信连接，协议不支持: "
@@ -159,14 +151,27 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
 
     @Override
     public TransportLayers createTransportLayers(Puppet puppet) throws Exception {
+        return createTransportLayers(routeResolver.resolve(puppet));
+    }
+
+    @Override
+    public ConnectionPlan createConnectionPlan(Puppet puppet) throws Exception {
+        PuppetRouteResolver.Route route = routeResolver.resolve(puppet);
+        Puppet transportPuppet = route.transport();
+        Communication communication = getCommunication(transportPuppet, getProxy(transportPuppet));
+        if (communication == null) {
+            throw new IllegalArgumentException("无法创建通信连接，协议不支持: "
+                    + transportPuppet.getProtocol());
+        }
+        applyTlsFingerprintStrategy(route.requested(), communication);
+        return new ConnectionPlan(communication, createTransportLayers(route));
+    }
+
+    private TransportLayers createTransportLayers(PuppetRouteResolver.Route route) {
         List<RequestLayer> requestLayers = new ArrayList<>();
         List<ResponseLayer> responseLayers = new ArrayList<>();
-
-        Puppet tempPuppet = puppet;
-        int depth = 0;
-
-        while (tempPuppet != null && depth < MAX_PARENT_DEPTH) {
-            depth++;
+        List<Puppet> chain = route.chain();
+        for (Puppet tempPuppet : chain) {
             String reqDisguiseId = tempPuppet.getReqDisguiseId();
             if (reqDisguiseId != null) {
                 Disguise reqDisguise = DisguiseManager.getInstance().getDisguiseById(reqDisguiseId);
@@ -175,24 +180,17 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
                             tempPuppet.getConnLink(),
                             parseStringHeaders(tempPuppet.getHeaders()),
                             reqDisguise);
-                    requestLayers.add(0, requestLayer);
+                    requestLayers.add(requestLayer);
                 }
             }
             String respDisguiseId = tempPuppet.getRespDisguiseId();
             if (respDisguiseId != null) {
                 Disguise respDisguise = DisguiseManager.getInstance().getDisguiseById(respDisguiseId);
                 if (respDisguise != null) {
-                    responseLayers.add(new ResponseLayer(respDisguise));
+                    responseLayers.add(0, new ResponseLayer(respDisguise));
                 }
             }
-            String parentId = tempPuppet.getParentPuppetId();
-            if (parentId == null || "root".equals(parentId)) {
-                break;
-            }
-            tempPuppet = puppetService.findPuppetById(parentId);
         }
-        Collections.reverse(requestLayers);
-        Collections.reverse(responseLayers);
         return new TransportLayers(requestLayers, responseLayers);
     }
 

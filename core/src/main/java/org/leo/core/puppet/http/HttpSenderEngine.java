@@ -2,6 +2,7 @@ package org.leo.core.puppet.http;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 
@@ -19,11 +20,42 @@ public abstract class HttpSenderEngine implements AutoCloseable {
 
     private static final int MAX_FUZZ_THREADS = 50;
     private static final int MAX_FUZZ_COMBINATIONS = 10000;
+    private static final int MAX_ACTIVE_FUZZ_TASKS = 16;
+    private static final int FUZZ_QUEUE_CAPACITY = 256;
     private static final long TASK_TTL_MILLIS = 30L * 60L * 1000L;
 
     private final ConcurrentHashMap<String, HttpFuzzTask> fuzzTasks =
             new ConcurrentHashMap<String, HttpFuzzTask>();
+    private final ThreadPoolExecutor fuzzExecutor;
     private boolean closed;
+
+    protected HttpSenderEngine() {
+        this(MAX_FUZZ_THREADS, FUZZ_QUEUE_CAPACITY);
+    }
+
+    HttpSenderEngine(int workerThreads, int queueCapacity) {
+        if (workerThreads < 1 || queueCapacity < 1) {
+            throw new IllegalArgumentException("HTTP fuzz executor sizing values must be positive");
+        }
+        final AtomicInteger sequence = new AtomicInteger();
+        this.fuzzExecutor = new ThreadPoolExecutor(
+                workerThreads,
+                workerThreads,
+                60L,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<Runnable>(queueCapacity),
+                new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable runnable) {
+                        Thread thread = new Thread(runnable,
+                                "http-fuzz-" + sequence.incrementAndGet());
+                        thread.setDaemon(true);
+                        return thread;
+                    }
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+        this.fuzzExecutor.allowCoreThreadTimeOut(true);
+    }
 
 
     protected abstract Map<String, Object> executeRequest(
@@ -39,6 +71,9 @@ public abstract class HttpSenderEngine implements AutoCloseable {
         for (HttpFuzzTask task : fuzzTasks.values()) {
             task.stop();
         }
+        fuzzTasks.clear();
+        fuzzExecutor.purge();
+        fuzzExecutor.shutdownNow();
     }
 
     // ==================== Repeater：单包发送 ====================
@@ -134,6 +169,13 @@ public abstract class HttpSenderEngine implements AutoCloseable {
             throw new IllegalStateException("HTTP sender engine is closed");
         }
         cleanupExpiredTasks();
+        int activeTasks = 0;
+        for (HttpFuzzTask existing : fuzzTasks.values()) {
+            if (existing.isRunning()) activeTasks++;
+        }
+        if (activeTasks >= MAX_ACTIVE_FUZZ_TASKS) {
+            throw new RejectedExecutionException("too many active HTTP fuzz tasks");
+        }
 
         if (rawHttp == null || rawHttp.trim().length() == 0) {
             throw new IllegalArgumentException("rawHttp cannot be empty");
@@ -164,15 +206,18 @@ public abstract class HttpSenderEngine implements AutoCloseable {
         HttpFuzzTask task = new HttpFuzzTask(taskId, combinations.size(), System.currentTimeMillis());
         fuzzTasks.put(taskId, task);
 
-        ExecutorService pool = Executors.newFixedThreadPool(threads);
-        task.attachExecutor(pool);
+        AtomicInteger nextIndex = new AtomicInteger();
+        List<Future<?>> workers = new ArrayList<Future<?>>(threads);
         try {
-            for (int i = 0; i < combinations.size(); i++) {
-                pool.execute(new FuzzWorker(this, task, rawHttp, combinations.get(i),
-                        targetHost, targetPort, useTls, delayMs, i, matchRules));
+            for (int i = 0; i < threads; i++) {
+                workers.add(fuzzExecutor.submit(new FuzzRunner(
+                        this, task, rawHttp, combinations, nextIndex,
+                        targetHost, targetPort, useTls, delayMs, matchRules)));
             }
-            pool.shutdown();
+            task.attachWorkers(workers);
         } catch (RuntimeException error) {
+            for (Future<?> worker : workers) worker.cancel(true);
+            fuzzExecutor.purge();
             task.stop();
             fuzzTasks.remove(taskId, task);
             throw error;
@@ -215,6 +260,7 @@ public abstract class HttpSenderEngine implements AutoCloseable {
         }
 
         boolean stopped = task.stop();
+        fuzzExecutor.purge();
 
         HashMap<String, Object> result = new HashMap<String, Object>();
         result.put("code", Integer.valueOf(200));
@@ -223,6 +269,46 @@ public abstract class HttpSenderEngine implements AutoCloseable {
     }
 
     // ==================== 内部：Fuzzer Worker ====================
+
+    /** A bounded number of runners pull combinations from one task-local cursor. */
+    static class FuzzRunner implements Runnable {
+        private final HttpSenderEngine service;
+        private final HttpFuzzTask task;
+        private final String rawTemplate;
+        private final List<Map<String, String>> combinations;
+        private final AtomicInteger nextIndex;
+        private final String host;
+        private final int port;
+        private final boolean tls;
+        private final int delayMs;
+        private final Map<String, Object> matchRules;
+
+        FuzzRunner(HttpSenderEngine service, HttpFuzzTask task, String rawTemplate,
+                   List<Map<String, String>> combinations, AtomicInteger nextIndex,
+                   String host, int port, boolean tls, int delayMs,
+                   Map<String, Object> matchRules) {
+            this.service = service;
+            this.task = task;
+            this.rawTemplate = rawTemplate;
+            this.combinations = combinations;
+            this.nextIndex = nextIndex;
+            this.host = host;
+            this.port = port;
+            this.tls = tls;
+            this.delayMs = delayMs;
+            this.matchRules = matchRules;
+        }
+
+        @Override
+        public void run() {
+            while (!task.isStopped()) {
+                int index = nextIndex.getAndIncrement();
+                if (index >= combinations.size()) return;
+                new FuzzWorker(service, task, rawTemplate, combinations.get(index),
+                        host, port, tls, delayMs, index, matchRules).run();
+            }
+        }
+    }
 
     /**
      * Fuzzer 工作线程（独立类避免匿名内部类）

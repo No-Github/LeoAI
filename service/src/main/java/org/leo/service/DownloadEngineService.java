@@ -1,10 +1,12 @@
 package org.leo.service;
 
+import jakarta.annotation.PreDestroy;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.downloadengine.DownloadStore;
 import org.leo.service.downloadengine.DownloadTask;
+import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -30,6 +32,11 @@ public class DownloadEngineService {
     private static final long FINISHED_TASK_RETAIN_MS = 30 * 60 * 1000L; // 30 分钟
 
     private final ConcurrentHashMap<String, DownloadTask> tasksById = new ConcurrentHashMap<>();
+    private final ServiceTaskExecutor taskExecutor;
+
+    public DownloadEngineService(ServiceTaskExecutor taskExecutor) {
+        this.taskExecutor = taskExecutor;
+    }
 
     public Map<String, Object> startOrResume(FileCapable fileNode,
                                              String userId,
@@ -82,7 +89,8 @@ public class DownloadEngineService {
                 cs,
                 expectedLength,
                 expectedMd5,
-                store
+                store,
+                taskExecutor
         );
         DownloadTask prev = tasksById.putIfAbsent(taskId, task);
         if (prev != null) {
@@ -117,7 +125,8 @@ public class DownloadEngineService {
         if (!store.getTaskDir().exists()) {
             throw new IllegalArgumentException("任务不存在: " + taskId);
         }
-        DownloadTask task = DownloadTask.loadFromDisk(fileNode, sessionId, taskId, store);
+        DownloadTask task = DownloadTask.loadFromDisk(
+                fileNode, sessionId, taskId, store, taskExecutor);
         DownloadTask prev = tasksById.putIfAbsent(taskId, task);
         if (prev != null) {
             prev.ensureStarted();
@@ -249,6 +258,12 @@ public class DownloadEngineService {
             }
         }
         return evicted;
+    }
+
+    @PreDestroy
+    public void close() {
+        for (DownloadTask task : tasksById.values()) task.cancel();
+        tasksById.clear();
     }
 
     private static boolean isTerminalState(DownloadTask.State s) {

@@ -62,6 +62,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     private void runMigrations() {
         ensureDatabaseConnectionScope();
         migrateLegacyDatabaseConnections();
+        addColumnIfMissing("puppets", "component_class_name_strategy", "TEXT");
         addColumnIfMissing("ai_messages", "plan_json", "TEXT");
         addColumnIfMissing("ai_messages", "nodes_json", "TEXT");
         addColumnIfMissing("ai_messages", "attachments_json", "TEXT");

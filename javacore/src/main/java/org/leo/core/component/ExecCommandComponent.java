@@ -258,8 +258,8 @@ public class ExecCommandComponent implements Runnable {
         }
         if (existing != null) return existing;
 
-        Thread worker = new Thread(this,
-                getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+        Object hostId = params != null ? params.get("hostId") : null;
+        Thread worker = new Thread(this, workerThreadName(hostId, processId));
         worker.setDaemon(true);
         THREAD_PARAMS.put(worker, processId);
         try {
@@ -703,6 +703,12 @@ public class ExecCommandComponent implements Runnable {
                     + System.getProperty("user.dir", "") + "|" + System.currentTimeMillis();
             return Integer.toHexString(value.hashCode());
         }
+    }
+
+    private static String workerThreadName(Object hostId, String processId) {
+        String seed = String.valueOf(hostId) + "|" + processId + "|" + INSTANCE_ID;
+        return "worker-" + Integer.toHexString(seed.hashCode()) + "-"
+                + THREAD_SEQUENCE.incrementAndGet();
     }
 
     private String getStringParam(String key) {

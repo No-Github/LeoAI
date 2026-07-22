@@ -64,6 +64,9 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
 
     private static final int  DEFAULT_THREADS        = 5;
     private static final int  MAX_THREADS            = 64;
+    private static final int  MAX_TASKS              = 64;
+    private static final int  MAX_TARGETS            = 4096;
+    private static final int  MAX_REQUESTS           = 256;
     private static final int  DEFAULT_TIMEOUT        = 3000;
     private static final int  DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
     private static final int  MAX_TIMEOUT            = 300000;
@@ -81,6 +84,7 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
 
     private String taskId;
     private Map    target;
+    private String threadSeed;
 
     // ==================== 构造器 ====================
 
@@ -203,6 +207,9 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
 
     private String startScan(Map p) {
         cleanupStoppedTasks();
+        if (tasks.size() >= MAX_TASKS) {
+            throw new IllegalStateException("too many fingerprint tasks, max=" + MAX_TASKS);
+        }
 
         List targets  = requireList(p.get("targets"),     "targets");
         Map  rule     = requireMap (p.get("rule"),        "rule");
@@ -212,6 +219,12 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
         if (script.trim().length() == 0) throw new IllegalArgumentException("rule.script cannot be empty");
         if (targets.isEmpty())           throw new IllegalArgumentException("targets cannot be empty");
         if (requests.isEmpty())          throw new IllegalArgumentException("rule.requests cannot be empty");
+        if (targets.size() > MAX_TARGETS) {
+            throw new IllegalArgumentException("too many targets, max=" + MAX_TARGETS);
+        }
+        if (requests.size() > MAX_REQUESTS) {
+            throw new IllegalArgumentException("too many rule requests, max=" + MAX_REQUESTS);
+        }
 
         for (int i = 0; i < targets.size(); i++) {
             if (!(targets.get(i) instanceof Map)) {
@@ -225,6 +238,7 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
         if (threads > targets.size()) threads = targets.size();
 
         String id = UUID.randomUUID().toString();
+        threadSeed = stringVal(p.get("hostId")) + "|" + id;
         HashMap task = new HashMap();
         task.put("taskId",    id);
         task.put("status",    STATE_RUNNING);
@@ -258,7 +272,14 @@ public class FingerprintComponent implements Runnable, InvocationHandler, Thread
     }
 
     public Thread newThread(Runnable task) {
-        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+        Thread thread = new Thread(task, workerThreadName(threadSeed));
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    private static String workerThreadName(String seed) {
+        return "worker-" + Integer.toHexString(String.valueOf(seed).hashCode()) + "-"
+                + THREAD_SEQUENCE.incrementAndGet();
     }
 
     // ==================== 暂停 / 恢复 / 停止 ====================

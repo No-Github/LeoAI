@@ -99,7 +99,7 @@ public class LoginController {
         request.changeSessionId();
         session.setAttribute(SESSION_ATTR_USER, user);
         logger.info("用户登录成功: {} ({})", username, user.getPrivilege());
-        return ApiResponse.success();
+        return ApiResponse.success(authenticationView(user));
     }
 
     /**
@@ -131,6 +131,7 @@ public class LoginController {
             data.put("userName",  user.getUserName());
             data.put("privilege", user.getPrivilege());
             data.put("teamId",    user.getTeamId());
+            data.put("passwordChangeRequired", user.requiresPasswordChange());
         }
         return ApiResponse.success(data);
     }
@@ -202,7 +203,10 @@ public class LoginController {
         }
 
         user.setPassword(PasswordUtil.hash(newPassword));
-        userService.updateUser(user);
+        user.setPasswordChangeRequired(0);
+        if (!userService.updateUser(user)) {
+            throw ApiException.serverError("密码修改失败");
+        }
 
         // 更新 Session 中的用户信息
         request.getSession().setAttribute(SESSION_ATTR_USER, user);
@@ -233,6 +237,16 @@ public class LoginController {
         data.put("loginCount", user.getLoginCount());
         data.put("createTime", user.getCreateTime());
         data.put("updateTime", user.getUpdateTime());
+        return data;
+    }
+
+    private Map<String, Object> authenticationView(User user) {
+        HashMap<String, Object> data = new HashMap<>();
+        data.put("userId", user.getUserId());
+        data.put("userName", user.getUserName());
+        data.put("privilege", user.getPrivilege());
+        data.put("teamId", user.getTeamId());
+        data.put("passwordChangeRequired", user.requiresPasswordChange());
         return data;
     }
 

@@ -133,6 +133,7 @@ public class ScreenController {
 
             // 调用组件检查环境
             HashMap<String, Object> checkParams = new HashMap<String, Object>();
+            checkParams.put("probe", Boolean.TRUE);
             HashMap<String, Object> checkResult = (HashMap<String, Object>) componentNode.invokeComponent(
                     "ScreenComponent",
                     checkParams

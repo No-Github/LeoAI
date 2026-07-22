@@ -89,6 +89,7 @@ public class PuppetService {
                 puppet.getPaddingStrategy(),
                 puppet.getHeaderNoiseStrategy(),
                 puppet.getTlsFingerprintStrategy(),
+                puppet.getComponentClassNameStrategy(),
                 puppet.getType()
         );
     }
@@ -124,6 +125,7 @@ public class PuppetService {
                 puppet.getPaddingStrategy(),
                 puppet.getHeaderNoiseStrategy(),
                 puppet.getTlsFingerprintStrategy(),
+                puppet.getComponentClassNameStrategy(),
                 puppet.getType()
         );
     }

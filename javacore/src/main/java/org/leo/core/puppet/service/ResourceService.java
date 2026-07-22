@@ -18,12 +18,23 @@ public class ResourceService extends ComponentService {
         String resourcePath = className.replace('.', '/') + ".class";
         HashMap<String, Object> componentParams = new HashMap<String, Object>();
         componentParams.put("resourcePath", resourcePath);
-        return invokeComponent("ResourceComponent", componentParams);
+        return normalizeResourceResponse(invokeComponent("ResourceComponent", componentParams));
     }
 
     public Map<String, Object> getResource(String resourcePath) throws Exception {
         HashMap<String, Object> componentParams = new HashMap<String, Object>();
         componentParams.put("resourcePath", resourcePath);
-        return invokeComponent("ResourceComponent", componentParams);
+        return normalizeResourceResponse(invokeComponent("ResourceComponent", componentParams));
+    }
+
+    static Map<String, Object> normalizeResourceResponse(Map<String, Object> response) {
+        if (response == null) return null;
+        Object bytes = response.get("data");
+        if (bytes == null) bytes = response.get("bytecode");
+        if (bytes != null) {
+            response.put("data", bytes);
+            response.put("bytecode", bytes);
+        }
+        return response;
     }
 }

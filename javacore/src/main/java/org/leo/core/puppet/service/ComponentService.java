@@ -18,6 +18,7 @@ import org.leo.core.rpc.PuppetRpcResponse;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.core.util.javassist.CloneWithJavassist;
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.ComponentClassNameStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +53,9 @@ public class ComponentService {
 
     /** per-puppet Header 噪声注入策略 */
     private HeaderNoiseStrategy headerNoiseStrategy;
+
+    /** per-puppet Component 运行时类名画像 */
+    private ComponentClassNameStrategy componentClassNameStrategy;
 
     /** Header 噪声生成器（懒初始化） */
     private volatile HeaderNoiseGenerator headerNoiseGenerator;
@@ -140,6 +144,14 @@ public class ComponentService {
 
     public HeaderNoiseStrategy getHeaderNoiseStrategy() {
         return headerNoiseStrategy;
+    }
+
+    public void setComponentClassNameStrategy(ComponentClassNameStrategy strategy) {
+        this.componentClassNameStrategy = strategy;
+    }
+
+    public ComponentClassNameStrategy getComponentClassNameStrategy() {
+        return componentClassNameStrategy;
     }
 
     private synchronized void initPipeline() throws Exception {
@@ -259,7 +271,9 @@ public class ComponentService {
 
 
         String componentSeed = transportSeed() + "|" + componentName;
-        String newClassName = ClassNameGenerator.generateComponentClassName(transportSeed(), componentName);
+        String newClassName = componentClassNameStrategy == null
+                ? ClassNameGenerator.generateComponentClassName(transportSeed(), componentName)
+                : componentClassNameStrategy.resolve(transportSeed(), componentName);
         byte[] bytecode = CloneWithJavassist.cloneClass(componentName, newClassName,
                 ClassNameGenerator.stableSeed(componentSeed));
 

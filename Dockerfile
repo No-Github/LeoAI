@@ -2,7 +2,7 @@ ARG RUNTIME_IMAGE=eclipse-temurin:17-jre
 
 FROM ${RUNTIME_IMAGE}
 
-ARG JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v0.0.7/LeoAi-0.0.7-SNAPSHOT.jar
+ARG JAR_URL=https://github.com/cha0upup/LeoAI/releases/download/v1.0.0/LeoAi-1.0.0.jar
 
 ENV TZ=Asia/Shanghai \
     JAVA_OPTS="" \

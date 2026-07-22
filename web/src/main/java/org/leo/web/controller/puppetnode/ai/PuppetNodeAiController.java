@@ -13,6 +13,7 @@ import org.leo.web.dto.puppetnode.ai.*;
 import org.leo.web.service.PuppetNodeAiThreadService;
 import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
+import org.leo.web.util.AiSseExecutor;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,31 +23,25 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 @RestController
 @RequestMapping("/puppet-node/ai")
 public class PuppetNodeAiController {
 
-    /** 专用线程池，处理 SSE chat 异步请求。 */
-    private static final ExecutorService SSE_EXECUTOR =
-            Executors.newCachedThreadPool(r -> {
-                Thread t = new Thread(r, "puppet-ai-sse");
-                t.setDaemon(true);
-                return t;
-            });
-
     private final PuppetNodeAiThreadService aiThreadService;
     private final AiAuditLogStore auditLogStore;
     private final PlanTools planTools;
+    private final AiSseExecutor aiSseExecutor;
 
     public PuppetNodeAiController(PuppetNodeAiThreadService aiThreadService,
                                   AiAuditLogStore auditLogStore,
-                                  PlanTools planTools) {
+                                  PlanTools planTools,
+                                  AiSseExecutor aiSseExecutor) {
         this.aiThreadService = aiThreadService;
         this.auditLogStore = auditLogStore;
         this.planTools = planTools;
+        this.aiSseExecutor = aiSseExecutor;
     }
 
     // ─── SSE 流式对话 ─────────────────────────────────────────────────────────
@@ -131,9 +126,13 @@ public class PuppetNodeAiController {
             aiThreadService.persistMessage(session, threadId, "user", message,
                     AiAttachmentPrompt.metadata(body.attachments()));
 
-            SSE_EXECUTOR.submit(() -> aiThreadService.executeChat(
+            aiSseExecutor.submitChat(() -> aiThreadService.executeChat(
                     session, thread, threadId, messageForAgent, audit, emitter, startMs,
                     body.reasoningEffort()));
+        } catch (RejectedExecutionException e) {
+            thread.clearExecuting();
+            AiControllerUtil.safeSendError(emitter, "AI 执行队列繁忙，请稍后重试");
+            return emitter;
         } catch (RuntimeException e) {
             thread.clearExecuting();
             AiControllerUtil.safeSendError(emitter, "启动 AI 对话失败: " + e.getMessage());

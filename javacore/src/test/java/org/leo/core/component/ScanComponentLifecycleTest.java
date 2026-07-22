@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.leo.core.util.javassist.CloneWithJavassist;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -16,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScanComponentLifecycleTest {
@@ -62,6 +65,33 @@ class ScanComponentLifecycleTest {
         assertNotNull(task.get("finishedAt"));
         assertFalse(task.containsKey("executor"));
         assertSame(task, tasks.get("stop-task"));
+    }
+
+    @Test
+    void fingerprintRejectsOversizedTargetBatchBeforeRegisteringTask() {
+        HashMap rule = new HashMap();
+        rule.put("script", "true");
+        rule.put("requests", Collections.singletonList(new HashMap()));
+        HashMap params = new HashMap();
+        params.put("targets", Collections.nCopies(4097, new HashMap()));
+        params.put("rule", rule);
+
+        InvocationTargetException error = assertThrows(InvocationTargetException.class,
+                () -> invoke(new FingerprintComponent(), "startScan",
+                        new Class[]{Map.class}, new Object[]{params}));
+        assertTrue(error.getCause() instanceof IllegalArgumentException);
+    }
+
+    @Test
+    void reconRejectsOversizedRuleBatchBeforeBuildingWorkItems() {
+        HashMap params = new HashMap();
+        params.put("targets", Collections.singletonList(new HashMap()));
+        params.put("rules", Collections.nCopies(257, new HashMap()));
+
+        InvocationTargetException error = assertThrows(InvocationTargetException.class,
+                () -> invoke(new ReconScanComponent(), "startScan",
+                        new Class[]{HashMap.class}, new Object[]{params}));
+        assertTrue(error.getCause() instanceof IllegalArgumentException);
     }
 
     private void verifyCompletion(Object component, Class<?> type, String id, boolean keepLock) throws Exception {

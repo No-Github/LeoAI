@@ -1,11 +1,12 @@
 package org.leo.core.puppet.http;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -30,7 +31,7 @@ final class HttpFuzzTask {
 
     private volatile String status = RUNNING;
     private volatile Long finishedAt;
-    private ExecutorService executor;
+    private final List<Future<?>> workers = new ArrayList<Future<?>>();
 
     HttpFuzzTask(String taskId, int total, long createdAt) {
         this.taskId = taskId;
@@ -38,16 +39,24 @@ final class HttpFuzzTask {
         this.createdAt = createdAt;
     }
 
-    synchronized void attachExecutor(ExecutorService executor) {
+    synchronized void attachWorkers(Collection<Future<?>> acceptedWorkers) {
         if (!RUNNING.equals(status)) {
-            executor.shutdownNow();
-            throw new IllegalStateException("fuzz task is not running: " + taskId);
+            if (acceptedWorkers != null) {
+                for (Future<?> worker : acceptedWorkers) {
+                    if (worker != null) worker.cancel(true);
+                }
+            }
+            return;
         }
-        this.executor = executor;
+        if (acceptedWorkers != null) workers.addAll(acceptedWorkers);
     }
 
     boolean isStopped() {
         return STOPPED.equals(status);
+    }
+
+    boolean isRunning() {
+        return RUNNING.equals(status);
     }
 
     void record(Map<String, Object> result) {
@@ -64,10 +73,10 @@ final class HttpFuzzTask {
         }
         status = STOPPED;
         finishedAt = Long.valueOf(System.currentTimeMillis());
-        if (executor != null) {
-            executor.shutdownNow();
-            executor = null;
+        for (Future<?> worker : workers) {
+            if (worker != null) worker.cancel(true);
         }
+        workers.clear();
         return true;
     }
 
@@ -98,6 +107,6 @@ final class HttpFuzzTask {
         }
         status = FINISHED;
         finishedAt = Long.valueOf(System.currentTimeMillis());
-        executor = null;
+        workers.clear();
     }
 }

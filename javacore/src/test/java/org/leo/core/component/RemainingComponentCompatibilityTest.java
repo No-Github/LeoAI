@@ -166,7 +166,8 @@ class RemainingComponentCompatibilityTest {
                 "resourcePath", utf8("/component/ResourceComponent.payload")));
 
         assertEquals(200, code(found));
-        assertArrayEquals((byte[]) found.get("bytecode"), (byte[]) found.get("data"));
+        assertNotNull(found.get("data"));
+        assertFalse(found.containsKey("bytecode"));
         assertTrue(((Number) found.get("size")).intValue() > 0);
 
         setField(component, "resourceTooLarge", true);

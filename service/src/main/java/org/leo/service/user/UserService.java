@@ -76,6 +76,7 @@ public class UserService {
                 user.getStatus() != null ? user.getStatus() : 1,
                 user.getLastLoginTime(),
                 user.getLoginCount() != null ? user.getLoginCount() : 0,
+                user.getPasswordChangeRequired() != null ? user.getPasswordChangeRequired() : 0,
                 now, now,
                 user.getTeamId(),
                 user.getRemark()
@@ -96,6 +97,7 @@ public class UserService {
                 user.getStatus(),
                 user.getLastLoginTime(),
                 user.getLoginCount(),
+                user.getPasswordChangeRequired() != null ? user.getPasswordChangeRequired() : 0,
                 now,
                 user.getTeamId(),
                 user.getRemark(),
@@ -169,6 +171,9 @@ public class UserService {
         if (user == null) return null;
         if (!isKnownPrivilege(user.getPrivilege())) {
             user.setPrivilege(PRIVILEGE_NORMAL);
+        }
+        if (user.getPasswordChangeRequired() == null) {
+            user.setPasswordChangeRequired(0);
         }
         return user;
     }

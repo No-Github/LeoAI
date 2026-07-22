@@ -7,6 +7,8 @@ import org.leo.service.PuppetService;
 import org.leo.service.UrlProbeService;
 import org.leo.service.user.UserService;
 import org.leo.core.util.ApiResponse;
+import org.leo.core.util.json.JsonUtil;
+import org.leo.core.util.request.ComponentClassNameStrategy;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -108,6 +110,11 @@ public class PuppetManageController {
         User user = getUserFromSession(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
+        }
+        try {
+            validateComponentClassNameStrategy(puppet.getComponentClassNameStrategy());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
         }
         puppet.setCreateByUserId(user.getUserId());
         String permission = normalizePuppetPermission(puppet.getPermission());
@@ -214,6 +221,11 @@ public class PuppetManageController {
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
         }
+        try {
+            validateComponentClassNameStrategy(puppet.getComponentClassNameStrategy());
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.badRequest(e.getMessage());
+        }
         
         Puppet existingPuppet = puppetService.findPuppetById(puppet.getPuppetId());
         if (existingPuppet == null) {
@@ -238,6 +250,39 @@ public class PuppetManageController {
             return ApiResponse.success();
         } else {
             return ApiResponse.error("更新Puppet失败");
+        }
+    }
+
+    @RequestMapping(value = "/component-class-name/preview", method = RequestMethod.POST)
+    public HashMap<String, Object> previewComponentClassNames(HttpServletRequest request,
+                                                               @RequestBody HashMap<String, Object> params) {
+        User user = getUserFromSession(request);
+        if (user == null || user.getUserId() == null) {
+            return ApiResponse.unauthorized("用户未登录");
+        }
+        try {
+            Object rawStrategy = params != null ? params.get("strategy") : null;
+            String json = rawStrategy instanceof String
+                    ? rawStrategy.toString() : JsonUtil.toJsonString(rawStrategy);
+            ComponentClassNameStrategy strategy = parseComponentClassNameStrategy(json);
+            String sessionKey = params != null && params.get("sessionKey") != null
+                    ? params.get("sessionKey").toString() : "configuration-preview";
+            Object rawComponents = params != null ? params.get("components") : null;
+            Collection<?> components = rawComponents instanceof Collection<?>
+                    ? (Collection<?>) rawComponents
+                    : List.of("BasicInfoComponent", "ExecCommandComponent", "FileComponent");
+            if (components.size() > 100) {
+                return ApiResponse.badRequest("单次最多预览100个组件类名");
+            }
+            Map<String, String> preview = new LinkedHashMap<>();
+            for (Object component : components) {
+                if (component == null || component.toString().isBlank()) continue;
+                String name = component.toString().trim();
+                preview.put(name, strategy.resolve(sessionKey, name));
+            }
+            return ApiResponse.success(preview);
+        } catch (Exception e) {
+            return ApiResponse.badRequest("类名画像配置错误: " + e.getMessage());
         }
     }
     
@@ -402,5 +447,29 @@ public class PuppetManageController {
             return user.getTeamId();
         }
         return existingPuppet != null ? existingPuppet.getTeamId() : null;
+    }
+
+    private void validateComponentClassNameStrategy(String json) {
+        if (json == null || json.isBlank()) return;
+        ComponentClassNameStrategy strategy = parseComponentClassNameStrategy(json);
+        strategy.validateConfiguration();
+    }
+
+    private ComponentClassNameStrategy parseComponentClassNameStrategy(String json) {
+        if (json == null || json.isBlank() || "null".equals(json.trim())) {
+            return new ComponentClassNameStrategy();
+        }
+        try {
+            ComponentClassNameStrategy strategy = (ComponentClassNameStrategy) JsonUtil.fromJsonString(
+                    json, ComponentClassNameStrategy.class);
+            if (strategy == null) {
+                throw new IllegalArgumentException("类名画像配置为空");
+            }
+            return strategy;
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("类名画像 JSON 格式错误: " + e.getMessage(), e);
+        }
     }
 }

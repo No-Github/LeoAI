@@ -245,13 +245,13 @@ LeoAI 面向获得合法授权的红队与安全研究场景，将主机资产�
 从 [Releases](https://github.com/cha0upup/LeoAI/releases) 页面下载需要的版本：
 
 ```
-LeoAi-<version>.jar
+LeoAi-1.0.0.jar
 ```
 
 ### 第二步：启动
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-1.0.0.jar
 ```
 
 > `--add-opens java.base/java.lang=ALL-UNNAMED` 参数**不可省略**，用于开放 Java 模块系统内部访问权限。
@@ -272,7 +272,7 @@ http://localhost:8082
 2. 创建默认管理员账户
 3. 初始化基础配置
 
-**初始账号**：`admin`，初始密码：`54ikun`。首次登录后请立即修改密码。
+**初始账号**：`admin`，初始密码：`54ikun`。首次登录后系统将强制修改密码。
 
 ---
 
@@ -341,7 +341,7 @@ docker compose up -d --build
 http://localhost:8082
 ```
 
-**初始账号**：`admin`，初始密码：`54ikun`。首次登录后请立即修改密码。
+**初始账号**：`admin`，初始密码：`54ikun`。首次登录后系统将强制修改密码。
 
 #### 常用命令速查
 
@@ -432,8 +432,8 @@ LEOAI_PORT=9090 OPENAI_API_KEY=sk-xxxxx docker compose up -d
 默认端口为 `8082`，通过启动参数修改：
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-<version>.jar --server.port=9090
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
+  LeoAi-1.0.0.jar --server.port=9090
 ```
 
 ### 修改数据库位置
@@ -441,8 +441,8 @@ java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
 默认数据库文件为运行目录下的 `data.db`：
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED \
-  LeoAi-<version>.jar \
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
+  LeoAi-1.0.0.jar \
   --spring.datasource.url=jdbc:sqlite:/path/to/data.db
 ```
 
@@ -463,7 +463,7 @@ LeoAI 的 AI 功能需要接入 LLM 接口，支持两种配置方式：
 export OPENAI_API_KEY=your-api-key
 export OPENAI_BASE_URL=https://api.openai.com/v1
 
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-1.0.0.jar
 ```
 
 ### 支持的 AI 模型
@@ -632,7 +632,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 必须添加 `--add-opens` 参数，不可省略：
 
 ```bash
-java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
+java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-1.0.0.jar
 ```
 
 ---
@@ -685,7 +685,7 @@ java -jar --add-opens java.base/java.lang=ALL-UNNAMED LeoAi-<version>.jar
 **部署安全**
 
 - 在受信任的内网或 VPN 环境中部署，不要将管理端口暴露至公网
-- 首次启动后立即修改管理员密码
+- 首次登录后按页面提示完成管理员密码修改
 - 定期备份 `data.db` 文件
 - 使用防火墙或 IP 白名单限制访问来源
 

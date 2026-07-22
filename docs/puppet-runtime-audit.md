@@ -8,7 +8,7 @@ This audit covers code that executes on the PHP or Java puppet runtime:
 
 - PHP bootstrap: `phpcore/src/main/resources/templates/php-puppet.php.txt`
 - PHP core protocol: `phpcore/src/main/resources/templates/php-core.php.txt`
-- PHP components: 14 files under `phpcore/src/main/resources/components`
+- PHP components: 25 files under `phpcore/src/main/resources/components`
 - Java components: 26 files under `javacore/src/main/java/org/leo/core/component`
 - Java component build/audit pipeline: `javacore/compile-components.sh`
 
@@ -32,7 +32,7 @@ contract used by the runtime code.
 
 ### PHP
 
-- All 14 component sources and the core template pass PHP 8.3 syntax lint.
+- All 25 component sources and the core template pass PHP 8.3 syntax lint.
 - Sources use the declared PHP 5.6-compatible language subset: short arrays,
   closures, and `finally`, without scalar declarations, return declarations,
   arrow functions, null coalescing, typed properties, or modern-only collection

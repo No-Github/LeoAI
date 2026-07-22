@@ -41,14 +41,16 @@ public class NetworkInfoService extends ComponentService {
 
     /** 一键采集全部网络信息（网卡、ARP、路由、DNS、hosts） */
     public Map<String, Object> collectAll() throws Exception {
-        int osType = detectOS();
+        Map<String, Object> snapshot = collectJavaNetworkSnapshot();
+        int osType = detectOS(snapshot);
         Map<String, Object> networkInfo = new HashMap<String, Object>();
 
-        safeCollect(networkInfo, "interfaces", "interfaces", osType);
-        safeCollect(networkInfo, "arp",        "arp",        osType);
-        safeCollect(networkInfo, "routes",     "routes",     osType);
-        safeCollect(networkInfo, "dnsConfig",  "dnsConfig",  osType);
-        safeCollect(networkInfo, "hosts",      "hosts",      osType);
+        List<Map<String, Object>> interfaces = normalizeInterfaces(snapshot.get("interfaces"));
+        networkInfo.put("interfaces", interfaces.isEmpty() ? doCollectInterfaces() : interfaces);
+        networkInfo.put("arp", collectArpPreferred(snapshot, osType));
+        networkInfo.put("routes", collectRoutesPreferred(snapshot, osType));
+        networkInfo.put("dnsConfig", collectDnsPreferred(snapshot, osType));
+        networkInfo.put("hosts", collectHostsPreferred(snapshot, osType));
         networkInfo.put("os", osType == OS_WINDOWS ? "Windows" : osType == OS_MACOS ? "macOS" : "Linux");
 
         Map<String, Object> result = new HashMap<String, Object>();
@@ -61,7 +63,9 @@ public class NetworkInfoService extends ComponentService {
     public Map<String, Object> collectInterfaces() throws Exception {
         Map<String, Object> result      = new HashMap<String, Object>();
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("interfaces", doCollectInterfaces());
+        List<Map<String, Object>> interfaces = normalizeInterfaces(
+                collectJavaNetworkSnapshot().get("interfaces"));
+        networkInfo.put("interfaces", interfaces.isEmpty() ? doCollectInterfaces() : interfaces);
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -69,10 +73,11 @@ public class NetworkInfoService extends ComponentService {
 
     /** 仅采集 ARP 表 */
     public Map<String, Object> collectArp() throws Exception {
-        int osType = detectOS();
+        Map<String, Object> snapshot = collectJavaNetworkSnapshot();
+        int osType = detectOS(snapshot);
         Map<String, Object> result      = new HashMap<String, Object>();
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("arp", doCollectArp(osType));
+        networkInfo.put("arp", collectArpPreferred(snapshot, osType));
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -80,10 +85,11 @@ public class NetworkInfoService extends ComponentService {
 
     /** 仅采集路由表 */
     public Map<String, Object> collectRoutes() throws Exception {
-        int osType = detectOS();
+        Map<String, Object> snapshot = collectJavaNetworkSnapshot();
+        int osType = detectOS(snapshot);
         Map<String, Object> result      = new HashMap<String, Object>();
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("routes", doCollectRoutes(osType));
+        networkInfo.put("routes", collectRoutesPreferred(snapshot, osType));
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -91,10 +97,11 @@ public class NetworkInfoService extends ComponentService {
 
     /** 仅采集 DNS 配置 */
     public Map<String, Object> collectDnsConfig() throws Exception {
-        int osType = detectOS();
+        Map<String, Object> snapshot = collectJavaNetworkSnapshot();
+        int osType = detectOS(snapshot);
         Map<String, Object> result      = new HashMap<String, Object>();
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("dnsConfig", doCollectDnsConfig(osType));
+        networkInfo.put("dnsConfig", collectDnsPreferred(snapshot, osType));
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -102,10 +109,11 @@ public class NetworkInfoService extends ComponentService {
 
     /** 仅采集 hosts 文件 */
     public Map<String, Object> collectHosts() throws Exception {
-        int osType = detectOS();
+        Map<String, Object> snapshot = collectJavaNetworkSnapshot();
+        int osType = detectOS(snapshot);
         Map<String, Object> result      = new HashMap<String, Object>();
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("hosts", doCollectHosts(osType));
+        networkInfo.put("hosts", collectHostsPreferred(snapshot, osType));
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -120,7 +128,12 @@ public class NetworkInfoService extends ComponentService {
             return result;
         }
         Map<String, Object> networkInfo = new HashMap<String, Object>();
-        networkInfo.put("resolved", doResolveDns(hostname.trim()));
+        HashMap<String, Object> params = new HashMap<String, Object>();
+        params.put("action", "resolveDns");
+        params.put("hostname", hostname.trim());
+        Map<String, Object> remote = invokeComponent("BasicInfoComponent", params);
+        List<Map<String, Object>> resolved = normalizeResolved(remote != null ? remote.get("addresses") : null);
+        networkInfo.put("resolved", resolved.isEmpty() ? doResolveDns(hostname.trim()) : resolved);
         result.put("code",        200);
         result.put("networkInfo", networkInfo);
         return result;
@@ -133,6 +146,121 @@ public class NetworkInfoService extends ComponentService {
         if (out.startsWith("Windows") || out.isEmpty()) return OS_WINDOWS;
         if ("Darwin".equals(out)) return OS_MACOS;
         return OS_LINUX;
+    }
+
+    private int detectOS(Map<String, Object> snapshot) throws Exception {
+        String value = snapshot.get("os") == null ? "" : String.valueOf(snapshot.get("os")).toLowerCase();
+        if (value.contains("win")) return OS_WINDOWS;
+        if (value.contains("mac") || value.contains("darwin")) return OS_MACOS;
+        if (value.contains("linux") || value.contains("unix")) return OS_LINUX;
+        return detectOS();
+    }
+
+    private Map<String, Object> collectJavaNetworkSnapshot() {
+        try {
+            HashMap<String, Object> params = new HashMap<String, Object>();
+            params.put("action", "network");
+            Map<String, Object> response = invokeComponent("BasicInfoComponent", params);
+            return response != null ? response : new HashMap<String, Object>();
+        } catch (Exception ignored) {
+            return new HashMap<String, Object>();
+        }
+    }
+
+    private Map<String, Object> collectArpPreferred(Map<String, Object> snapshot, int osType) throws Exception {
+        Object raw = snapshot.get("procArp");
+        if (raw instanceof String && !((String) raw).trim().isEmpty()) {
+            Map<String, Object> result = new HashMap<String, Object>();
+            result.put("source", "/proc/net/arp");
+            result.put("entries", parseLinuxProcArp((String) raw));
+            return result;
+        }
+        return doCollectArp(osType);
+    }
+
+    private Map<String, Object> collectRoutesPreferred(Map<String, Object> snapshot, int osType) throws Exception {
+        Object raw = snapshot.get("procRoute");
+        if (raw instanceof String && ((String) raw).contains("\n")) {
+            Map<String, Object> result = new HashMap<String, Object>();
+            result.put("source", "/proc/net/route");
+            result.put("entries", parseLinuxProcRoute((String) raw));
+            return result;
+        }
+        return doCollectRoutes(osType);
+    }
+
+    private Map<String, Object> collectDnsPreferred(Map<String, Object> snapshot, int osType) throws Exception {
+        Object raw = snapshot.get("resolvConf");
+        if (raw instanceof String && !((String) raw).trim().isEmpty()) {
+            Map<String, Object> result = new HashMap<String, Object>();
+            result.put("source", "/etc/resolv.conf");
+            result.put("nameservers", parseResolvConf((String) raw));
+            result.put("raw", truncate((String) raw, 4096));
+            return result;
+        }
+        return doCollectDnsConfig(osType);
+    }
+
+    private Map<String, Object> collectHostsPreferred(Map<String, Object> snapshot, int osType) throws Exception {
+        Object raw = snapshot.get("hosts");
+        if (raw instanceof String && !((String) raw).trim().isEmpty()) {
+            Map<String, Object> result = new HashMap<String, Object>();
+            result.put("path", osType == OS_WINDOWS
+                    ? "%SystemRoot%\\System32\\drivers\\etc\\hosts" : "/etc/hosts");
+            result.put("entries", parseHosts((String) raw));
+            result.put("raw", truncate((String) raw, 4096));
+            return result;
+        }
+        return doCollectHosts(osType);
+    }
+
+    private List<Map<String, Object>> normalizeInterfaces(Object raw) {
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        if (!(raw instanceof List)) return result;
+        List<?> items = (List<?>) raw;
+        for (int i = 0; i < items.size(); i++) {
+            if (!(items.get(i) instanceof Map)) continue;
+            Map<?, ?> source = (Map<?, ?>) items.get(i);
+            Map<String, Object> item = new HashMap<String, Object>();
+            item.put("name", first(source, "name", "Name"));
+            item.put("displayName", first(source, "displayName", "DisplayName"));
+            item.put("up", first(source, "up", "IsUp"));
+            item.put("loopback", first(source, "loopback", "IsLoopback"));
+            item.put("virtual", first(source, "virtual", "IsVirtual"));
+            item.put("mtu", first(source, "mtu", "MTU"));
+            item.put("mac", first(source, "mac", "MACAddress"));
+            Object addresses = first(source, "addresses", "IPAddresses");
+            item.put("addresses", normalizeAddresses(addresses));
+            result.add(item);
+        }
+        return result;
+    }
+
+    private List<Map<String, Object>> normalizeAddresses(Object raw) {
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        if (!(raw instanceof List)) return result;
+        List<?> values = (List<?>) raw;
+        for (int i = 0; i < values.size(); i++) {
+            if (values.get(i) instanceof Map) {
+                result.add(new HashMap<String, Object>((Map<String, Object>) values.get(i)));
+            } else if (values.get(i) != null) {
+                String address = String.valueOf(values.get(i));
+                Map<String, Object> item = new HashMap<String, Object>();
+                item.put("address", address);
+                item.put("type", address.indexOf(':') >= 0 ? "IPv6" : "IPv4");
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private List<Map<String, Object>> normalizeResolved(Object raw) {
+        return normalizeAddresses(raw);
+    }
+
+    private Object first(Map<?, ?> source, String first, String second) {
+        Object value = source.get(first);
+        return value != null ? value : source.get(second);
     }
 
     // ==================== collectAll helper ====================

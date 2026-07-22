@@ -21,6 +21,32 @@ public interface PuppetNodeCreationContext {
 
     TransportLayers createTransportLayers(Puppet puppet) throws Exception;
 
+    /** Resolves transport and disguise layers from the same immutable Puppet route. */
+    default ConnectionPlan createConnectionPlan(Puppet puppet) throws Exception {
+        return new ConnectionPlan(createCommunication(puppet), createTransportLayers(puppet));
+    }
+
+    final class ConnectionPlan {
+        private final Communication communication;
+        private final TransportLayers transportLayers;
+
+        public ConnectionPlan(Communication communication, TransportLayers transportLayers) {
+            if (communication == null) throw new IllegalArgumentException("communication不能为空");
+            this.communication = communication;
+            this.transportLayers = transportLayers == null
+                    ? new TransportLayers(Collections.emptyList(), Collections.emptyList())
+                    : transportLayers;
+        }
+
+        public Communication getCommunication() {
+            return communication;
+        }
+
+        public TransportLayers getTransportLayers() {
+            return transportLayers;
+        }
+    }
+
     final class TransportLayers {
         private final List<RequestLayer> requestLayers;
         private final List<ResponseLayer> responseLayers;

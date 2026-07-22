@@ -148,6 +148,7 @@ public class UserController {
         user.setPassword(PasswordUtil.hash(user.getPassword()));
         user.setStatus(normalizeStatus(user.getStatus(), 1));
         user.setLoginCount(0);
+        user.setPasswordChangeRequired(1);
 
         userService.addUser(user);
         return ApiResponse.success();
@@ -209,6 +210,7 @@ public class UserController {
                 return ApiResponse.badRequest(e.getMessage());
             }
             target.setPassword(PasswordUtil.hash(newPwd));
+            target.setPasswordChangeRequired(1);
         }
 
         String newPrivilege = getString(params, "privilege");
@@ -289,6 +291,7 @@ public class UserController {
         }
 
         target.setPassword(PasswordUtil.hash(newPassword));
+        target.setPasswordChangeRequired(1);
         boolean ok = userService.updateUser(target);
         return ok ? ApiResponse.success() : ApiResponse.error("重置失败");
     }

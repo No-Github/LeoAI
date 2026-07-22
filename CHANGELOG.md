@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.0.0 (2026-07-22)
+
+LeoAI 首个正式开源版本。本版本以全新安装为发布基线，统一 Java、PHP、Web 控制台和部署制品的版本与运行约定。
+
+### 运行时与组件
+
+- Java 与 PHP Puppet 运行时采用统一的能力注册、调用和响应协议，平台按运行时能力展示可用功能
+- Java Component 完成生命周期、资源回收、线程池复用、任务数量上限和空闲清理优化
+- PHP Component 补齐系统、文件、网络、数据库和基础管理能力，并控制 Puppet 侧代码体积
+- Java Component 支持会话级类名策略，构建阶段可配置运行时类名画像
+- 组件字节码构建移除调试信息、冗余元数据和固定诊断文本，构建产物同步加入兼容性验证
+
+### 控制台与平台服务
+
+- 重构 Puppet 管理、策略配置、文件系统指标和资源概览界面
+- 文件系统容量统一按挂载点聚合，修复容量显示为零和瓶颈挂载点识别问题
+- AI SSE、后台任务和下载/上传任务采用有界执行器及统一清理路径
+- Java/PHP 节点路由与插件服务解耦，减少控制器对具体运行时实现的依赖
+- 前端生产制品随正式 JAR 一并发布
+
+### 账户与部署
+
+- 内置账号为 `admin`，初始密码为 `54ikun`
+- 首次登录必须修改初始密码；完成修改前，仅开放登录状态、修改密码和退出接口
+- 所有 Maven 模块、Web 控制台、系统配置、Docker 镜像和发布制品统一使用 `1.0.0`
+- 标准制品名称为 `LeoAi-1.0.0.jar`，运行环境要求 JDK 17
+- Docker 默认从 `v1.0.0` Release 下载正式 JAR，数据目录持久化到 `/app/data`
+
+### 发布说明
+
+- v1.0.0 采用全新数据库初始化流程，以仓库内 `schema.sql` 和 `data.sql` 为唯一基线
+- 推荐使用全新数据目录部署正式版本
+- 完整使用说明见 `README.md`，英文说明见 `README_EN.md`
+
+### 验证
+
+- JDK 17 执行完整 Maven 测试与打包：419 个测试通过，2 个环境相关测试跳过
+- Web 控制台：186 个测试通过，生产构建通过，依赖审计为 0 项
+- 全新 SQLite 数据目录启动验证通过；首次登录强制改密、接口访问限制及改密后恢复访问均已验证
+
+---
+
 ## v0.0.8 (2026-07-06)
 
 ### 虚拟终端稳定性与资源回收
@@ -171,55 +213,3 @@
 
 - 容器与 Spring 相关 `.payload` 二进制已重新生成，puppet 端会按需自动重载，**无需手动重启目标进程**
 - 旧版本 `LeoAi-0.0.5-SNAPSHOT.jar` 与新版 `.payload` 不兼容（component 接口和反射字段名都有调整），请整体升级到 0.0.6
-
----
-
-## v1.0.0 (2026-06-12)
-
-首个公开发布版本。
-
-### AI 能力
-
-- 基于 LangChain4j 的多 Agent 架构：主 Agent + 侦察/持久化/利用三个子 Agent，支持并发工具调用
-- 175 个原子 AI Tools，覆盖命令执行、文件、进程、网络、凭据、扫描、HTTP 发包、数据库、容器、用户账户、磁盘、SUID/Capability 等全场景
-- 21 个内置 puppet-node Skills，涵盖侦察、凭据收集、提权、横向移动、持久化、漏洞利用、容器/云、AD/域渗透等完整攻击链
-- reconSummary 自动积累：工具执行后异步提取侦察情报，AI 上下文随操作深入持续增强
-- 支持 Thinking 模式（DeepSeek-R1、Claude 等推理模型），延迟换深度
-- 运行时热切换 LLM 通道，无需重启
-- 平台级 AI Agent，支持流量伪装设计、指纹规则编写、攻击策略规划
-
-### 通信与隐蔽
-
-- 三种通信协议：HTTP、HTTP Chunked（大文件/长日志）、WebSocket（低延迟交互）
-- 流量伪装：TLS 指纹随机化、Header 噪声注入、URL 路径随机化、请求/响应自定义编解码
-- 四种代理/隧道模式：SOCKS5、HTTP CONNECT、本地端口转发（ssh -L 风格）、反向隧道（ssh -R 风格）
-- 反向隧道：puppet 端监听，内网客户端主动连入，C2 拨号转发，无需目标侧出站权限
-
-### 操作控制台
-
-- 交互式 Web 终端：实时流输出、历史记录
-- 文件管理器：树形目录、上传/下载、在线编辑、压缩/解压、大文件分片传输、文本/图片/PDF 预览
-- 数据库控制台：MySQL、PostgreSQL、Oracle、SQLite、SQL Server，含 SQL 编辑器和表结构浏览
-- HTTP 发包器：Repeater（单次）+ Fuzzer（批量模糊测试）
-- 端口扫描：TCP 扫描、Ping Sweep、多目标并发
-- 服务指纹识别：38 条内置规则（Nginx、Tomcat、Jenkins、Nacos、Redis 等），支持自定义规则
-- Docker 管理：容器列表、详情、exec 执行、镜像管理
-- 进程管理、计划任务、服务管理（Windows）
-- 用户账户枚举、磁盘挂载查看、SUID/Capability 检测
-- 注册表管理、事件日志查看（Windows）
-- 截屏、剪贴板读取、凭据提取（系统/浏览器/WiFi）
-- 类字节码提取与反编译
-
-### Shell 生成器
-
-- 内存马：17 种中间件（Tomcat、Jetty、JBoss、Wildfly、WebLogic、WebSphere、Spring 等），支持 Filter/Servlet/Listener/Valve/Interceptor/WebSocket 类型
-- 表达式注入 Packer：23 种（OGNL、SpEL、EL、Groovy、Freemarker、BCEL、Translet、H2 等）
-- WebShell：JSP、JSPX
-
-### 平台管理
-
-- 多用户、角色权限控制
-- 团队协作：节点共享、成员权限分级
-- 审计日志：命令执行、文件操作、AI 对话全量记录
-- 内嵌 SQLite，零依赖部署，首次启动自动初始化
-- 插件系统：Java 插件热加载，内置脚本执行、堆转储分析、WebLogic 密码获取等插件

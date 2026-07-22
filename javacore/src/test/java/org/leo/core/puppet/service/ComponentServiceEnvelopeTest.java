@@ -12,6 +12,7 @@ import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.net.layer.UrlStrategy;
 import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.util.request.ClassNameGenerator;
+import org.leo.core.util.request.ComponentClassNameStrategy;
 import org.leo.core.util.json.PortableJsonCodec;
 import org.objectweb.asm.ClassReader;
 
@@ -81,6 +82,27 @@ class ComponentServiceEnvelopeTest {
                 "host-1|java", "BasicInfoComponent").replace('.', '/');
         assertEquals(expected, new ClassReader(bytecodes.get(0)).getClassName());
         assertEquals(50, ((bytecodes.get(0)[6] & 0xff) << 8) | (bytecodes.get(0)[7] & 0xff));
+    }
+
+    @Test
+    void appliesConfiguredComponentClassNameProfile() throws Exception {
+        PortableDisguise disguise = new PortableDisguise();
+        List<byte[]> bytecodes = new ArrayList<>();
+        Communication communication = data -> {
+            Map<String, Object> request = PortableJsonCodec.decode(data);
+            bytecodes.add((byte[]) ((Map<?, ?>) request.get("params")).get("bytecode"));
+            return PortableJsonCodec.encode(Map.of(
+                    "requestId", request.get("requestId"), "code", 200,
+                    "data", Map.of("loaded", true)));
+        };
+        TestService service = service(communication, disguise);
+        ComponentClassNameStrategy strategy = new ComponentClassNameStrategy();
+        strategy.setMode(ComponentClassNameStrategy.Mode.PROXY_SHAPED);
+        service.setComponentClassNameStrategy(strategy);
+
+        assertEquals(200, service.loadComponent("BasicInfoComponent").get("code"));
+        assertTrue(new ClassReader(bytecodes.get(0)).getClassName()
+                .matches(".+/proxy/\\$Proxy[0-9]+"));
     }
 
     @Test

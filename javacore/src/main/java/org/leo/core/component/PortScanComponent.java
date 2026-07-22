@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PortScanComponent implements Runnable, ThreadFactory {
 
     private static final int MAX_THREADS = 64;
+    private static final int MAX_TASKS = 64;
     private static final int MAX_TIMEOUT_MS = 300000;
     private static final long STOPPED_TASK_TTL_MILLIS = 30L * 60L * 1000L;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
@@ -46,6 +47,7 @@ public class PortScanComponent implements Runnable, ThreadFactory {
 
     private String taskId;
     private boolean workerMode;
+    private String threadSeed;
 
 
 
@@ -214,6 +216,10 @@ public class PortScanComponent implements Runnable, ThreadFactory {
 
 
     private String startScan(HashMap params){
+        cleanupStoppedTasks();
+        if (scanTasks.size() >= MAX_TASKS) {
+            throw new IllegalStateException("too many scan tasks, max=" + MAX_TASKS);
+        }
         String scanHost= (String) params.get("scanHost");
         int[] scanPorts= (int[]) params.get("scanPorts");
         if (scanHost == null || scanHost.trim().length() == 0) {
@@ -236,10 +242,10 @@ public class PortScanComponent implements Runnable, ThreadFactory {
         if (threadsNum <= 0) threadsNum = 1;
         if (threadsNum > MAX_THREADS) threadsNum = MAX_THREADS;
         if (threadsNum > scanPorts.length) threadsNum = scanPorts.length;
-        ExecutorService pool = Executors.newFixedThreadPool(threadsNum, this);
-
         HashMap scanTaskInfo=new HashMap();
         String taskId=UUID.randomUUID().toString();
+        threadSeed = String.valueOf(params.get("hostId")) + "|" + taskId;
+        ExecutorService pool = Executors.newFixedThreadPool(threadsNum, this);
         scanTaskInfo.put("taskId",taskId);
         scanTaskInfo.put("status", STATE_RUNNING); // 使用status记录状态，初始为运行中
         scanTaskInfo.put("portLength",scanPorts.length);
@@ -267,7 +273,14 @@ public class PortScanComponent implements Runnable, ThreadFactory {
     }
 
     public Thread newThread(Runnable task) {
-        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+        Thread thread = new Thread(task, workerThreadName(threadSeed));
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    private static String workerThreadName(String seed) {
+        return "worker-" + Integer.toHexString(String.valueOf(seed).hashCode()) + "-"
+                + THREAD_SEQUENCE.incrementAndGet();
     }
 
     private Boolean scanPort(String host,int port,int scanTimeout){

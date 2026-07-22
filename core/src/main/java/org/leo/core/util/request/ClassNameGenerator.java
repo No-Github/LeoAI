@@ -115,58 +115,32 @@ public class ClassNameGenerator {
 
 
     private static final String[] METHOD_PREFIXES = {
-        "get", "set", "is", "has", "do", "on", "run", "handle",
+        "get", "set", "is", "has", "perform", "on", "run", "handle",
         "process", "check", "load", "update", "init", "build",
         "create", "parse", "read", "write", "flush", "reset",
         "apply", "invoke", "execute", "refresh", "resolve",
-        "convert", "format", "validate", "prepare", "notify"
+        "convert", "format", "validate", "prepare", "dispatch"
     };
-    private static final String[] METHOD_SUFFIXES = {
-        "Data", "Info", "Config", "State", "Result", "Value",
-        "Status", "Context", "Request", "Response", "Param",
-        "Cache", "Buffer", "Entry", "Record", "Item", "Node",
-        "Token", "Session", "Message", "Event", "Task",
-        "Flag", "Index", "Type", "Mode", "Level", "Stage"
-    };
-
     public static String randomMethodName() {
         Random random = GenerationRandom.current();
-        String prefix = METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)];
-        String suffix = METHOD_SUFFIXES[random.nextInt(METHOD_SUFFIXES.length)];
-        // 小概率加第二段，让名字更自然：getTokenValue / processRequestData
-        if (random.nextInt(3) == 0) {
-            String mid = METHOD_SUFFIXES[random.nextInt(METHOD_SUFFIXES.length)];
-            return prefix + mid + suffix;
-        }
-        return prefix + suffix;
+        return METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)];
     }
 
     /** 生成一个不在 used 集合中的方法名，并将其加入 used */
     public static String randomMethodName(Set<String> used) {
-        String name;
-        do { name = randomMethodName(); } while (!used.add(name));
-        return name;
+        Random random = GenerationRandom.current();
+        for (int i = 0; i < METHOD_PREFIXES.length * 2; i++) {
+            String name = METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)];
+            if (used.add(name)) return name;
+        }
+        while (true) {
+            String name = METHOD_PREFIXES[random.nextInt(METHOD_PREFIXES.length)]
+                    + Integer.toString(random.nextInt(1296), 36);
+            if (used.add(name)) return name;
+        }
     }
 
-    // 字段名第一段：名词修饰语
-    private static final String[] FIELD_FIRST = {
-        "request", "response", "session", "config", "cache", "buffer",
-        "token", "context", "state", "data", "param", "result",
-        "handler", "service", "module", "loader", "parser", "builder",
-        "filter", "channel", "client", "server", "instance", "thread",
-        "task", "queue", "pool", "log", "audit", "trace", "metric",
-        "plugin", "proxy", "delegate", "adapter", "registry", "store"
-    };
-    // 字段名第二段：名词
-    private static final String[] FIELD_SECOND = {
-        "Map", "Cache", "Store", "Registry", "Pool", "Queue",
-        "Handler", "Manager", "Loader", "Factory", "Builder",
-        "Filter", "Buffer", "Table", "Index", "List", "Set",
-        "Key", "Id", "Name", "Type", "Mode", "Flag",
-        "Info", "Data", "Context", "State", "Config",
-        "Holder", "Provider", "Wrapper", "Helper", "Util"
-    };
-    // 可直接作字段名的单词（不拼接）
+    // 紧凑的业务风格字段名，优先降低成员名常量池开销。
     private static final String[] FIELD_SINGLE = {
         "params", "results", "context", "session", "config",
         "cache", "registry", "handler", "manager", "store",
@@ -176,25 +150,25 @@ public class ClassNameGenerator {
     };
 
     /**
-     * 生成像正常业务字段的随机名，如 requestMap、sessionCache、params、resultHolder
+     * 生成紧凑的业务字段名。
      */
     public static String randomFieldName() {
         Random random = GenerationRandom.current();
-        // 25% 概率直接用单词
-        if (random.nextInt(4) == 0) {
-            return FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
-        }
-        // 其余拼接两段
-        String first = FIELD_FIRST[random.nextInt(FIELD_FIRST.length)];
-        String second = FIELD_SECOND[random.nextInt(FIELD_SECOND.length)];
-        return first + second;
+        return FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
     }
 
     /** 生成一个不在 used 集合中的字段名，并将其加入 used */
     public static String randomFieldName(Set<String> used) {
-        String name;
-        do { name = randomFieldName(); } while (!used.add(name));
-        return name;
+        Random random = GenerationRandom.current();
+        for (int i = 0; i < FIELD_SINGLE.length * 2; i++) {
+            String name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
+            if (used.add(name)) return name;
+        }
+        while (true) {
+            String name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)]
+                    + Integer.toString(random.nextInt(1296), 36);
+            if (used.add(name)) return name;
+        }
     }
 
     // PascalCase 内部类名（用于 JSP 模板中的内部 ClassLoader 子类）

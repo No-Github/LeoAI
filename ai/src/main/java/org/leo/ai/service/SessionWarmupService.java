@@ -1,5 +1,6 @@
 package org.leo.ai.service;
 
+import org.leo.ai.concurrent.AiBackgroundExecutor;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.puppet.capability.BasicInfoCapable;
@@ -13,8 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 会话预热服务。
@@ -39,11 +39,11 @@ public class SessionWarmupService {
     /** 已触发预热的 sessionId 集合，防止重复执行。 */
     private final Set<String> warmedSessions = ConcurrentHashMap.newKeySet();
 
-    private final ExecutorService warmupPool = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "ai-session-warmup");
-        t.setDaemon(true);
-        return t;
-    });
+    private final AiBackgroundExecutor backgroundExecutor;
+
+    public SessionWarmupService(AiBackgroundExecutor backgroundExecutor) {
+        this.backgroundExecutor = backgroundExecutor;
+    }
 
     /**
      * 异步触发会话预热。幂等，同一 session 只执行一次。
@@ -54,13 +54,18 @@ public class SessionWarmupService {
         if (sessionId == null || sessionId.isBlank()) return;
         if (!warmedSessions.add(sessionId)) return; // 已预热过
 
-        warmupPool.submit(() -> {
-            try {
-                doWarmup(sessionId);
-            } catch (Exception e) {
-                logger.debug("会话预热失败（不影响正常使用），sessionId={}, err={}", sessionId, e.getMessage());
-            }
-        });
+        try {
+            backgroundExecutor.submitWarmup(() -> {
+                try {
+                    doWarmup(sessionId);
+                } catch (Exception e) {
+                    logger.debug("会话预热失败（不影响正常使用），sessionId={}, err={}", sessionId, e.getMessage());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            warmedSessions.remove(sessionId);
+            logger.debug("会话预热队列繁忙，已释放预热标记，sessionId={}", sessionId);
+        }
     }
 
     /**

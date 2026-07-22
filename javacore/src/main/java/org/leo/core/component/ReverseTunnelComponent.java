@@ -40,6 +40,8 @@ public class ReverseTunnelComponent implements Runnable {
 
     private static final int BUFFER_SIZE = 65536;
     private static final int MAX_ACCEPT_PER_CALL = 256;
+    private static final int MAX_LISTENERS = 64;
+    private static final int MAX_CONNECTIONS = 512;
 
     // listenId -> ServerSocketChannel
     private static Map listenMap = new ConcurrentHashMap();
@@ -149,6 +151,12 @@ public class ReverseTunnelComponent implements Runnable {
                     results.put("msg", "listenId already exists");
                     return;
                 }
+                if (listenMap.size() >= MAX_LISTENERS) {
+                    ssc.close();
+                    results.put("code", Integer.valueOf(429));
+                    results.put("msg", "listener limit reached");
+                    return;
+                }
                 listenMap.put(listenId, ssc);
                 listenInfoMap.put(listenId, info);
             }
@@ -203,6 +211,7 @@ public class ReverseTunnelComponent implements Runnable {
             return;
         }
         List newConns = new ArrayList();
+        boolean capacityReached = false;
         // drain 非阻塞 accept
         while (newConns.size() < MAX_ACCEPT_PER_CALL) {
             SocketChannel sc = ssc.accept();
@@ -220,6 +229,11 @@ public class ReverseTunnelComponent implements Runnable {
                     try { sc.close(); } catch (IOException ignored) {}
                     break;
                 }
+                if (connMap.size() >= MAX_CONNECTIONS) {
+                    try { sc.close(); } catch (IOException ignored) {}
+                    capacityReached = true;
+                    break;
+                }
                 connMap.put(connId, sc);
                 connToListen.put(connId, listenId);
                 connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
@@ -233,6 +247,7 @@ public class ReverseTunnelComponent implements Runnable {
         }
         results.put("code", Integer.valueOf(200));
         results.put("newConns", newConns);
+        if (capacityReached) results.put("capacityReached", Boolean.TRUE);
     }
 
     private void handleRead() throws IOException {
@@ -292,6 +307,7 @@ public class ReverseTunnelComponent implements Runnable {
         ByteBuffer buf = ByteBuffer.wrap(data);
         long deadline = System.currentTimeMillis() + 5000L;
         int written = 0;
+        int backoffMillis = 2;
         while (buf.hasRemaining()) {
             int n;
             try {
@@ -305,6 +321,7 @@ public class ReverseTunnelComponent implements Runnable {
                 if (connMap.get(connId) == sc) {
                     connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
                 }
+                backoffMillis = 2;
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
@@ -315,7 +332,8 @@ public class ReverseTunnelComponent implements Runnable {
                 results.put("bytesWritten", Integer.valueOf(written));
                 return;
             }
-            try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try { Thread.sleep(backoffMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            if (backoffMillis < 32) backoffMillis *= 2;
             if (Thread.currentThread().isInterrupted()) {
                 closeConnection(connId);
                 results.put("code", Integer.valueOf(500));

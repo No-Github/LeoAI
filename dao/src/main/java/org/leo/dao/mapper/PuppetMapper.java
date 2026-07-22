@@ -22,7 +22,7 @@ public interface PuppetMapper {
     @Select("SELECT * FROM puppets WHERE puppet_id = #{puppetId}")
     Puppet findPuppetById(@Param("puppetId") String puppetId);
 
-    @Insert("INSERT INTO puppets (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, team_id, conn_link, protocol, headers, req_disguise_id, resp_disguise_id, proxy_enabled, proxy_type, proxy_host, proxy_port, balance_enabled, max_req_count, permission, last_heartbeat, heartbeat_interval, create_time, update_time, remark, url_strategy, padding_strategy, header_noise_strategy, tls_fingerprint_strategy, type) VALUES (#{puppetId}, #{puppetName}, #{parentPuppetId}, #{createByUserId}, #{teamId}, #{connLink}, #{protocol}, #{headers}, #{reqDisguiseId}, #{respDisguiseId}, #{proxyEnabled}, #{proxyType}, #{proxyHost}, #{proxyPort}, #{balanceEnabled}, #{maxReqCount}, #{permission}, #{lastHeartbeat}, #{heartbeatInterval}, #{createTime}, #{updateTime}, #{remark}, #{urlStrategy}, #{paddingStrategy}, #{headerNoiseStrategy}, #{tlsFingerprintStrategy}, #{type})")
+    @Insert("INSERT INTO puppets (puppet_id, puppet_name, parent_puppet_id, create_by_user_id, team_id, conn_link, protocol, headers, req_disguise_id, resp_disguise_id, proxy_enabled, proxy_type, proxy_host, proxy_port, balance_enabled, max_req_count, permission, last_heartbeat, heartbeat_interval, create_time, update_time, remark, url_strategy, padding_strategy, header_noise_strategy, tls_fingerprint_strategy, component_class_name_strategy, type) VALUES (#{puppetId}, #{puppetName}, #{parentPuppetId}, #{createByUserId}, #{teamId}, #{connLink}, #{protocol}, #{headers}, #{reqDisguiseId}, #{respDisguiseId}, #{proxyEnabled}, #{proxyType}, #{proxyHost}, #{proxyPort}, #{balanceEnabled}, #{maxReqCount}, #{permission}, #{lastHeartbeat}, #{heartbeatInterval}, #{createTime}, #{updateTime}, #{remark}, #{urlStrategy}, #{paddingStrategy}, #{headerNoiseStrategy}, #{tlsFingerprintStrategy}, #{componentClassNameStrategy}, #{type})")
     boolean insertPuppet(@Param("puppetId") String puppetId,
                         @Param("puppetName") String puppetName,
                         @Param("parentPuppetId") String parentPuppetId,
@@ -49,6 +49,7 @@ public interface PuppetMapper {
                         @Param("paddingStrategy") String paddingStrategy,
                         @Param("headerNoiseStrategy") String headerNoiseStrategy,
                         @Param("tlsFingerprintStrategy") String tlsFingerprintStrategy,
+                        @Param("componentClassNameStrategy") String componentClassNameStrategy,
                         @Param("type") String type);
 
     @Select("SELECT * FROM puppets WHERE parent_puppet_id = #{parentPuppetId}")
@@ -66,7 +67,7 @@ public interface PuppetMapper {
     @Delete("DELETE FROM puppets WHERE puppet_id = #{puppetId}")
     boolean deletePuppetById(@Param("puppetId") String puppetId);
 
-    @Update("UPDATE puppets SET puppet_name=#{puppetName}, parent_puppet_id=#{parentPuppetId}, create_by_user_id=#{createByUserId}, team_id=#{teamId}, conn_link=#{connLink}, protocol=#{protocol}, headers=#{headers}, req_disguise_id=#{reqDisguiseId}, resp_disguise_id=#{respDisguiseId}, proxy_enabled=#{proxyEnabled}, proxy_type=#{proxyType}, proxy_host=#{proxyHost}, proxy_port=#{proxyPort}, balance_enabled=#{balanceEnabled}, max_req_count=#{maxReqCount}, permission=#{permission}, last_heartbeat=#{lastHeartbeat}, heartbeat_interval=#{heartbeatInterval}, update_time=#{updateTime}, remark=#{remark}, url_strategy=#{urlStrategy}, padding_strategy=#{paddingStrategy}, header_noise_strategy=#{headerNoiseStrategy}, tls_fingerprint_strategy=#{tlsFingerprintStrategy}, type=#{type} WHERE puppet_id=#{puppetId}")
+    @Update("UPDATE puppets SET puppet_name=#{puppetName}, parent_puppet_id=#{parentPuppetId}, create_by_user_id=#{createByUserId}, team_id=#{teamId}, conn_link=#{connLink}, protocol=#{protocol}, headers=#{headers}, req_disguise_id=#{reqDisguiseId}, resp_disguise_id=#{respDisguiseId}, proxy_enabled=#{proxyEnabled}, proxy_type=#{proxyType}, proxy_host=#{proxyHost}, proxy_port=#{proxyPort}, balance_enabled=#{balanceEnabled}, max_req_count=#{maxReqCount}, permission=#{permission}, last_heartbeat=#{lastHeartbeat}, heartbeat_interval=#{heartbeatInterval}, update_time=#{updateTime}, remark=#{remark}, url_strategy=#{urlStrategy}, padding_strategy=#{paddingStrategy}, header_noise_strategy=#{headerNoiseStrategy}, tls_fingerprint_strategy=#{tlsFingerprintStrategy}, component_class_name_strategy=#{componentClassNameStrategy}, type=#{type} WHERE puppet_id=#{puppetId}")
     boolean updatePuppetById(@Param("puppetId") String puppetId,
                             @Param("puppetName") String puppetName,
                             @Param("parentPuppetId") String parentPuppetId,
@@ -92,6 +93,7 @@ public interface PuppetMapper {
                             @Param("paddingStrategy") String paddingStrategy,
                             @Param("headerNoiseStrategy") String headerNoiseStrategy,
                             @Param("tlsFingerprintStrategy") String tlsFingerprintStrategy,
+                            @Param("componentClassNameStrategy") String componentClassNameStrategy,
                             @Param("type") String type);
 
     /**

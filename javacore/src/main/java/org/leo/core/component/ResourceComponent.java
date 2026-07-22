@@ -33,7 +33,7 @@ import java.util.Set;
  *       WebappClassLoader 里）。这里增加 <b>Tomcat WebappClassLoader 兜底</b>：
  *       通过 PlatformMBeanServer 查 Catalina:j2eeType=WebModule,* 找到每个 webapp 的
  *       ClassLoader 再依次尝试。</li>
- *   <li>响应里同时塞 {@code bytecode}（byte[]）和 {@code data}，兼容旧调用方两种 key。</li>
+ *   <li>puppet 仅回传一份 {@code data}（byte[]），服务端再补齐历史别名。</li>
  * </ol>
  *
  * <p>兼容 Java 1.5+，避免使用 lambda、try-with-resources、新集合 API。
@@ -104,8 +104,6 @@ public class ResourceComponent implements Runnable {
             return;
         }
         results.put("code", Integer.valueOf(200));
-        // 兼容历史 controller：ClassBytecodeController 读 "bytecode"，部分 AI 工具读 "data"
-        results.put("bytecode", bytes);
         results.put("data", bytes);
         results.put("resourcePath", resourcePath);
         results.put("size", Integer.valueOf(bytes.length));

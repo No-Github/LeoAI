@@ -6,6 +6,7 @@ import org.leo.core.util.PasswordUtil;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import org.leo.web.dto.platform.user.LoginRequest;
+import org.leo.web.dto.platform.user.ChangePasswordRequest;
 import org.leo.web.dto.platform.user.UpdateProfileRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,6 +62,33 @@ class LoginControllerTest {
         verify(loginAttemptService).recordSuccess("legacy", "127.0.0.1");
         // MockHttpServletRequest supports session rotation just like the servlet container.
         assertFalse(previousSessionId.equals(request.getSession(false).getId()));
+        @SuppressWarnings("unchecked")
+        var data = (java.util.Map<String, Object>) response.get("data");
+        assertEquals(false, data.get("passwordChangeRequired"));
+    }
+
+    @Test
+    void clearsRequiredPasswordChangeAfterSuccessfulUpdate() {
+        User sessionUser = new User();
+        sessionUser.setUserId("admin");
+        User storedUser = new User();
+        storedUser.setUserId("admin");
+        storedUser.setPassword(PasswordUtil.hash("54ikun"));
+        storedUser.setPasswordChangeRequired(1);
+        when(permissionService.requireLogin(org.mockito.ArgumentMatchers.any())).thenReturn(sessionUser);
+        when(userService.getUserById("admin")).thenReturn(storedUser);
+        when(userService.updateUser(storedUser)).thenReturn(true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.getSession(true).setAttribute("user", sessionUser);
+
+        var response = controller.changePassword(request,
+                new ChangePasswordRequest("54ikun", "new-password"));
+
+        assertEquals(200, response.get("code"));
+        assertEquals(0, storedUser.getPasswordChangeRequired());
+        assertTrue(PasswordUtil.verify("new-password", storedUser.getPassword()));
+        verify(passwordPolicy).validate("new-password");
+        verify(userService).updateUser(storedUser);
     }
 
     @Test

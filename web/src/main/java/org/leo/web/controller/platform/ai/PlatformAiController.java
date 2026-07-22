@@ -18,6 +18,7 @@ import org.leo.web.dto.platform.ai.PlatformAiDtos.MessagesRequest;
 import org.leo.web.service.PlatformAiService;
 import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
+import org.leo.web.util.AiSseExecutor;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,28 +31,22 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 @RestController
 @RequestMapping("/platform/ai")
 public class PlatformAiController {
 
-    /** 专用线程池，处理 SSE chat 异步请求。 */
-    private static final ExecutorService SSE_EXECUTOR =
-            Executors.newCachedThreadPool(r -> {
-                Thread t = new Thread(r, "platform-ai-sse");
-                t.setDaemon(true);
-                return t;
-            });
-
     private final PlatformAiService platformAiService;
     private final AiModelConfigService aiModelConfigService;
+    private final AiSseExecutor aiSseExecutor;
 
     public PlatformAiController(PlatformAiService platformAiService,
-                                AiModelConfigService aiModelConfigService) {
+                                AiModelConfigService aiModelConfigService,
+                                AiSseExecutor aiSseExecutor) {
         this.platformAiService = platformAiService;
         this.aiModelConfigService = aiModelConfigService;
+        this.aiSseExecutor = aiSseExecutor;
     }
 
     /**
@@ -161,9 +156,13 @@ public class PlatformAiController {
             String guardedMessage = AiAttachmentPrompt.appendTo(
                     ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
 
-            SSE_EXECUTOR.submit(() -> platformAiService.executeChat(
+            aiSseExecutor.submitChat(() -> platformAiService.executeChat(
                     state, request.getSession().getId(), message, guardedMessage, audit, emitter, startMs,
                     body.reasoningEffort(), AiAttachmentPrompt.metadata(body.attachments())));
+        } catch (RejectedExecutionException e) {
+            state.clearExecuting();
+            AiControllerUtil.safeSendError(emitter, "AI 执行队列繁忙，请稍后重试");
+            return emitter;
         } catch (RuntimeException e) {
             state.clearExecuting();
             AiControllerUtil.safeSendError(emitter, "启动平台 AI 对话失败: " + e.getMessage());

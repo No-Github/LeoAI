@@ -9,11 +9,13 @@ import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class UserControllerTest {
 
@@ -41,5 +43,32 @@ class UserControllerTest {
         assertEquals("pbkdf2-secret-hash", stored.getPassword());
         assertEquals("alice", users.get(0).get("userName"));
         assertFalse(users.get(0).containsKey("password"));
+    }
+
+    @Test
+    void marksAnAdministrativelyResetPasswordForMandatoryChange() {
+        UserService userService = mock(UserService.class);
+        User target = new User();
+        target.setUserId("user-1");
+        target.setUserName("alice");
+        target.setPrivilege(UserService.PRIVILEGE_NORMAL);
+        target.setPasswordChangeRequired(0);
+        when(userService.getUserById("user-1")).thenReturn(target);
+        when(userService.updateUser(target)).thenReturn(true);
+        UserController controller = new UserController(
+                userService, mock(TeamService.class), mock(PasswordPolicy.class));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        User admin = new User();
+        admin.setPrivilege(UserService.PRIVILEGE_ADMIN);
+        request.getSession(true).setAttribute("user", admin);
+        HashMap<String, Object> params = new HashMap<>();
+        params.put("userId", "user-1");
+        params.put("newPassword", "new-password");
+
+        Map<String, Object> response = controller.resetPassword(request, params);
+
+        assertEquals(200, response.get("code"));
+        assertEquals(1, target.getPasswordChangeRequired());
+        verify(userService).updateUser(target);
     }
 }

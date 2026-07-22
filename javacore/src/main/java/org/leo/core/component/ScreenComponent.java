@@ -61,6 +61,10 @@ public class ScreenComponent implements Runnable {
             results.put("timestamp", System.currentTimeMillis());
             return;
         }
+        if (Boolean.TRUE.equals(params.get("probe"))) {
+            results.put("code", Integer.valueOf(200));
+            return;
+        }
         
         // 获取参数
         String format = getStringParam("format");
@@ -89,7 +93,6 @@ public class ScreenComponent implements Runnable {
         
         // 设置结果
         results.put("screenBytes", imageBytes);
-        results.put("imageSize", imageBytes.length);
         results.put("format", format);
         results.put("width", screenImage.getWidth());
         results.put("height", screenImage.getHeight());

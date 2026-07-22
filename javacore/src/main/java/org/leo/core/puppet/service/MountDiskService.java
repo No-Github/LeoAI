@@ -22,6 +22,26 @@ public class MountDiskService extends ComponentService {
     }
 
     public Map<String, Object> list() throws Exception {
+        HashMap<String, Object> javaParams = new HashMap<String, Object>();
+        javaParams.put("action", "disks");
+        Map<String, Object> javaResponse = invokeComponent("BasicInfoComponent", javaParams);
+        Object javaDisks = javaResponse != null ? javaResponse.get("disks") : null;
+        if (javaDisks instanceof List && !((List<?>) javaDisks).isEmpty()) {
+            List<Map<String, Object>> disks = new ArrayList<Map<String, Object>>();
+            List<?> raw = (List<?>) javaDisks;
+            for (int i = 0; i < raw.size(); i++) {
+                if (raw.get(i) instanceof Map) {
+                    Map<String, Object> disk = new HashMap<String, Object>((Map<String, Object>) raw.get(i));
+                    normalizeJavaDisk(disk);
+                    disks.add(disk);
+                }
+            }
+            if (!disks.isEmpty()) {
+                String osType = normalizeOs(String.valueOf(javaResponse.get("os")));
+                return diskResult(osType, disks, "java-file-store");
+            }
+        }
+
         String osOutput = execFast("uname -s 2>/dev/null || echo Windows");
         boolean isWindows = isWindows(osOutput);
         boolean isMac = !isWindows && osOutput.toLowerCase().contains("darwin");
@@ -35,18 +55,52 @@ public class MountDiskService extends ComponentService {
             collectUnix(isMac, disks);
         }
 
-        Map<String, Object> summary = buildSummary(disks);
+        return diskResult(osType, disks, "command");
+    }
 
-        Map<String, Object> data = new HashMap<>();
+    private Map<String, Object> diskResult(String osType, List<Map<String, Object>> disks,
+                                           String source) {
+        Map<String, Object> data = new HashMap<String, Object>();
         data.put("os", osType);
-        data.put("total", disks.size());
+        data.put("source", source);
+        data.put("total", Integer.valueOf(disks.size()));
         data.put("disks", disks);
-        data.put("summary", summary);
+        data.put("summary", buildSummary(disks));
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("code", 200);
+        Map<String, Object> result = new HashMap<String, Object>();
+        result.put("code", Integer.valueOf(200));
         result.put("data", data);
         return result;
+    }
+
+    private String normalizeOs(String value) {
+        String lower = value == null ? "" : value.toLowerCase();
+        if (lower.contains("win")) return "windows";
+        if (lower.contains("mac") || lower.contains("darwin")) return "macos";
+        return "linux";
+    }
+
+    private void normalizeJavaDisk(Map<String, Object> disk) {
+        long total = numberValue(disk.get("totalBytes"), numberValue(disk.get("TotalSpaceMB"), 0L) * 1024L * 1024L);
+        long free = numberValue(disk.get("freeBytes"), numberValue(disk.get("UsableSpaceMB"), 0L) * 1024L * 1024L);
+        long used = Math.max(0L, total - free);
+        if (!disk.containsKey("mount")) disk.put("mount", disk.get("Root"));
+        if (!disk.containsKey("name")) disk.put("name", disk.get("Name"));
+        if (!disk.containsKey("fsType")) disk.put("fsType", disk.get("Type"));
+        disk.put("totalBytes", Long.valueOf(total));
+        disk.put("freeBytes", Long.valueOf(free));
+        disk.put("usedBytes", Long.valueOf(used));
+        disk.put("total", humanSize(total));
+        disk.put("free", humanSize(free));
+        disk.put("used", humanSize(used));
+        disk.put("usedPercent", Double.valueOf(total > 0L
+                ? Math.round((double) used / total * 1000.0) / 10.0 : 0.0));
+    }
+
+    private long numberValue(Object value, long fallback) {
+        if (value instanceof Number) return ((Number) value).longValue();
+        try { return value == null ? fallback : Long.parseLong(String.valueOf(value)); }
+        catch (RuntimeException ignored) { return fallback; }
     }
 
     // ── Windows ──────────────────────────────────────────────────────────────

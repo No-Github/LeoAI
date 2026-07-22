@@ -24,6 +24,7 @@ public class ProxyForwardComponent implements Runnable {
     private static final int BUFFER_SIZE = 65536;
     private static final int DEFAULT_CONNECT_TIMEOUT_MS = 10000;
     private static final int MAX_CONNECT_TIMEOUT_MS = 300000;
+    private static final int MAX_CONNECTIONS = 512;
     // idle 超时（10 分钟）
     private static final long IDLE_TIMEOUT_MS = 10L * 60L * 1000L;
 
@@ -128,10 +129,11 @@ public class ProxyForwardComponent implements Runnable {
             socketChannel = SocketChannel.open();
             socketChannel.socket().connect(new InetSocketAddress(targetHost, targetPort), timeout);
             socketChannel.configureBlocking(false);
-            if (!registerConnection(connId, socketChannel)) {
+            int registration = registerConnection(connId, socketChannel);
+            if (registration != 0) {
                 socketChannel.close();
-                results.put("code", 409);
-                results.put("msg", "connId already exists");
+                results.put("code", registration == 2 ? 429 : 409);
+                results.put("msg", registration == 2 ? "connection limit reached" : "connId already exists");
                 return;
             }
             results.put("code", 200);
@@ -161,6 +163,7 @@ public class ProxyForwardComponent implements Runnable {
         ByteBuffer buf = ByteBuffer.wrap(data);
         long deadline = System.currentTimeMillis() + 5000L;
         int written = 0;
+        int backoffMillis = 2;
         while (buf.hasRemaining()) {
             int n;
             try {
@@ -172,6 +175,7 @@ public class ProxyForwardComponent implements Runnable {
             if (n > 0) {
                 written += n;
                 touchConnection(connId, socketChannel);
+                backoffMillis = 2;
                 continue;
             }
             if (System.currentTimeMillis() > deadline) {
@@ -181,7 +185,8 @@ public class ProxyForwardComponent implements Runnable {
                 results.put("bytesWritten", written);
                 return;
             }
-            try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try { Thread.sleep(backoffMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            if (backoffMillis < 32) backoffMillis *= 2;
             if (Thread.currentThread().isInterrupted()) {
                 closeConnection(connId, socketChannel);
                 results.put("code", 500);
@@ -234,12 +239,14 @@ public class ProxyForwardComponent implements Runnable {
         results.put("code", 200);
     }
 
-    private static boolean registerConnection(String connId, SocketChannel socketChannel) {
+    /** 0=success, 1=duplicate, 2=capacity reached. */
+    private static int registerConnection(String connId, SocketChannel socketChannel) {
         synchronized (connMap) {
-            if (connMap.containsKey(connId)) return false;
+            if (connMap.containsKey(connId)) return 1;
+            if (connMap.size() >= MAX_CONNECTIONS) return 2;
             connMap.put(connId, socketChannel);
             connLastActivity.put(connId, Long.valueOf(System.currentTimeMillis()));
-            return true;
+            return 0;
         }
     }
 

@@ -19,6 +19,7 @@ public class User {
     private Integer status;
     private String lastLoginTime;
     private Integer loginCount;
+    private Integer passwordChangeRequired;
     private String createTime;
     private String updateTime;
     @JsonAlias("teamname")
@@ -37,6 +38,7 @@ public class User {
         this.updateTime = createTime;
         this.status = 1;
         this.loginCount = 0;
+        this.passwordChangeRequired = 0;
     }
 
     public String getUserId() {
@@ -109,6 +111,18 @@ public class User {
 
     public void setLoginCount(Integer loginCount) {
         this.loginCount = loginCount;
+    }
+
+    public Integer getPasswordChangeRequired() {
+        return passwordChangeRequired;
+    }
+
+    public void setPasswordChangeRequired(Integer passwordChangeRequired) {
+        this.passwordChangeRequired = passwordChangeRequired;
+    }
+
+    public boolean requiresPasswordChange() {
+        return Integer.valueOf(1).equals(passwordChangeRequired);
     }
 
     public String getCreateTime() {

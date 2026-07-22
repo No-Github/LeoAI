@@ -47,9 +47,9 @@ import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.UserAccountCapable;
 import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.puppet.service.*;
+import org.leo.core.util.request.ComponentClassNameStrategy;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -66,9 +66,11 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     List<ResponseLayer> responseLayers = new ArrayList<>();
 
     private static final int MAX_LOADED_COMPONENT_HOSTS = 128;
+    private static final long LOADED_COMPONENT_HOST_TTL_MILLIS = 30L * 60L * 1000L;
     private final LinkedHashMap<String, Set<String>> allLoadedComponent =
             new LinkedHashMap<String, Set<String>>(16, 0.75f, true);
-    private final List<ComponentService> componentServices = new ArrayList<ComponentService>();
+    private final Map<String, Long> loadedComponentHostLastSeen = new HashMap<String, Long>();
+    private final JavaPuppetServiceRegistry serviceRegistry = new JavaPuppetServiceRegistry();
     private final ComponentLoadRegistry componentLoadRegistry = new ComponentLoadRegistry();
     BasicInfoService basicInfoService;
     CommandService commandService;
@@ -115,6 +117,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     /** per-puppet Header 噪声注入策略 */
     private HeaderNoiseStrategy headerNoiseStrategy;
 
+    /** per-puppet Component 运行时类名画像 */
+    private ComponentClassNameStrategy componentClassNameStrategy;
+
     public Communication getCommunication() {
         return communication;
     }
@@ -133,9 +138,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public void setHostId(String hostId) {
         this.hostId = hostId;
-        for (ComponentService service : componentServices) {
-            service.setHostId(hostId);
-        }
+        serviceRegistry.setHostId(hostId);
     }
 
     public synchronized void initService(){
@@ -174,8 +177,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         mountDiskService=new MountDiskService(communication,requestLayers,responseLayers);
         clipboardService=new ClipboardService(communication,requestLayers,responseLayers);
 
-        componentServices.clear();
-        Collections.addAll(componentServices,
+        serviceRegistry.replace(componentLoadRegistry,
                 basicInfoService, commandService, componentService, fileService,
                 sqlService, testConnService, scanService, resourceService,
                 catalinaManageService, execScriptService, httpRequestService,
@@ -187,10 +189,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 wifiProfileService, persistenceService, networkConnectionService,
                 mountDiskService, clipboardService);
 
-        for (ComponentService service : componentServices) {
-            service.setComponentLoadRegistry(componentLoadRegistry);
-        }
-
         if (hostId != null) {
             setHostId(hostId);
         }
@@ -201,6 +199,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         applyUrlStrategyToAll();
         applyPaddingStrategyToAll();
         applyHeaderNoiseStrategyToAll();
+        applyComponentClassNameStrategyToAll();
         applyMaxReqCountToAll();
     }
 
@@ -240,52 +239,54 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return headerNoiseStrategy;
     }
 
+    public void setComponentClassNameStrategy(ComponentClassNameStrategy strategy) {
+        this.componentClassNameStrategy = strategy;
+        applyComponentClassNameStrategyToAll();
+    }
+
+    public ComponentClassNameStrategy getComponentClassNameStrategy() {
+        return componentClassNameStrategy;
+    }
+
     private void applyUrlStrategyToAll() {
-        if (urlStrategy == null) return;
-        for (ComponentService service : componentServices) {
-            service.setUrlStrategy(urlStrategy);
-        }
+        serviceRegistry.setUrlStrategy(urlStrategy);
     }
 
     private void applyPaddingStrategyToAll() {
-        if (paddingStrategy == null) return;
-        for (ComponentService service : componentServices) {
-            service.setPaddingStrategy(paddingStrategy);
-        }
+        serviceRegistry.setPaddingStrategy(paddingStrategy);
     }
 
     private void applyHeaderNoiseStrategyToAll() {
-        if (headerNoiseStrategy == null) return;
-        for (ComponentService service : componentServices) {
-            service.setHeaderNoiseStrategy(headerNoiseStrategy);
-        }
+        serviceRegistry.setHeaderNoiseStrategy(headerNoiseStrategy);
+    }
+
+    private void applyComponentClassNameStrategyToAll() {
+        serviceRegistry.setComponentClassNameStrategy(componentClassNameStrategy);
     }
 
     private void applyMaxReqCountToAll() {
-        for (ComponentService service : componentServices) {
-            service.setMaxReqCount(maxReqCount);
-        }
+        serviceRegistry.setMaxReqCount(maxReqCount);
     }
 
     @Override
     public synchronized void addLoadedComponent(String hostId, Set<String> loadedComponent){
         if (hostId == null || loadedComponent == null) return;
+        sweepExpiredLoadedComponentHosts(System.currentTimeMillis());
         allLoadedComponent.put(hostId, new HashSet<String>(loadedComponent));
+        loadedComponentHostLastSeen.put(hostId, Long.valueOf(System.currentTimeMillis()));
         while (allLoadedComponent.size() > MAX_LOADED_COMPONENT_HOSTS) {
             Iterator<String> iterator = allLoadedComponent.keySet().iterator();
             if (!iterator.hasNext()) break;
-            iterator.next();
+            String evictedHost = iterator.next();
             iterator.remove();
+            loadedComponentHostLastSeen.remove(evictedHost);
         }
         // 同步到所有 ComponentService 实例，避免重复加载
         syncLoadedComponentsToServices(hostId, loadedComponent);
     }
 
     private void syncLoadedComponentsToServices(String hostId, Set<String> componentNames) {
-        if (hostId == null || componentNames == null) return;
-        for (ComponentService service : componentServices) {
-            service.seedLoadedComponents(hostId, componentNames);
-        }
+        serviceRegistry.seedLoadedComponents(hostId, componentNames);
     }
 
     public List<RequestLayer> getRequestLayers() {
@@ -294,9 +295,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     public void setRequestLayers(List<RequestLayer> requestLayers) {
         this.requestLayers = requestLayers;
-        for (ComponentService service : componentServices) {
-            service.setRequestLayers(requestLayers);
-        }
+        serviceRegistry.setRequestLayers(requestLayers);
     }
 
     public List<ResponseLayer> getResponseLayers() {
@@ -305,9 +304,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     public void setResponseLayers(List<ResponseLayer> responseLayers) {
         this.responseLayers = responseLayers;
-        for (ComponentService service : componentServices) {
-            service.setResponseLayers(responseLayers);
-        }
+        serviceRegistry.setResponseLayers(responseLayers);
     }
 
     public int getMaxReqCount() {
@@ -323,17 +320,25 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     @Override
     public synchronized Set<String> getLoadedComponents() {
+        sweepExpiredLoadedComponentHosts(System.currentTimeMillis());
         // 聚合所有 ComponentService 实例的已加载组件，避免仅读单一 service 导致漏显
-        Set<String> merged = new HashSet<String>();
-        if (hostId != null) {
-            for (ComponentService service : componentServices) {
-                merged.addAll(service.getLoadedComponentNames(hostId));
-            }
-        }
+        Set<String> merged = serviceRegistry.loadedComponents(hostId);
         if (!merged.isEmpty()) return merged;
         // fallback: 从旧的本地缓存读取
         Set<String> set = allLoadedComponent.get(hostId);
         return set != null ? new HashSet<String>(set) : new HashSet<String>();
+    }
+
+    private void sweepExpiredLoadedComponentHosts(long now) {
+        Iterator<Map.Entry<String, Long>> iterator = loadedComponentHostLastSeen.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+            Long lastSeen = entry.getValue();
+            if (lastSeen == null || now - lastSeen.longValue() > LOADED_COMPONENT_HOST_TTL_MILLIS) {
+                allLoadedComponent.remove(entry.getKey());
+                iterator.remove();
+            }
+        }
     }
 
     @Override
@@ -1279,12 +1284,10 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         } catch (Exception e) {
             if (failure == null) failure = e; else failure.addSuppressed(e);
         } finally {
-            for (ComponentService service : componentServices) {
-                service.clearLoadedComponentCache();
-            }
-            componentServices.clear();
+            serviceRegistry.clear();
             synchronized (this) {
                 allLoadedComponent.clear();
+                loadedComponentHostLastSeen.clear();
             }
             componentLoadRegistry.clear();
         }

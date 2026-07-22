@@ -14,9 +14,6 @@ public class ClassFileMinimizer {
     // ASM版本常量
     private static final int ASM_VERSION = Opcodes.ASM5;
 
-    // ClassWriter标志常量
-    private static final int CLASS_WRITER_FLAGS = ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES;
-
     /**
      * 转换类文件，移除调试信息和注解
      *
@@ -25,24 +22,39 @@ public class ClassFileMinimizer {
      */
     public static byte[] transform(byte[] classByte) {
         ClassReader classReader = new ClassReader(classByte);
-        // COMPUTE_FRAMES 重算栈帧时会调用 getCommonSuperClass() 加载类型。
-        // 伪装类名（如 $$Lambda$7）在任何 ClassLoader 里都不存在，加载必然失败。
-        // 覆写该方法：加载失败时回退到 java/lang/Object，对 Java 1.6 语法的
-        // 单继承组件字节码完全安全。
-        ClassWriter classWriter = new ClassWriter(CLASS_WRITER_FLAGS) {
+        // Javassist 改名后统一重算 frame；伪装类名本身不在 ClassLoader 中，
+        // 类型解析失败时按 Object 合并，保持 Java 6 Component 的栈图稳定。
+        ClassWriter classWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
             @Override
             protected String getCommonSuperClass(String type1, String type2) {
                 try {
                     return super.getCommonSuperClass(type1, type2);
-                } catch (Throwable t) {
+                } catch (Throwable ignored) {
                     return "java/lang/Object";
                 }
             }
         };
         ClassVisitor classVisitor = new ClassVisitor(ASM_VERSION, classWriter) {
             @Override
+            public void visit(int version, int access, String name, String signature,
+                              String superName, String[] interfaces) {
+                // 泛型信息不参与 JVM 链接，统一丢弃，避免残留源码类型画像。
+                super.visit(version, access, name, null, superName, interfaces);
+            }
+
+            @Override
             public void visitSource(String source, String debug) {
                 // 移除源文件和调试信息，不调用 super.visitSource
+            }
+
+            @Override
+            public void visitOuterClass(String owner, String name, String descriptor) {
+                // Component 均为可独立加载的顶级类，移除 EnclosingMethod。
+            }
+
+            @Override
+            public void visitInnerClass(String name, String outerName, String innerName, int access) {
+                // 单文件 payload 不携带配套内部类，移除 InnerClasses 表。
             }
 
             @Override
@@ -52,11 +64,23 @@ public class ClassFileMinimizer {
             }
 
             @Override
+            public AnnotationVisitor visitTypeAnnotation(int typeRef, TypePath typePath,
+                                                         String descriptor, boolean visible) {
+                return null;
+            }
+
+            @Override
             public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-                return new FieldVisitor(ASM_VERSION, super.visitField(access, name, descriptor, signature, value)) {
+                return new FieldVisitor(ASM_VERSION, super.visitField(access, name, descriptor, null, value)) {
                     @Override
                     public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
                         // 移除所有字段注解
+                        return null;
+                    }
+
+                    @Override
+                    public AnnotationVisitor visitTypeAnnotation(int typeRef, TypePath typePath,
+                                                                 String descriptor, boolean visible) {
                         return null;
                     }
                 };
@@ -64,10 +88,34 @@ public class ClassFileMinimizer {
 
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                return new MethodVisitor(ASM_VERSION, super.visitMethod(access, name, descriptor, signature, exceptions)) {
+                // Signature 与 Exceptions 均为反射/编译器元数据，不影响方法描述符和执行。
+                return new MethodVisitor(ASM_VERSION, super.visitMethod(access, name, descriptor, null, null)) {
+                    @Override
+                    public void visitParameter(String name, int access) {
+                        // 移除 MethodParameters。
+                    }
+
                     @Override
                     public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
                         // 移除所有方法注解
+                        return null;
+                    }
+
+                    @Override
+                    public AnnotationVisitor visitAnnotationDefault() {
+                        return null;
+                    }
+
+                    @Override
+                    public AnnotationVisitor visitParameterAnnotation(int parameter,
+                                                                      String descriptor,
+                                                                      boolean visible) {
+                        return null;
+                    }
+
+                    @Override
+                    public AnnotationVisitor visitTypeAnnotation(int typeRef, TypePath typePath,
+                                                                 String descriptor, boolean visible) {
                         return null;
                     }
 
@@ -83,8 +131,7 @@ public class ClassFileMinimizer {
                 };
             }
         };
-        classReader.accept(classVisitor, 0);
-        byte[] minimizedClass = classWriter.toByteArray();
-        return minimizedClass;
+        classReader.accept(classVisitor, ClassReader.SKIP_DEBUG);
+        return classWriter.toByteArray();
     }
 }

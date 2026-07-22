@@ -1,8 +1,10 @@
 package org.leo.service.sql;
 
+import jakarta.annotation.PreDestroy;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -17,8 +19,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -29,15 +30,18 @@ public class SqlExportService {
     private static final String TASKS_DIR = ".sql-export-tasks";
     private static final String EXPORT_DIR = "downloads/sql-export";
     private static final int PAGE_SIZE = 1000;
+    private static final long FINISHED_TASK_RETAIN_MILLIS = 30L * 60L * 1000L;
 
     private final ConcurrentHashMap<String, Map<String, Object>> liveTasks = new ConcurrentHashMap<String, Map<String, Object>>();
     private final ConcurrentHashMap<String, TaskControl> liveControls = new ConcurrentHashMap<String, TaskControl>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
     private final PuppetNodeSqlService puppetNodeSqlService;
+    private final ServiceTaskExecutor taskExecutor;
 
     @Autowired
-    public SqlExportService(PuppetNodeSqlService puppetNodeSqlService) {
+    public SqlExportService(PuppetNodeSqlService puppetNodeSqlService,
+                            ServiceTaskExecutor taskExecutor) {
         this.puppetNodeSqlService = puppetNodeSqlService;
+        this.taskExecutor = taskExecutor;
     }
 
     public Map<String, Object> startTableExport(SqlCapable puppetNode,
@@ -255,34 +259,74 @@ public class SqlExportService {
         if (old != null) {
             old.cancelRequested.set(true);
         }
-        executor.submit(new Runnable() {
-            @Override
-            public void run() {
-                String type = String.valueOf(task.get("taskType"));
-                Path finalPath = new File(String.valueOf(task.get("finalPath"))).toPath();
-                try {
-                    if ("TABLE_EXPORT".equals(type)) {
-                        runTableExport(taskId, puppetNode, connection,
-                                safeString(task.get("database")),
-                                safeString(task.get("currentTable")),
-                                finalPath,
-                                newControl);
-                    } else if ("DATABASE_EXPORT".equals(type)) {
-                        @SuppressWarnings("unchecked")
-                        List<String> tables = task.get("selectedTables") instanceof List<?> ? new ArrayList<String>((List<String>) task.get("selectedTables")) : Collections.<String>emptyList();
-                        runDatabaseExport(taskId, puppetNode, connection,
-                                safeString(task.get("database")),
-                                tables,
-                                toBoolean(task.get("includeStructure"), true),
-                                toBoolean(task.get("includeData"), true),
-                                finalPath,
-                                newControl);
+        try {
+            taskExecutor.submitSqlExport(new Runnable() {
+                @Override
+                public void run() {
+                    String type = String.valueOf(task.get("taskType"));
+                    Path finalPath = new File(String.valueOf(task.get("finalPath"))).toPath();
+                    try {
+                        if ("TABLE_EXPORT".equals(type)) {
+                            runTableExport(taskId, puppetNode, connection,
+                                    safeString(task.get("database")),
+                                    safeString(task.get("currentTable")),
+                                    finalPath,
+                                    newControl);
+                        } else if ("DATABASE_EXPORT".equals(type)) {
+                            @SuppressWarnings("unchecked")
+                            List<String> tables = task.get("selectedTables") instanceof List<?> ? new ArrayList<String>((List<String>) task.get("selectedTables")) : Collections.<String>emptyList();
+                            runDatabaseExport(taskId, puppetNode, connection,
+                                    safeString(task.get("database")),
+                                    tables,
+                                    toBoolean(task.get("includeStructure"), true),
+                                    toBoolean(task.get("includeData"), true),
+                                    finalPath,
+                                    newControl);
+                        }
+                    } finally {
+                        liveControls.remove(taskId, newControl);
                     }
-                } finally {
-                    liveControls.remove(taskId, newControl);
                 }
+            });
+        } catch (RejectedExecutionException error) {
+            liveControls.remove(taskId, newControl);
+            updateTask(task, "FAILED", toInt(task.get("progress")), "SQL 导出任务队列繁忙");
+        }
+    }
+
+    public int evictFinished() {
+        long now = System.currentTimeMillis();
+        int evicted = 0;
+        for (Map.Entry<String, Map<String, Object>> entry : liveTasks.entrySet()) {
+            Map<String, Object> task = entry.getValue();
+            String status = safeString(task.get("status"));
+            long endTime = toLong(task.get("endTime"));
+            if (isTerminalStatus(status) && endTime > 0L
+                    && now - endTime > FINISHED_TASK_RETAIN_MILLIS
+                    && liveTasks.remove(entry.getKey(), task)) {
+                liveControls.remove(entry.getKey());
+                evicted++;
             }
-        });
+        }
+        return evicted;
+    }
+
+    private boolean isTerminalStatus(String status) {
+        return "COMPLETED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status);
+    }
+
+    @PreDestroy
+    public void close() {
+        for (TaskControl control : liveControls.values()) {
+            control.cancelRequested.set(true);
+            control.pauseRequested.set(false);
+        }
+        for (Map<String, Object> task : liveTasks.values()) {
+            if (!isTerminalStatus(safeString(task.get("status")))) {
+                updateTask(task, "CANCELLED", toInt(task.get("progress")), null);
+            }
+        }
+        liveControls.clear();
     }
 
     private void runTableExport(String taskId,

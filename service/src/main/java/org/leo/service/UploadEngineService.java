@@ -1,9 +1,11 @@
 package org.leo.service;
 
+import jakarta.annotation.PreDestroy;
 import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.FileCapable;
+import org.leo.service.concurrent.ServiceTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -20,8 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -33,9 +35,11 @@ public class UploadEngineService {
     private static final long FINISHED_TASK_RETAIN_MS = 30 * 60 * 1000L; // 30 分钟
 
     private final ConcurrentHashMap<String, UploadTask> tasksById = new ConcurrentHashMap<>();
-    private final ExecutorService executorService = Executors.newFixedThreadPool(
-            Math.max(4, Runtime.getRuntime().availableProcessors()),
-            r -> { Thread t = new Thread(r, "upload-engine"); t.setDaemon(true); return t; });
+    private final ServiceTaskExecutor taskExecutor;
+
+    public UploadEngineService(ServiceTaskExecutor taskExecutor) {
+        this.taskExecutor = taskExecutor;
+    }
 
     public Path resolveVfsFilePath(String vfsPath) {
         if (isBlank(vfsPath)) {
@@ -101,17 +105,24 @@ public class UploadEngineService {
 
         int resolvedChunkSize = clampInt(chunkSize, DEFAULT_CHUNK_SIZE, 1, MAX_CHUNK_SIZE);
         String taskId = computeTaskId(resolveNodeScopeKey(fileNode, sessionId), sessionId, filePath, localFile, originalFilename);
-        UploadTask task = new UploadTask(taskId, userId, sessionId, filePath, localFile, originalFilename, resolvedChunkSize);
+        UploadTask task = new UploadTask(
+                taskId, userId, sessionId, filePath, localFile,
+                originalFilename, resolvedChunkSize, taskExecutor);
         UploadTask previous = tasksById.put(taskId, task);
         if (previous != null) {
             previous.cancel();
         }
-        executorService.submit(new Runnable() {
-            @Override
-            public void run() {
-                task.runUpload(fileNode);
-            }
-        });
+        try {
+            Future<?> future = taskExecutor.submitUpload(new Runnable() {
+                @Override
+                public void run() {
+                    task.runUpload(fileNode);
+                }
+            });
+            task.attachFuture(future);
+        } catch (RejectedExecutionException error) {
+            task.reject("上传任务队列繁忙");
+        }
         return task.snapshot();
     }
 
@@ -178,6 +189,12 @@ public class UploadEngineService {
             }
         }
         return evicted;
+    }
+
+    @PreDestroy
+    public void close() {
+        for (UploadTask task : tasksById.values()) task.cancel();
+        tasksById.clear();
     }
 
     private static boolean isTerminalState(String state) {
@@ -255,6 +272,7 @@ public class UploadEngineService {
         private final String originalFilename;
         private final int chunkSize;
         private final long totalBytes;
+        private final ServiceTaskExecutor taskExecutor;
         private final long createdAt = System.currentTimeMillis();
         private final AtomicLong uploadedBytes = new AtomicLong(0L);
 
@@ -262,6 +280,7 @@ public class UploadEngineService {
         private volatile String errorMessage;
         private volatile long updatedAt = createdAt;
         private volatile boolean cancelRequested = false;
+        private volatile Future<?> future;
 
         private UploadTask(String taskId,
                            String userId,
@@ -269,7 +288,8 @@ public class UploadEngineService {
                            String filePath,
                            File localFile,
                            String originalFilename,
-                           int chunkSize) {
+                           int chunkSize,
+                           ServiceTaskExecutor taskExecutor) {
             this.taskId = taskId;
             this.userId = userId;
             this.sessionId = sessionId;
@@ -277,6 +297,7 @@ public class UploadEngineService {
             this.localFile = localFile;
             this.originalFilename = originalFilename;
             this.chunkSize = chunkSize;
+            this.taskExecutor = taskExecutor;
             this.totalBytes = Math.max(localFile.length(), 0L);
         }
 
@@ -328,6 +349,19 @@ public class UploadEngineService {
             if (!"COMPLETED".equals(state) && !"FAILED".equals(state)) {
                 state = "CANCELLED";
             }
+            updatedAt = System.currentTimeMillis();
+            Future<?> running = future;
+            taskExecutor.cancelUpload(running);
+        }
+
+        private void attachFuture(Future<?> future) {
+            this.future = future;
+            if (cancelRequested) taskExecutor.cancelUpload(future);
+        }
+
+        private void reject(String message) {
+            errorMessage = message;
+            state = "FAILED";
             updatedAt = System.currentTimeMillis();
         }
 

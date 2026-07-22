@@ -15,6 +15,7 @@ import dev.langchain4j.model.chat.response.PartialResponse;
 import dev.langchain4j.model.chat.response.PartialResponseContext;
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import org.leo.ai.concurrent.AiBackgroundExecutor;
 import org.leo.ai.service.AiErrorClassifier;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
@@ -25,8 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -44,22 +43,19 @@ public class AiModelCapabilityProbeService {
 
     private static final long BLOCKING_TIMEOUT_SECONDS = 35L;
     private static final long STREAMING_TIMEOUT_SECONDS = 35L;
-    private static final ExecutorService PROBE_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        Thread thread = new Thread(r, "ai-model-capability-probe");
-        thread.setDaemon(true);
-        return thread;
-    });
-
     private final DynamicModelProvider dynamicModelProvider;
     private final AiModelConfigService configService;
     private final AiErrorClassifier errorClassifier;
+    private final AiBackgroundExecutor backgroundExecutor;
 
     public AiModelCapabilityProbeService(DynamicModelProvider dynamicModelProvider,
                                          AiModelConfigService configService,
-                                         AiErrorClassifier errorClassifier) {
+                                         AiErrorClassifier errorClassifier,
+                                         AiBackgroundExecutor backgroundExecutor) {
         this.dynamicModelProvider = dynamicModelProvider;
         this.configService = configService;
         this.errorClassifier = errorClassifier;
+        this.backgroundExecutor = backgroundExecutor;
     }
 
     public ProbeReport probe(AiModelConfig config) {
@@ -259,7 +255,8 @@ public class AiModelCapabilityProbeService {
     }
 
     private ChatResponse callBlocking(DynamicModelProvider.ModelRuntime runtime, ChatRequest request) throws Exception {
-        Future<ChatResponse> future = PROBE_EXECUTOR.submit(() -> runtime.chatModel().chat(request));
+        Future<ChatResponse> future = backgroundExecutor.submitProbe(
+                () -> runtime.chatModel().chat(request));
         try {
             return future.get(BLOCKING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (TimeoutException error) {

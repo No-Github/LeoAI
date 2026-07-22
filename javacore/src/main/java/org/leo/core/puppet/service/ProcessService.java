@@ -83,15 +83,10 @@ public class ProcessService extends ComponentService {
     // ==================== list ====================
 
     private Map<String, Object> doList() throws Exception {
-        int osType = detectOS();
         List<String>              diagnostics = new ArrayList<String>();
-        List<Map<String, Object>> processes;
-
-        if (osType == OS_WINDOWS) {
-            processes = listWindows(diagnostics);
-        } else {
-            processes = listLinux(diagnostics);   // macOS also uses ps
-        }
+        ProcessSnapshot snapshot = listProcessesPreferred(diagnostics);
+        int osType = snapshot.osType;
+        List<Map<String, Object>> processes = snapshot.processes;
 
         Map<String, Object> result = new HashMap<String, Object>();
         result.put("code",      200);
@@ -108,15 +103,10 @@ public class ProcessService extends ComponentService {
     // ==================== find ====================
 
     private Map<String, Object> doFind(String nameFilter, int pidFilter, int portFilter) throws Exception {
-        int osType = detectOS();
         List<String>              diagnostics = new ArrayList<String>();
-        List<Map<String, Object>> allProcs;
-
-        if (osType == OS_WINDOWS) {
-            allProcs = listWindows(diagnostics);
-        } else {
-            allProcs = listLinux(diagnostics);
-        }
+        ProcessSnapshot snapshot = listProcessesPreferred(diagnostics);
+        int osType = snapshot.osType;
+        List<Map<String, Object>> allProcs = snapshot.processes;
 
         // 端口 → PID 映射（仅当 portFilter 有效时才解析）
         Map<String, List<Integer>> portToPids = null;
@@ -192,7 +182,21 @@ public class ProcessService extends ComponentService {
             return result;
         }
 
-        int    osType = detectOS();
+        HashMap<String, Object> javaParams = new HashMap<String, Object>();
+        javaParams.put("action", "killProcess");
+        javaParams.put("pid", Integer.valueOf(pid));
+        javaParams.put("force", Boolean.valueOf(force));
+        Map<String, Object> javaResult = invokeComponent("BasicInfoComponent", javaParams);
+        if (javaResult != null && Boolean.TRUE.equals(javaResult.get("handled"))) {
+            result.put("code", Integer.valueOf(200));
+            result.put("action", "kill");
+            result.put("pid", Integer.valueOf(pid));
+            result.put("force", Boolean.valueOf(force));
+            result.put("terminated", javaResult.get("terminated"));
+            result.put("source", "ProcessHandle");
+            return result;
+        }
+        int osType = detectOS();
         String output;
         if (osType == OS_WINDOWS) {
             String cmd = force
@@ -210,6 +214,47 @@ public class ProcessService extends ComponentService {
         result.put("force",  force);
         result.put("output", output != null ? output.trim() : "");
         return result;
+    }
+
+    private ProcessSnapshot listProcessesPreferred(List<String> diagnostics) throws Exception {
+        HashMap<String, Object> params = new HashMap<String, Object>();
+        params.put("action", "processes");
+        Map<String, Object> response = invokeComponent("BasicInfoComponent", params);
+        Object value = response != null ? response.get("processes") : null;
+        if (value instanceof List && !((List<?>) value).isEmpty()) {
+            List<Map<String, Object>> processes = new ArrayList<Map<String, Object>>();
+            List<?> raw = (List<?>) value;
+            for (int i = 0; i < raw.size() && processes.size() < MAX_PROCS; i++) {
+                if (raw.get(i) instanceof Map) {
+                    processes.add(new HashMap<String, Object>((Map<String, Object>) raw.get(i)));
+                }
+            }
+            if (!processes.isEmpty()) {
+                diagnostics.add("source=" + String.valueOf(response.get("source")));
+                return new ProcessSnapshot(processes, osType(String.valueOf(response.get("os"))));
+            }
+        }
+        diagnostics.add("java process collection empty, using command fallback");
+        int osType = detectOS();
+        return new ProcessSnapshot(
+                osType == OS_WINDOWS ? listWindows(diagnostics) : listLinux(diagnostics), osType);
+    }
+
+    private int osType(String value) {
+        String lower = value == null ? "" : value.toLowerCase();
+        if (lower.contains("win")) return OS_WINDOWS;
+        if (lower.contains("mac") || lower.contains("darwin")) return OS_MACOS;
+        return OS_LINUX;
+    }
+
+    private static final class ProcessSnapshot {
+        private final List<Map<String, Object>> processes;
+        private final int osType;
+
+        private ProcessSnapshot(List<Map<String, Object>> processes, int osType) {
+            this.processes = processes;
+            this.osType = osType;
+        }
     }
 
     // ==================== Linux / macOS: ps-based listing ====================

@@ -25,6 +25,7 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.AiControllerUtil;
+import org.leo.web.util.AiSseEventPump;
 import org.leo.web.util.AiStreamingCancellation;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -42,11 +43,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -60,13 +56,6 @@ import java.util.function.Consumer;
 public class PuppetNodeAiThreadService {
 
     private static final Logger logger = LoggerFactory.getLogger(PuppetNodeAiThreadService.class);
-    private static final ExecutorService SSE_QUEUE_DRAIN_EXECUTOR =
-            Executors.newCachedThreadPool(r -> {
-                Thread thread = new Thread(r, "puppet-ai-sse-queue-drain");
-                thread.setDaemon(true);
-                return thread;
-            });
-
     private final AiAgentFactory aiAgentFactory;
     private final AiModelConfigService modelConfigService;
     private final DynamicModelProvider dynamicModelProvider;
@@ -75,6 +64,7 @@ public class PuppetNodeAiThreadService {
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final AiAgentProperties agentProperties;
+    private final AiSseEventPump sseEventPump;
     private final ConcurrentMap<String, CachedPuppetNodeAgent> puppetNodeAgents = new ConcurrentHashMap<>();
 
     @Autowired
@@ -85,7 +75,8 @@ public class PuppetNodeAiThreadService {
                                      AiErrorClassifier aiErrorClassifier,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
-                                     AiAgentProperties agentProperties) {
+                                     AiAgentProperties agentProperties,
+                                     AiSseEventPump sseEventPump) {
         this.aiAgentFactory = aiAgentFactory;
         this.modelConfigService = modelConfigService;
         this.dynamicModelProvider = dynamicModelProvider;
@@ -94,6 +85,7 @@ public class PuppetNodeAiThreadService {
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentProperties = agentProperties;
+        this.sseEventPump = sseEventPump;
     }
 
     public void executeChat(PuppetNodeSession session,
@@ -121,7 +113,16 @@ public class PuppetNodeAiThreadService {
                 (name, data) -> sendRecordedEventSafely(thread, emitter, name, data));
         List<AiSseEvent> eventLog = recorder.eventLog();
         thread.getSseEventQueue().clear();
-        QueueDrainHandle queueDrain = startQueueDrain(thread, emitter, eventLog);
+        final AiSseEventPump.Handle queueDrain;
+        try {
+            queueDrain = startQueueDrain(thread, emitter, eventLog);
+        } catch (RuntimeException e) {
+            AiErrorClassifier.Classification classification = aiErrorClassifier.classify(e);
+            failThread(thread, audit, classification.message(), startMs);
+            AiControllerUtil.safeSendError(emitter, classification);
+            thread.clearExecuting();
+            return;
+        }
 
         try {
             if (thread.isStopRequested()) {
@@ -319,51 +320,16 @@ public class PuppetNodeAiThreadService {
         }
     }
 
-    private QueueDrainHandle startQueueDrain(AiThread thread,
-                                             SseEmitter emitter,
-                                             List<AiSseEvent> eventLog) {
-        AtomicBoolean stopped = new AtomicBoolean(false);
-        Future<?> future = SSE_QUEUE_DRAIN_EXECUTOR.submit(() -> {
-            // 每 5s 没有真实事件就补一个 heartbeat，让前端 watchdog 知道连接还活着。
-            // 前端 watchdog 阈值为 15s，5s 间隔留有冗余。
-            final long HEARTBEAT_INTERVAL_MS = 5_000L;
-            long lastSentAt = System.currentTimeMillis();
-            try {
-                while (!stopped.get() || !thread.getSseEventQueue().isEmpty()) {
-                    AiSseEvent event = thread.getSseEventQueue().poll(200, TimeUnit.MILLISECONDS);
-                    if (event != null) {
-                        eventLog.add(event);
-                        sendExistingEvent(emitter, event);
-                        lastSentAt = System.currentTimeMillis();
-                        continue;
-                    }
-                    // 队列空闲：检查是否需要发心跳
-                    if (!stopped.get()
-                            && System.currentTimeMillis() - lastSentAt >= HEARTBEAT_INTERVAL_MS) {
-                        Map<String, Object> hb = new LinkedHashMap<>();
-                        hb.put("ts", System.currentTimeMillis());
-                        hb.put("status", thread.getRunStatus());
-                        // 心跳事件不进 eventLog（不希望被当成业务事件持久化），
-                        // 直接旁路下发。recordSseEvent 也不调用，seq 设为 0 避免污染序号。
-                        try {
-                            sendHeartbeat(emitter, hb);
-                            lastSentAt = System.currentTimeMillis();
-                        } catch (Exception hbErr) {
-                            // 心跳失败说明客户端已断开，停止 drain 循环
-                            stopped.set(true);
-                            logger.debug("Puppet AI 心跳发送失败，停止 drain: {}", hbErr.getMessage());
-                            break;
-                        }
-                    }
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                stopped.set(true);
-                logger.debug("Puppet AI SSE 队列下发停止: {}", e.getMessage());
-            }
-        });
-        return new QueueDrainHandle(stopped, future);
+    private AiSseEventPump.Handle startQueueDrain(AiThread thread,
+                                                  SseEmitter emitter,
+                                                  List<AiSseEvent> eventLog) {
+        return sseEventPump.start(
+                "Puppet AI",
+                thread.getSseEventQueue(),
+                eventLog,
+                thread::getRunStatus,
+                event -> sendExistingEvent(emitter, event),
+                heartbeat -> sendHeartbeat(emitter, heartbeat));
     }
 
     /** 旁路下发 heartbeat 事件（不入 eventLog、不分配 seq、不进持久化）。 */
@@ -379,17 +345,8 @@ public class PuppetNodeAiThreadService {
     private void stopAndFlushQueuedEvents(AiThread thread,
                                           SseEmitter emitter,
                                           List<AiSseEvent> eventLog,
-                                          QueueDrainHandle queueDrain) {
-        if (queueDrain != null) {
-            queueDrain.stopped().set(true);
-            try {
-                queueDrain.future().get(1, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (Exception ignored) {
-                // 仍继续同步 flush 队列中尚未发送的事件。
-            }
-        }
+                                          AiSseEventPump.Handle queueDrain) {
+        sseEventPump.stop(queueDrain);
         AiSseEvent event;
         boolean sendAvailable = true;
         while ((event = thread.getSseEventQueue().poll()) != null) {
@@ -403,8 +360,6 @@ public class PuppetNodeAiThreadService {
             }
         }
     }
-
-    private record QueueDrainHandle(AtomicBoolean stopped, Future<?> future) {}
 
     private String extractSubagentInvocationId(Object data) {
         if (data instanceof Map<?, ?> map) {

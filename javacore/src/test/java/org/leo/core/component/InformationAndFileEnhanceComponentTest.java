@@ -52,6 +52,34 @@ class InformationAndFileEnhanceComponentTest {
     }
 
     @Test
+    void basicInfoProvidesJavaFirstSystemSnapshots() throws Exception {
+        Map<String, Object> processes = invoke(new BasicInfoComponent(), params("action", "processes"));
+        assertEquals(200, code(processes));
+        assertTrue(((List<?>) processes.get("processes")).size() > 0);
+
+        Map<String, Object> disks = invoke(new BasicInfoComponent(), params("action", "disks"));
+        assertEquals(200, code(disks));
+        assertTrue(((List<?>) disks.get("disks")).size() > 0);
+        List<?> diskList = (List<?>) disks.get("disks");
+        Map<?, ?> disk = (Map<?, ?>) diskList.get(0);
+        assertTrue(disk.containsKey("mount"));
+        assertTrue(disk.containsKey("totalBytes"));
+        assertTrue(disk.containsKey("freeBytes"));
+        assertFalse(disk.containsKey("TotalSpaceMB"));
+        assertFalse(disk.containsKey("usedBytes"));
+        boolean hasCapacity = false;
+        for (int i = 0; i < diskList.size(); i++) {
+            Map<?, ?> item = (Map<?, ?>) diskList.get(i);
+            if (((Number) item.get("totalBytes")).longValue() > 0L) hasCapacity = true;
+        }
+        assertTrue(hasCapacity);
+
+        Map<String, Object> network = invoke(new BasicInfoComponent(), params("action", "network"));
+        assertEquals(200, code(network));
+        assertNotNull(network.get("interfaces"));
+    }
+
+    @Test
     void credentialPropertyFilterIsCaseInsensitiveAndInvalidOperationIsRejected() throws Exception {
         String key = "leo.component.test.custom.setting";
         String previous = System.getProperty(key);

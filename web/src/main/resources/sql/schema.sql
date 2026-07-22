@@ -1,5 +1,5 @@
 -- =====================================================
--- LeoSpring 数据库设计 - 重新设计版本
+-- LeoAI 数据库设计 - 重新设计版本
 -- =====================================================
 
 -- 1. 用户表
@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     status INTEGER DEFAULT 1 CHECK (status IN (0, 1)), -- 1:启用 0:禁用
     last_login_time DATETIME,
     login_count INTEGER DEFAULT 0 CHECK (login_count >= 0),
+    password_change_required INTEGER NOT NULL DEFAULT 0 CHECK (password_change_required IN (0, 1)),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     team_id VARCHAR(50),
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     padding_strategy TEXT, -- 请求体 Padding 策略（JSON 格式）
     header_noise_strategy TEXT, -- Header 噪声注入策略（JSON 格式）
     tls_fingerprint_strategy TEXT, -- TLS 指纹伪装策略（JSON 格式）
+    component_class_name_strategy TEXT, -- Java Component 运行时类名画像（JSON 格式）
     type VARCHAR(20) DEFAULT 'java' -- 节点运行时类型：java、php
 );
 

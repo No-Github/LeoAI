@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class HostIsReachableComponent implements Runnable, ThreadFactory {
 
     private static final int MAX_THREADS = 64;
+    private static final int MAX_HOSTS = 4096;
     private static final int MAX_TIMEOUT_MS = 300000;
     private static final AtomicInteger THREAD_SEQUENCE = new AtomicInteger();
 
@@ -35,6 +36,7 @@ public class HostIsReachableComponent implements Runnable, ThreadFactory {
     private List unreachableHostList;
     private CountDownLatch latch;
     private boolean workerMode;
+    private String threadSeed;
 
     
 
@@ -102,6 +104,9 @@ public class HostIsReachableComponent implements Runnable, ThreadFactory {
             throw new IllegalArgumentException("scanHosts参数不能为空");
         }
         List scanHostsList = (List) hostsObj;
+        if (scanHostsList.size() > MAX_HOSTS) {
+            throw new IllegalArgumentException("too many scan hosts, max=" + MAX_HOSTS);
+        }
         
         // 转换主机数组
         String[] scanHosts = new String[scanHostsList.size()];
@@ -127,6 +132,7 @@ public class HostIsReachableComponent implements Runnable, ThreadFactory {
         // 有多少host就启动多少线程
         int hostCount = scanHosts.length;
         int threadCount = Math.min(hostCount, MAX_THREADS);
+        threadSeed = String.valueOf(params.get("hostId")) + "|" + hostCount;
         ExecutorService pool = Executors.newFixedThreadPool(threadCount, this);
         CountDownLatch latch = new CountDownLatch(hostCount);
 
@@ -169,7 +175,11 @@ public class HostIsReachableComponent implements Runnable, ThreadFactory {
     }
 
     public Thread newThread(Runnable task) {
-        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+        Thread thread = new Thread(task,
+                "worker-" + Integer.toHexString(String.valueOf(threadSeed).hashCode()) + "-"
+                        + THREAD_SEQUENCE.incrementAndGet());
+        thread.setDaemon(true);
+        return thread;
     }
 
     private String toHost(Object value) throws Exception {

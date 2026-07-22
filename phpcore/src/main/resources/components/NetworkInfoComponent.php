@@ -81,7 +81,8 @@ $arp = static function ($family) use ($run) {
         }
         return ['source' => '/proc/net/arp', 'entries' => $entries];
     }
-    return ['source' => 'arp -a', 'raw' => substr($run('arp -a'), 0, 8192)];
+    $command = $family === 'Windows' ? 'arp -a' : 'arp -an';
+    return ['source' => $command, 'raw' => substr($run($command), 0, 8192)];
 };
 $hexIp = static function ($value) {
     if (!preg_match('/^[0-9A-Fa-f]{8}$/', $value)) return $value;

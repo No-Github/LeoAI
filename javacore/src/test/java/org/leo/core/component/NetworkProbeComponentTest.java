@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -110,6 +111,14 @@ class NetworkProbeComponentTest {
         assertEquals(1, reachable + unreachable + pending);
         assertEquals(reachable, ((ArrayList<?>) response.get("reachableHostList")).size());
         assertEquals(unreachable, ((ArrayList<?>) response.get("unreachableHostList")).size());
+    }
+
+    @Test
+    void hostProbeRejectsOversizedBatchBeforeAllocatingWorkers() {
+        InvocationTargetException error = assertThrows(InvocationTargetException.class,
+                () -> invoke(new HostIsReachableComponent(), params(
+                        "scanHosts", Collections.nCopies(4097, "127.0.0.1"))));
+        assertTrue(error.getCause() instanceof IllegalArgumentException);
     }
 
     @Test

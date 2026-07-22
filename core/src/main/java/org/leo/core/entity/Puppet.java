@@ -44,6 +44,9 @@ public class Puppet {
     /** TLS 指纹伪装策略（JSON 格式存储） */
     private String tlsFingerprintStrategy;
 
+    /** Java Component 运行时类名画像（JSON 格式存储） */
+    private String componentClassNameStrategy;
+
     /** 节点类型 */
     private String type;
 
@@ -277,6 +280,14 @@ public class Puppet {
 
     public void setTlsFingerprintStrategy(String tlsFingerprintStrategy) {
         this.tlsFingerprintStrategy = tlsFingerprintStrategy;
+    }
+
+    public String getComponentClassNameStrategy() {
+        return componentClassNameStrategy;
+    }
+
+    public void setComponentClassNameStrategy(String componentClassNameStrategy) {
+        this.componentClassNameStrategy = componentClassNameStrategy;
     }
 
     public String getType() {

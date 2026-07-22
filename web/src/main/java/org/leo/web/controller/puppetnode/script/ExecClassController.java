@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * Java 字节码临时执行控制器：直接发起 puppet 侧 PluginComponent 调用，不持久化为插件。
  *
- * <p>底层走 PluginComponent，等价于走 JavaPluginService.invokePlugin() 但不需要先保存到 PluginManager。
+ * <p>底层走 PluginComponent，等价于已保存 Java 插件的执行路径，但不需要先保存到 PluginManager。
  * 与 {@link ExecScriptController} 互补：脚本临时执行 vs class 临时执行。
  */
 @RestController
@@ -66,7 +66,7 @@ public class ExecClassController {
         }
     }
 
-    /** 与 JavaPluginService.parsePluginParam 行为保持一致：null/空白返回空 Map；非 JSON 对象抛出。 */
+    /** 与平台插件参数解析行为保持一致：null/空白返回空 Map；非 JSON 对象抛出。 */
     @SuppressWarnings("unchecked")
     private Map<String, Object> parsePluginParam(String pluginParamJson) {
         HashMap<String, Object> pluginParam = new HashMap<>();

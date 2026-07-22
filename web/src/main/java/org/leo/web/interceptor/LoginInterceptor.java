@@ -16,6 +16,8 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 登录与权限拦截器，仅作用于 /platform/** API 路径。
@@ -48,8 +50,15 @@ public class LoginInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        boolean adminNamespace = request.getRequestURI()
-                .startsWith(request.getContextPath() + "/platform/admin/");
+        String requestPath = request.getRequestURI().substring(request.getContextPath().length());
+        if (user.requiresPasswordChange() && !isPasswordChangePath(requestPath)) {
+            HashMap<String, Object> body = ApiResponse.forbidden("首次登录需先修改密码");
+            body.put("data", Map.of("passwordChangeRequired", true));
+            writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, body);
+            return false;
+        }
+
+        boolean adminNamespace = requestPath.startsWith("/platform/admin/");
         boolean roleAwareEndpoint = !adminNamespace
                 || handlerMethod.hasMethodAnnotation(RoleAwareAdminEndpoint.class)
                 || handlerMethod.getBeanType().isAnnotationPresent(RoleAwareAdminEndpoint.class);
@@ -69,6 +78,11 @@ public class LoginInterceptor implements HandlerInterceptor {
         }
 
         return true;
+    }
+
+    private boolean isPasswordChangePath(String requestPath) {
+        return "/platform/user/change-password".equals(requestPath)
+                || "/platform/user/logout".equals(requestPath);
     }
 
     private void writeJsonError(HttpServletResponse response, int status, Object body) {

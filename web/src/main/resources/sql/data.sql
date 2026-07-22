@@ -1,5 +1,5 @@
 -- =====================================================
--- LeoSpring 初始数据
+-- LeoAI 初始数据
 -- =====================================================
 
 -- 插入默认系统管理员团队
@@ -23,7 +23,7 @@ INSERT OR REPLACE INTO teams (
     '系统初始化创建'
 );
 
--- 管理员用户由 DataInitializer 创建，以便使用环境变量或随机引导密码，避免固定口令。
+-- 管理员用户由 DataInitializer 创建，初始账号密码为 admin / 54ikun，首次登录后强制修改。
 
 -- 插入系统配置
 INSERT OR REPLACE INTO system_configs (
@@ -34,9 +34,9 @@ INSERT OR REPLACE INTO system_configs (
     create_time,
     update_time
 ) VALUES 
-('system.name', 'LeoSpring', 'string', '系统名称', datetime('now'), datetime('now')),
-('system.version', '2.1', 'string', '系统版本', datetime('now'), datetime('now')),
-('system.description', 'LeoSpring - 轻量级远程主机管理平台', 'string', '系统描述', datetime('now'), datetime('now')),
+('system.name', 'LeoAI', 'string', '系统名称', datetime('now'), datetime('now')),
+('system.version', '1.0.0', 'string', '系统版本', datetime('now'), datetime('now')),
+('system.description', 'LeoAI - 轻量级远程主机管理平台', 'string', '系统描述', datetime('now'), datetime('now')),
 ('audit.mode', 'on', 'string', '审计日志模式：on=开启，write=关闭低风险读操作，off=完全关闭', datetime('now'), datetime('now')),
 ('log.retention.days', '30', 'number', '日志保留天数', datetime('now'), datetime('now')),
 ('session.timeout.minutes', '30', 'number', '会话超时时间(分钟)', datetime('now'), datetime('now')),

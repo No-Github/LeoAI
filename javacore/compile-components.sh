@@ -84,7 +84,6 @@ fi
 if [ -z "$JAVAP_HOME" ]; then JAVAP_HOME="${JAVA_HOME:-}"; fi
 if [ -n "$JAVA8_HOME_RESOLVED" ]; then
     JAVAC="$JAVA8_HOME_RESOLVED/bin/javac"
-    JAVAP="$JAVA8_HOME_RESOLVED/bin/javap"
     COMPILER="javac"
 else
     ECJ_JAR=$(resolve_ecj_jar || true)
@@ -93,9 +92,11 @@ else
         echo "错误: 未找到可用的 Java 8 javac 或 ECJ 编译器。" >&2
         exit 1
     fi
-    JAVAP="${JAVAP_HOME:+$JAVAP_HOME/bin/}javap"
     COMPILER="ecj"
 fi
+# Java 8 javap 在较大的 class verbose 输出接入提前退出的管道时可能持续阻塞；
+# 审计工具使用当前 JDK，字节码目标版本仍由 Java 8 javac/ECJ 决定。
+JAVAP="${JAVAP_HOME:+$JAVAP_HOME/bin/}javap"
 
 echo "=== 编译 component 类 (-source 1.6 -target 1.6) ==="
 if [ "$COMPILER" = "javac" ]; then

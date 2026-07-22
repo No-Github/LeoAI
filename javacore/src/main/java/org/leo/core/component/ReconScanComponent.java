@@ -62,6 +62,10 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
 
     private static final int DEFAULT_THREADS      = 10;
     private static final int MAX_THREADS          = 128;
+    private static final int MAX_TASKS            = 64;
+    private static final int MAX_TARGETS          = 4096;
+    private static final int MAX_RULES            = 256;
+    private static final int MAX_WORK_ITEMS       = 65536;
     private static final int DEFAULT_TIMEOUT      = 3000;
     private static final int DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
     private static final int MAX_TIMEOUT          = 300000;
@@ -78,6 +82,7 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
     private String taskId;
     private Map    target;
     private Map    rule;
+    private String threadSeed;
 
 
 
@@ -457,12 +462,21 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
 
     private String startScan(HashMap p) {
         cleanupStoppedTasks();
+        if (tasks.size() >= MAX_TASKS) {
+            throw new IllegalStateException("too many recon tasks, max=" + MAX_TASKS);
+        }
 
         List targets = requireList(p.get("targets"), "targets");
         List rules   = requireList(p.get("rules"),   "rules");
 
         if (targets.isEmpty()) throw new IllegalArgumentException("targets cannot be empty");
         if (rules.isEmpty())   throw new IllegalArgumentException("rules cannot be empty");
+        if (targets.size() > MAX_TARGETS) {
+            throw new IllegalArgumentException("too many targets, max=" + MAX_TARGETS);
+        }
+        if (rules.size() > MAX_RULES) {
+            throw new IllegalArgumentException("too many rules, max=" + MAX_RULES);
+        }
 
         int threads = intVal(p.get("threads"), DEFAULT_THREADS);
         if (threads < 1)           threads = 1;
@@ -484,6 +498,9 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
 
                 // 只有协议匹配的组合才执行
                 if (!tProto.equals(rProto)) continue;
+                if (workItems.size() >= MAX_WORK_ITEMS) {
+                    throw new IllegalArgumentException("too many work items, max=" + MAX_WORK_ITEMS);
+                }
 
                 // 工作项：{target, rule}
                 HashMap item = new HashMap();
@@ -503,6 +520,7 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
         }
 
         String id = UUID.randomUUID().toString();
+        threadSeed = stringVal(p.get("hostId")) + "|" + id;
         HashMap task = new HashMap();
         task.put("taskId",     id);
         task.put("status",     STATE_RUNNING);
@@ -540,7 +558,14 @@ public class ReconScanComponent implements Runnable, InvocationHandler, ThreadFa
     }
 
     public Thread newThread(Runnable task) {
-        return new Thread(task, getClass().getSimpleName() + "-" + THREAD_SEQUENCE.incrementAndGet());
+        Thread thread = new Thread(task, workerThreadName(threadSeed));
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    private static String workerThreadName(String seed) {
+        return "worker-" + Integer.toHexString(String.valueOf(seed).hashCode()) + "-"
+                + THREAD_SEQUENCE.incrementAndGet();
     }
 
     // ==================== 暂停/恢复/停止 ====================

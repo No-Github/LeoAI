@@ -70,8 +70,9 @@ public class DataInitializer {
         admin.setTeamId(ADMIN_TEAM_ID);
         admin.setStatus(1);
         admin.setLoginCount(0);
+        admin.setPasswordChangeRequired(1);
         userService.addUser(admin);
-        logger.info("内置 admin 用户初始化完成；请首次登录后立即修改密码");
+        logger.info("内置 admin 用户初始化完成；首次登录将强制修改密码");
         return true;
     }
 

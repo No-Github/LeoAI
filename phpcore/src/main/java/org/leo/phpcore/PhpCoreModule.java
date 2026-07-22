@@ -48,7 +48,8 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
     public AbstractPuppetNode createNode(Puppet puppet,
                                          User user,
                                          PuppetNodeCreationContext context) throws Exception {
-        PuppetNodeCreationContext.TransportLayers layers = context.createTransportLayers(puppet);
+        PuppetNodeCreationContext.ConnectionPlan plan = context.createConnectionPlan(puppet);
+        PuppetNodeCreationContext.TransportLayers layers = plan.getTransportLayers();
         if (layers.getRequestLayers().isEmpty() || layers.getResponseLayers().isEmpty()) {
             throw new IllegalArgumentException("PHP Puppet 必须配置请求和响应伪装");
         }
@@ -62,7 +63,7 @@ public final class PhpCoreModule implements PuppetRuntimeModule {
         }
 
         PhpRpcClient client = new PhpRpcClient(
-                context.createCommunication(puppet),
+                plan.getCommunication(),
                 layers.getRequestLayers(), layers.getResponseLayers());
         client.setMaxReqCount(puppet.getMaxReqCount());
         applyStrategies(puppet, client);

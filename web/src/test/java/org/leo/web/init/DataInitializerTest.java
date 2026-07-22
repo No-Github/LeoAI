@@ -8,6 +8,7 @@ import org.leo.service.user.UserService;
 import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -24,5 +25,6 @@ class DataInitializerTest {
         ArgumentCaptor<User> adminCaptor = ArgumentCaptor.forClass(User.class);
         verify(users).addUser(adminCaptor.capture());
         assertTrue(PasswordUtil.verify("54ikun", adminCaptor.getValue().getPassword()));
+        assertEquals(1, adminCaptor.getValue().getPasswordChangeRequired());
     }
 }

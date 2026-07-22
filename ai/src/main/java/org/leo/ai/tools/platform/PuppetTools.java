@@ -68,7 +68,7 @@ public class PuppetTools {
         return puppetService.findPuppetByPermission(requireNonBlank(permission, "permission不能为空"));
     }
 
-    @Tool("创建平台 Puppet。puppetName、createByUserId、connLink 必填；未传 puppetId 会自动生成。urlStrategy 为 JSON 格式的 URL 随机化策略配置。paddingStrategy 为 JSON 格式的请求体 Padding 策略配置。headerNoiseStrategy 为 JSON 格式的 Header 噪声注入策略配置。tlsFingerprintStrategy 为 JSON 格式的 TLS 指纹伪装策略配置。")
+    @Tool("创建平台 Puppet。puppetName、createByUserId、connLink 必填；未传 puppetId 会自动生成。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
     public Map<String, Object> addPuppet(String puppetName, String createByUserId, String connLink,
                                          String teamId, String parentPuppetId, String protocol,
                                          String headers, String reqDisguiseId, String respDisguiseId,
@@ -77,7 +77,7 @@ public class PuppetTools {
                                          String lastHeartbeat, Integer heartbeatInterval,
                                          String remark, String puppetId, String urlStrategy,
                                          String paddingStrategy, String headerNoiseStrategy,
-                                         String tlsFingerprintStrategy) {
+                                         String tlsFingerprintStrategy, String componentClassNameStrategy) {
         Puppet puppet = new Puppet();
         puppet.setPuppetId(defaultIfBlank(puppetId, UUID.randomUUID().toString()));
         puppet.setPuppetName(requireNonBlank(puppetName, "puppetName不能为空"));
@@ -121,13 +121,14 @@ public class PuppetTools {
         puppet.setPaddingStrategy(trimToNull(paddingStrategy));
         puppet.setHeaderNoiseStrategy(trimToNull(headerNoiseStrategy));
         puppet.setTlsFingerprintStrategy(trimToNull(tlsFingerprintStrategy));
+        puppet.setComponentClassNameStrategy(trimToNull(componentClassNameStrategy));
 
         validatePuppetRelations(puppet);
         boolean created = puppetService.insertPuppet(puppet);
         return buildResult("created", created, puppet.getPuppetId(), puppet.getPuppetName());
     }
 
-    @Tool("更新平台 Puppet。puppetId 必填，其余字段按需更新。urlStrategy 为 JSON 格式的 URL 随机化策略配置。paddingStrategy 为 JSON 格式的请求体 Padding 策略配置。headerNoiseStrategy 为 JSON 格式的 Header 噪声注入策略配置。tlsFingerprintStrategy 为 JSON 格式的 TLS 指纹伪装策略配置。")
+    @Tool("更新平台 Puppet。puppetId 必填，其余字段按需更新。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
     public Map<String, Object> updatePuppet(String puppetId, String puppetName, String createByUserId,
                                             String connLink, String teamId, String parentPuppetId,
                                             String protocol, String headers, String reqDisguiseId,
@@ -136,7 +137,7 @@ public class PuppetTools {
                                             Integer maxReqCount, String permission, String lastHeartbeat,
                                             Integer heartbeatInterval, String remark, String urlStrategy,
                                             String paddingStrategy, String headerNoiseStrategy,
-                                            String tlsFingerprintStrategy) {
+                                            String tlsFingerprintStrategy, String componentClassNameStrategy) {
         Puppet existing = puppetService.findPuppetById(requireNonBlank(puppetId, "puppetId不能为空"));
         if (existing == null) {
             throw new IllegalArgumentException("Puppet不存在");
@@ -210,6 +211,9 @@ public class PuppetTools {
         }
         if (tlsFingerprintStrategy != null) {
             existing.setTlsFingerprintStrategy(trimToNull(tlsFingerprintStrategy));
+        }
+        if (componentClassNameStrategy != null) {
+            existing.setComponentClassNameStrategy(trimToNull(componentClassNameStrategy));
         }
 
         validatePuppetRelations(existing);

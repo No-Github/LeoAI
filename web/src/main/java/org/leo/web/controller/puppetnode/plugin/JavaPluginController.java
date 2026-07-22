@@ -3,7 +3,7 @@ package org.leo.web.controller.puppetnode.plugin;
 
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.JavaPluginCapable;
-import org.leo.javacore.plugin.JavaPluginService;
+import org.leo.service.plugin.PluginExecutionService;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
@@ -24,7 +24,7 @@ public class JavaPluginController {
     private static final String PARAM_PLUGIN_PARAM = "pluginParam";
 
     @Autowired
-    private JavaPluginService javaPluginService;
+    private PluginExecutionService pluginExecutionService;
 
     /**
      * 调用Java插件
@@ -39,7 +39,8 @@ public class JavaPluginController {
             javaPuppetNode = ControllerUtil.getAbstractPuppetNode(params);
             JavaPluginCapable pluginNode = ControllerUtil.requireCapability(params, JavaPluginCapable.class);
             String pluginParamStr = ControllerUtil.getOptionalStringParam(params, PARAM_PLUGIN_PARAM);
-            Map<String, Object> results = javaPluginService.invokePlugin(pluginNode, pluginId, pluginParamStr);
+            Map<String, Object> results = pluginExecutionService.invokeJavaPlugin(
+                    pluginNode, pluginId, pluginParamStr);
 
             AuditLogUtil.logSuccess(javaPuppetNode, "PLUGIN_INVOKE", "调用Java插件", pluginId, params,
                     ApiResponse.CODE_SUCCESS, "调用插件成功", AuditLogUtil.getClientIp());
