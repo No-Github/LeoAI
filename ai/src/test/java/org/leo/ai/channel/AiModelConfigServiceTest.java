@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.leo.core.entity.AiModelCapability;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiProvider;
 import org.leo.dao.mapper.AiModelCapabilityMapper;
 import org.leo.dao.mapper.AiModelConfigMapper;
 import org.leo.dao.mapper.AiProviderMapper;
@@ -12,8 +13,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,7 +45,9 @@ class AiModelConfigServiceTest {
         model.setEnabled(1);
         when(mapper.findById(7)).thenReturn(model);
 
-        assertSame(model, service.resolve(7));
+        AiModelConfig resolved = service.resolve(7);
+        assertNotSame(model, resolved);
+        assertEquals(7, resolved.getId());
     }
 
     @Test
@@ -58,8 +62,30 @@ class AiModelConfigServiceTest {
         AiModelConfig active = new AiModelConfig();
         when(mapper.findActive()).thenReturn(active);
 
-        assertSame(active, service.resolve(null));
+        assertNotSame(active, service.resolve(null));
         verifyNoInteractions(providerMapper);
+    }
+
+    @Test
+    void repeatedProviderReadsDoNotDecryptTheMyBatisCachedEntityInPlace() {
+        AiSecretCryptoService crypto = new AiSecretCryptoService("master-key-a", "unused");
+        service = new AiModelConfigService(mapper, providerMapper, capabilityMapper, crypto);
+        AiProvider stored = new AiProvider();
+        stored.setId(1);
+        stored.setApiKey(crypto.encrypt("sk-provider"));
+        stored.setHeadersJson(crypto.encrypt("{\"X-Test\":\"secret\"}"));
+        when(providerMapper.findById(1)).thenReturn(stored);
+
+        AiProvider first = service.findProviderById(1);
+        AiProvider second = service.findProviderById(1);
+
+        assertEquals("sk-provider", first.getApiKey());
+        assertEquals("sk-provider", second.getApiKey());
+        assertEquals("{\"X-Test\":\"secret\"}", second.getHeadersJson());
+        assertNotSame(stored, first);
+        assertNotSame(stored, second);
+        assertTrue(crypto.isEncrypted(stored.getApiKey()));
+        assertTrue(crypto.isEncrypted(stored.getHeadersJson()));
     }
 
     @Test

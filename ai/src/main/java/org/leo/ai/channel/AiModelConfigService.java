@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -598,28 +599,81 @@ public class AiModelConfigService {
 
     private List<AiProvider> decryptProviders(List<AiProvider> rows) {
         if (rows == null) return List.of();
-        rows.forEach(this::decryptProvider);
-        return rows;
+        List<AiProvider> decrypted = new ArrayList<>(rows.size());
+        rows.forEach(row -> decrypted.add(decryptProvider(row)));
+        return decrypted;
     }
 
     private List<AiModelConfig> decryptModels(List<AiModelConfig> rows) {
         if (rows == null) return List.of();
-        rows.forEach(this::decryptModel);
-        return rows;
+        List<AiModelConfig> decrypted = new ArrayList<>(rows.size());
+        rows.forEach(row -> decrypted.add(decryptModel(row)));
+        return decrypted;
     }
 
     private AiProvider decryptProvider(AiProvider row) {
         if (row == null) return null;
-        row.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
-        row.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
-        return row;
+        AiProvider decrypted = copyProvider(row);
+        decrypted.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
+        decrypted.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
+        return decrypted;
     }
 
     private AiModelConfig decryptModel(AiModelConfig row) {
         if (row == null) return null;
-        row.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
-        row.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
-        return row;
+        AiModelConfig decrypted = copyModel(row);
+        decrypted.setApiKey(secretCryptoService.decrypt(row.getApiKey()));
+        decrypted.setHeadersJson(secretCryptoService.decrypt(row.getHeadersJson()));
+        return decrypted;
+    }
+
+    /**
+     * MyBatis 的事务级一级缓存可能让相同查询重复返回同一个实体实例。读取密文时必须先复制，
+     * 否则第一次读取会把缓存实体改成明文，事务内第二次读取就会把该明文误判为旧格式数据。
+     */
+    private static AiProvider copyProvider(AiProvider source) {
+        AiProvider copy = new AiProvider();
+        copy.setId(source.getId());
+        copy.setName(source.getName());
+        copy.setProviderKey(source.getProviderKey());
+        copy.setBaseUrl(source.getBaseUrl());
+        copy.setApiKey(source.getApiKey());
+        copy.setProtocol(source.getProtocol());
+        copy.setCompletionsPath(source.getCompletionsPath());
+        copy.setHeadersJson(source.getHeadersJson());
+        copy.setEnabled(source.getEnabled());
+        copy.setCreateTime(source.getCreateTime());
+        copy.setUpdateTime(source.getUpdateTime());
+        copy.setRemark(source.getRemark());
+        copy.setModels(source.getModels());
+        return copy;
+    }
+
+    private static AiModelConfig copyModel(AiModelConfig source) {
+        AiModelConfig copy = new AiModelConfig();
+        copy.setId(source.getId());
+        copy.setProviderId(source.getProviderId());
+        copy.setName(source.getName());
+        copy.setProviderKey(source.getProviderKey());
+        copy.setProviderName(source.getProviderName());
+        copy.setBaseUrl(source.getBaseUrl());
+        copy.setApiKey(source.getApiKey());
+        copy.setModel(source.getModel());
+        copy.setProtocol(source.getProtocol());
+        copy.setCompletionsPath(source.getCompletionsPath());
+        copy.setIsActive(source.getIsActive());
+        copy.setEnabled(source.getEnabled());
+        copy.setFallbackModelId(source.getFallbackModelId());
+        copy.setMaxOutputTokens(source.getMaxOutputTokens());
+        copy.setThinkingEnabled(source.getThinkingEnabled());
+        copy.setReasoningEffort(source.getReasoningEffort());
+        copy.setContextWindowTokens(source.getContextWindowTokens());
+        copy.setTemperature(source.getTemperature());
+        copy.setHeadersJson(source.getHeadersJson());
+        copy.setCreateTime(source.getCreateTime());
+        copy.setUpdateTime(source.getUpdateTime());
+        copy.setRemark(source.getRemark());
+        return copy;
     }
 
     private void withEncryptedProviderSecrets(AiProvider row, Runnable writer) {
