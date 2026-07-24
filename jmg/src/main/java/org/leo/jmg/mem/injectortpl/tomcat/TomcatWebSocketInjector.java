@@ -124,7 +124,7 @@ public class TomcatWebSocketInjector {
             return;
         }
 
-        ClassLoader contextClassLoader = context.getClass().getClassLoader();
+        ClassLoader contextClassLoader = getWebAppClassLoader(context);
         Class<?> serverEndpointConfigClass;
         Class<?> builderClass;
         try {

@@ -29,7 +29,7 @@ public class JavassistUtil {
     }
 
     /**
-     * 将模板字节码中的 javax.servlet 类型引用整体映射到 jakarta.servlet。
+     * 将模板字节码中的 javax Servlet/WebSocket 类型引用整体映射到 Jakarta 命名空间。
      * Javassist 会同步更新方法描述符、字段描述符、异常表和栈映射中的类名。
      */
     public static void applyServletNamespace(CtClass ctClass, ServletNamespace namespace) {
@@ -42,6 +42,8 @@ public class JavassistUtil {
         for (String className : referencedClasses) {
             if (className.startsWith("javax.servlet.")) {
                 classMap.put(className, "jakarta.servlet." + className.substring("javax.servlet.".length()));
+            } else if (className.startsWith("javax.websocket.")) {
+                classMap.put(className, "jakarta.websocket." + className.substring("javax.websocket.".length()));
             }
         }
         ctClass.replaceClassName(classMap);

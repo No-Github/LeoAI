@@ -27,8 +27,10 @@ public class ShellGeneratorConfig {
     private String coreClassName;
     private byte[] coreClassBytes;
     private int respCode = 200;
-    // 传输协议（用于JSP Shell生成，可选：http, httpchunk，默认为http）
+    // 传输协议。WebShell 支持 http/httpchunk；内存构建支持 http/websocket。
     private String protocol = "http";
+    // 区分旧客户端未传 protocol 与调用方显式选择 http，用于兼容旧版 WebSocketInjector 请求。
+    private boolean protocolExplicitlyConfigured;
     // 中间件类型（用于注入器，需要用户明确指定宿主机中间件类型）
     private String serverType;
     private String shellType;
@@ -184,19 +186,15 @@ public class ShellGeneratorConfig {
         }
         
         /**
-         * 设置传输协议（用于JSP Shell生成）
+         * 设置传输协议。
          * 
-         * @param protocol 传输协议类型（字符串：http, httpchunk），默认为http
+         * @param protocol 传输协议类型（http、httpchunk/httpChunked、websocket），默认为 http
          * @return Builder实例
          */
         public Builder protocol(String protocol) {
             if (protocol != null && !protocol.trim().isEmpty()) {
-                String protocolLower = protocol.trim().toLowerCase(Locale.ROOT);
-                if ("http".equals(protocolLower) || "httpchunk".equals(protocolLower)) {
-                    config.protocol = protocolLower;
-                } else {
-                    throw new IllegalArgumentException("传输协议必须是 http 或 httpchunk，当前值: " + protocol);
-                }
+                config.protocol = normalizeProtocol(protocol);
+                config.protocolExplicitlyConfigured = true;
             }
             return this;
         }
@@ -452,6 +450,38 @@ public class ShellGeneratorConfig {
         return protocol;
     }
 
+    public boolean isWebSocketProtocol() {
+        return "websocket".equals(protocol);
+    }
+
+    public static String normalizeProtocol(String protocol) {
+        if (protocol == null || protocol.trim().isEmpty()) {
+            return "http";
+        }
+        String normalized = protocol.trim().toLowerCase(Locale.ROOT)
+                .replace("-", "")
+                .replace("_", "");
+        if ("http".equals(normalized)) {
+            return "http";
+        }
+        if ("httpchunk".equals(normalized) || "httpchunked".equals(normalized)) {
+            return "httpchunk";
+        }
+        if ("websocket".equals(normalized)) {
+            return "websocket";
+        }
+        throw new IllegalArgumentException(
+                "传输协议必须是 http、httpchunk 或 websocket，当前值: " + protocol);
+    }
+
+    public static List<String> getSupportedWebShellProtocols() {
+        return Collections.unmodifiableList(java.util.Arrays.asList("http", "httpchunk"));
+    }
+
+    public static List<String> getSupportedMemoryShellProtocols() {
+        return Collections.unmodifiableList(java.util.Arrays.asList("http", "websocket"));
+    }
+
     public String getMethodAction() {
         return methodAction;
     }
@@ -519,6 +549,23 @@ public class ShellGeneratorConfig {
     }
 
     /**
+     * 生成 JSP/JSPX WebShell 前的协议边界校验。
+     */
+    public void validateForWebShell(String artifactType) {
+        validate();
+        String normalizedType = artifactType == null
+                ? ""
+                : artifactType.trim().toUpperCase(Locale.ROOT);
+        if (!"JSP".equals(normalizedType) && !"JSPX".equals(normalizedType)) {
+            throw new IllegalArgumentException("WebShell 类型必须是 JSP 或 JSPX");
+        }
+        if (!getSupportedWebShellProtocols().contains(protocol)) {
+            throw new IllegalArgumentException(
+                    "JSP/JSPX WebShell 仅支持 http 或 httpchunk；websocket 请使用内存构建");
+        }
+    }
+
+    /**
      * 生成内存马注入器前的校验
      */
     public void validateForInjector() {
@@ -531,6 +578,34 @@ public class ShellGeneratorConfig {
         }
         if (packerType == null || packerType.trim().isEmpty()) {
             throw new IllegalArgumentException("配置类中 packerType 不能为空");
+        }
+        boolean webSocketInjector = "WebSocketInjector".equals(shellType);
+        if ("httpchunk".equals(protocol)) {
+            throw new IllegalArgumentException(
+                    "httpchunk 协议仅支持 JSP/JSPX WebShell，内存构建仅支持 http 或 websocket");
+        }
+        if (webSocketInjector && !protocolExplicitlyConfigured && "http".equals(protocol)) {
+            // 旧版调用方只通过 shellType 表达 WebSocket；保持生成结果可用并返回准确协议。
+            protocol = "websocket";
+        }
+        if ("websocket".equals(protocol) && !webSocketInjector) {
+            throw new IllegalArgumentException(
+                    "websocket 协议必须使用 WebSocketInjector 注入器");
+        }
+        if ("http".equals(protocol) && webSocketInjector) {
+            throw new IllegalArgumentException(
+                    "WebSocketInjector 仅支持 websocket 协议");
+        }
+        if ("http".equals(protocol)
+                && (headerName == null || headerName.trim().isEmpty()
+                || headerValue == null || headerValue.trim().isEmpty())) {
+            throw new IllegalArgumentException(
+                    "http 内存构建的 headerName 和 headerValue 不能为空");
+        }
+        if ("websocket".equals(protocol)
+                && (urlPattern == null || !urlPattern.startsWith("/") || urlPattern.contains("*"))) {
+            throw new IllegalArgumentException(
+                    "websocket 的 urlPattern 必须是以 / 开头且不含通配符 * 的端点路径");
         }
     }
 

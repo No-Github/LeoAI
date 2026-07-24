@@ -101,6 +101,31 @@ class GeneratedBytecodeCompatibilityTest {
         assertTrue(injectorConstants.contains("jakarta/servlet/DispatcherType"));
     }
 
+    @Test
+    void jakartaNamespaceRemapsWebSocketEndpointReferences() throws Exception {
+        ShellGeneratorConfig config = createConfig(ServletNamespace.JAKARTA);
+        config.setCoreClassBytes(new byte[]{1, 2, 3});
+        ShellGeneratorConfig websocketConfig = ShellGeneratorConfig
+                .builder(config.getReqDisguise(), config.getRespDisguise())
+                .coreClassName(config.getCoreClassName())
+                .shellClassName("org.example.JakartaWebSocket")
+                .injectorClassName("org.example.JakartaWebSocketInjector")
+                .serverType("Tomcat")
+                .shellType("WebSocketInjector")
+                .packerType("DefaultBase64")
+                .protocol("websocket")
+                .urlPattern("/socket")
+                .servletNamespace(ServletNamespace.JAKARTA)
+                .build();
+        websocketConfig.setCoreClassBytes(config.getCoreClassBytes());
+
+        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
+                .makeShell(websocketConfig, "LeoWebSocketTpl");
+        String constants = new String(shell, StandardCharsets.ISO_8859_1);
+        assertFalse(constants.contains("javax/websocket"));
+        assertTrue(constants.contains("jakarta/websocket"));
+    }
+
     private static void assertLegacyClassFile(byte[] classBytes, String label) {
         assertEquals(JAVA_5_CLASS_MAJOR, majorVersion(classBytes),
                 label + " 字节码版本必须兼容 JDK 6/7/8");

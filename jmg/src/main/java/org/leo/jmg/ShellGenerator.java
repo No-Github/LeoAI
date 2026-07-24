@@ -60,6 +60,7 @@ public class ShellGenerator {
      * @throws Exception 生成异常
      */
     public String generateJspShell() throws Exception {
+        config.validateForWebShell("JSP");
         try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
             byte[] coreClass = generateCoreClass();
             String protocol = config.getProtocol();
@@ -82,6 +83,7 @@ public class ShellGenerator {
      * @throws Exception 生成异常
      */
     public String generateJspxShell() throws Exception {
+        config.validateForWebShell("JSPX");
         try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
             byte[] coreClass = generateCoreClass();
             String protocol = config.getProtocol();
@@ -132,8 +134,9 @@ public class ShellGenerator {
      * @throws IllegalArgumentException 如果配置无效
      */
     private void validateHeaderConfig(String headerName, String headerValue) {
-        if (headerName == null || headerValue == null) {
-            throw new IllegalArgumentException("配置类中headerName和headerValue不能为空");
+        if (headerName == null || headerName.trim().isEmpty()
+                || headerValue == null || headerValue.trim().isEmpty()) {
+            throw new IllegalArgumentException("http 内存构建的 headerName 和 headerValue 不能为空");
         }
     }
     
@@ -163,7 +166,9 @@ public class ShellGenerator {
         config.setAbstractTranslet(isAbstractTranslet);
         String serverType = config.getServerType();
 
-        validateHeaderConfig(headerName, headerValue);
+        if (!config.isWebSocketProtocol()) {
+            validateHeaderConfig(headerName, headerValue);
+        }
         validateServerType(serverType);
 
         // 验证应用服务器类型是否支持该注入器形态

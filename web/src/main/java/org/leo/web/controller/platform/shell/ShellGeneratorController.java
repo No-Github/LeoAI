@@ -94,6 +94,10 @@ public class ShellGeneratorController {
         result.put("packerAvailability", PackerRegistry.getAvailabilityMap());
         result.put("targetJavaVersions", getTargetJavaVersions());
         result.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
+        HashMap<String, Object> transportProtocols = new HashMap<>();
+        transportProtocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
+        transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
+        result.put("transportProtocols", transportProtocols);
         result.put("runtimeGenerators", scriptGeneratorService.getMetadata());
 
         return ApiResponse.success(result);
@@ -249,8 +253,6 @@ public class ShellGeneratorController {
             // 获取必需参数
             String reqDisguiseId = ControllerUtil.getRequiredStringParam(params, "reqDisguiseId");
             String respDisguiseId = ControllerUtil.getRequiredStringParam(params, "respDisguiseId");
-            String headerName = ControllerUtil.getRequiredStringParam(params, "headerName");
-            String headerValue = ControllerUtil.getRequiredStringParam(params, "headerValue");
             String serverType = firstNonBlankParam(params, "serverType");
             if (serverType == null) {
                 return ApiResponse.badRequest("serverType 不能为空");
@@ -262,6 +264,21 @@ public class ShellGeneratorController {
             String packerType = firstNonBlankParam(params, "packerType");
             if (packerType == null) {
                 return ApiResponse.badRequest("packerType 不能为空");
+            }
+            String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
+            String normalizedProtocol = ShellGeneratorConfig.normalizeProtocol(protocol);
+            if ("httpchunk".equals(normalizedProtocol)) {
+                return ApiResponse.badRequest(
+                        "httpchunk 协议仅支持 JSP/JSPX WebShell，内存构建仅支持 http 或 websocket");
+            }
+            boolean webSocketBuild = "websocket".equals(normalizedProtocol)
+                    || "WebSocketInjector".equals(shellType);
+            String headerName = ControllerUtil.getOptionalStringParam(params, "headerName");
+            String headerValue = ControllerUtil.getOptionalStringParam(params, "headerValue");
+            if (!webSocketBuild
+                    && (headerName == null || headerName.isBlank()
+                    || headerValue == null || headerValue.isBlank())) {
+                return ApiResponse.badRequest("http 内存构建必须提供 headerName 和 headerValue");
             }
 
             // 获取Disguise对象
@@ -282,7 +299,7 @@ public class ShellGeneratorController {
             String shellClassName = ControllerUtil.getOptionalStringParam(params, "shellClassName");
             String urlPattern = ControllerUtil.getOptionalStringParam(params, "urlPattern");
             if (urlPattern == null || urlPattern.isBlank()) {
-                urlPattern = "/*";
+                urlPattern = webSocketBuild ? "/leo" : "/*";
             }
 
             Boolean isAbstractTranslet = getOptionalBooleanParam(params, "isAbstractTranslet");
@@ -304,6 +321,9 @@ public class ShellGeneratorController {
                     .urlPattern(urlPattern)
                     .abstractTranslet(isAbstractTranslet)
                     .respCode(respCode);
+            if (protocol != null && !protocol.isBlank()) {
+                configBuilder.protocol(protocol);
+            }
 
             Boolean byPassJavaModule = getOptionalBooleanParam(params, "byPassJavaModule");
             if (byPassJavaModule != null) {
@@ -355,6 +375,7 @@ public class ShellGeneratorController {
             data.put("code", packed);
             data.put("packerType", config.getPackerType());
             data.put("shellType", config.getShellType());
+            data.put("protocol", config.getProtocol());
             data.put("serverType", config.getServerType());
             data.put("coreClassName", config.getCoreClassName());
             data.put("injectorClassName", config.getInjectorClassName());
@@ -366,7 +387,9 @@ public class ShellGeneratorController {
             data.put("compatibilityWarnings", compatibilityWarnings);
             data.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
             data.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
-            data.put("headerConfig",headerName+" : "+headerValue);
+            data.put("headerConfig", config.isWebSocketProtocol()
+                    ? "WebSocket endpoint: " + config.getUrlPattern()
+                    : headerName + " : " + headerValue);
 
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {

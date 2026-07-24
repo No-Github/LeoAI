@@ -9,7 +9,9 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ShellGeneratorConfigTest {
 
@@ -20,6 +22,79 @@ class ShellGeneratorConfigTest {
                 .build();
 
         assertEquals("httpchunk", config.getProtocol());
+    }
+
+    @Test
+    void normalizesAllSupportedTransportProtocolNames() {
+        assertEquals("httpchunk", builder().protocol("httpChunked").build().getProtocol());
+        assertEquals("httpchunk", builder().protocol("HTTP-CHUNK").build().getProtocol());
+        assertEquals("websocket", builder().protocol(" WebSocket ").build().getProtocol());
+        assertThrows(IllegalArgumentException.class, () -> builder().protocol("ftp"));
+    }
+
+    @Test
+    void exposesProtocolCapabilityMatrix() {
+        assertEquals(Arrays.asList("http", "httpchunk"),
+                ShellGeneratorConfig.getSupportedWebShellProtocols());
+        assertEquals(Arrays.asList("http", "websocket"),
+                ShellGeneratorConfig.getSupportedMemoryShellProtocols());
+    }
+
+    @Test
+    void enforcesProtocolBoundariesForWebAndMemoryArtifacts() {
+        ShellGeneratorConfig websocketWebShell = builder().protocol("websocket").build();
+        IllegalArgumentException webShellError = assertThrows(IllegalArgumentException.class,
+                () -> websocketWebShell.validateForWebShell("JSP"));
+        assertTrue(webShellError.getMessage().contains("内存构建"));
+
+        ShellGeneratorConfig chunkedMemory = injectorBuilder()
+                .protocol("httpchunk")
+                .build();
+        IllegalArgumentException chunkedError = assertThrows(IllegalArgumentException.class,
+                chunkedMemory::validateForInjector);
+        assertTrue(chunkedError.getMessage().contains("仅支持 JSP/JSPX"));
+
+        ShellGeneratorConfig wrongWebSocketInjector = injectorBuilder()
+                .protocol("websocket")
+                .build();
+        assertThrows(IllegalArgumentException.class, wrongWebSocketInjector::validateForInjector);
+
+        ShellGeneratorConfig websocket = injectorBuilder()
+                .protocol("websocket")
+                .shellType("WebSocketInjector")
+                .urlPattern("/socket")
+                .build();
+        assertDoesNotThrow(websocket::validateForInjector);
+    }
+
+    @Test
+    void infersWebSocketForLegacyInjectorRequestsAndValidatesEndpointPath() {
+        ShellGeneratorConfig legacy = injectorBuilder()
+                .shellType("WebSocketInjector")
+                .urlPattern("/socket")
+                .build();
+        legacy.validateForInjector();
+        assertEquals("websocket", legacy.getProtocol());
+
+        ShellGeneratorConfig invalidPath = injectorBuilder()
+                .protocol("websocket")
+                .shellType("WebSocketInjector")
+                .urlPattern("/*")
+                .build();
+        assertThrows(IllegalArgumentException.class, invalidPath::validateForInjector);
+    }
+
+    @Test
+    void requiresHeaderGuardForHttpMemoryArtifacts() {
+        ShellGeneratorConfig missingHeader = builder()
+                .serverType("Tomcat")
+                .shellType("FilterInjector")
+                .packerType("DefaultBase64")
+                .build();
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                missingHeader::validateForInjector);
+        assertTrue(error.getMessage().contains("headerName"));
     }
 
     @Test
@@ -96,5 +171,14 @@ class ShellGeneratorConfigTest {
 
     private ShellGeneratorConfig.Builder builder() {
         return ShellGeneratorConfig.builder(new Disguise(), new Disguise());
+    }
+
+    private ShellGeneratorConfig.Builder injectorBuilder() {
+        return builder()
+                .header("X-Test", "secret")
+                .serverType("Tomcat")
+                .shellType("FilterInjector")
+                .packerType("DefaultBase64")
+                .urlPattern("/*");
     }
 }
