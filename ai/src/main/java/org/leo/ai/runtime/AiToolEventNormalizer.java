@@ -1,4 +1,4 @@
-package org.leo.web.service;
+package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.service.tool.BeforeToolExecution;
@@ -10,16 +10,13 @@ import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Normalizes LangChain4j tool lifecycle callbacks into frontend SSE payloads.
- */
-class AiToolEventFactory {
+/** 将 LangChain4j 工具回调转换为稳定的 AI 领域事件载荷。 */
+final class AiToolEventNormalizer {
 
-    private AiToolEventFactory() {
+    private AiToolEventNormalizer() {
     }
 
-    /** 工具开始执行 → 前端 {@code node} 事件（kind=tool）。 */
-    static Map<String, Object> buildToolStartEventData(BeforeToolExecution execution) {
+    static Map<String, Object> started(BeforeToolExecution execution) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         data.put("kind", "tool");
@@ -35,8 +32,7 @@ class AiToolEventFactory {
         return data;
     }
 
-    /** 工具参数流式生成中 → 前端 {@code tool_delta} 事件（kind=tool）。 */
-    static Map<String, Object> buildToolDeltaEventData(PartialToolCall partial) {
+    static Map<String, Object> partial(PartialToolCall partial) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         String id = partial.id();
@@ -53,8 +49,7 @@ class AiToolEventFactory {
         return data;
     }
 
-    /** 工具执行完毕 → 前端 {@code patch} 事件（kind=tool）。 */
-    static Map<String, Object> buildToolEventData(ToolExecution execution) {
+    static Map<String, Object> completed(ToolExecution execution) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         long startTime = toEpochMs(execution.startTime(), now);
@@ -73,8 +68,10 @@ class AiToolEventFactory {
     }
 
     private static void injectPlanStepIndex(Map<String, Object> data) {
-        int idx = AiToolContext.getPlanStepIndex();
-        if (idx >= 0) data.put("planStepIndex", idx);
+        int index = AiToolContext.getPlanStepIndex();
+        if (index >= 0) {
+            data.put("planStepIndex", index);
+        }
     }
 
     private static String truncate(String value, int max) {
@@ -82,8 +79,8 @@ class AiToolEventFactory {
         return value.length() > max ? value.substring(0, max) + "\n...(已截断)" : value;
     }
 
-    private static long toEpochMs(LocalDateTime ldt, long fallback) {
-        if (ldt == null) return fallback;
-        return ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    private static long toEpochMs(LocalDateTime value, long fallback) {
+        if (value == null) return fallback;
+        return value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 }

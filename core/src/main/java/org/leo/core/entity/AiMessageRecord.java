@@ -4,6 +4,10 @@ public class AiMessageRecord {
 
     private String messageId;
     private String threadId;
+    private String turnId;
+    private String runId;
+    private Long messageSeq;
+    private String status;
     private String role;
     private String content;
     private Long timestamp;
@@ -17,6 +21,18 @@ public class AiMessageRecord {
 
     public String getThreadId() { return threadId; }
     public void setThreadId(String threadId) { this.threadId = threadId; }
+
+    public String getTurnId() { return turnId; }
+    public void setTurnId(String turnId) { this.turnId = turnId; }
+
+    public String getRunId() { return runId; }
+    public void setRunId(String runId) { this.runId = runId; }
+
+    public Long getMessageSeq() { return messageSeq; }
+    public void setMessageSeq(Long messageSeq) { this.messageSeq = messageSeq; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
 
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }

@@ -37,11 +37,14 @@ public class PuppetNodeLifecycleService {
 
     private final PuppetService puppetService;
     private final PuppetNodeFactory puppetNodeFactory;
+    private final PuppetNodeAiThreadService aiThreadService;
 
     public PuppetNodeLifecycleService(PuppetService puppetService,
-                                      PuppetNodeFactory puppetNodeFactory) {
+                                      PuppetNodeFactory puppetNodeFactory,
+                                      PuppetNodeAiThreadService aiThreadService) {
         this.puppetService = puppetService;
         this.puppetNodeFactory = puppetNodeFactory;
+        this.aiThreadService = aiThreadService;
     }
 
     public PuppetInitResponse initLiveSession(Puppet puppet, User user) throws Exception {
@@ -82,8 +85,7 @@ public class PuppetNodeLifecycleService {
             logger.warn("缓存模式回填数据失败, puppetId={}: {}", puppetId, ex.getMessage());
         }
 
-        PuppetNodeSessionContainer.addSession(sessionId, session);
-        createInitialAiThread(session, puppetId);
+        registerSessionWithInitialAiThread(session, puppetId);
 
         logger.info("缓存模式 session 已创建, puppetId={}, sessionId={}", puppetId, sessionId);
         return new PuppetInitResponse(sessionId, true, session.getCapabilities());
@@ -111,9 +113,8 @@ public class PuppetNodeLifecycleService {
                 }
 
                 loadPersistedReconSummary(session, node, userId);
-                createInitialAiThread(session, puppet != null ? puppet.getPuppetId() : null);
-
-                PuppetNodeSessionContainer.addSession(session.getSessionId(), session);
+                registerSessionWithInitialAiThread(
+                        session, puppet != null ? puppet.getPuppetId() : null);
 
                 logger.debug("测试连接成功，hostId: {}, sessionId: {}", hostId, sessionId);
                 // 无论是否负载均衡，首次成功即返回（避免重复创建 session）
@@ -212,10 +213,12 @@ public class PuppetNodeLifecycleService {
         }
     }
 
-    private void createInitialAiThread(PuppetNodeSession session, String puppetId) {
+    void registerSessionWithInitialAiThread(PuppetNodeSession session, String puppetId) {
+        PuppetNodeSessionContainer.addSession(session.getSessionId(), session);
         try {
-            String initThreadId = UUID.randomUUID().toString();
-            session.createAiThread(initThreadId, "对话 1");
+            // 与 /puppet-node/ai/thread/create 完全复用同一条创建链路：
+            // 内存线程、数据库记录、模型配置和会话预热保持一致。
+            aiThreadService.createThread(session, "对话 1", null, null);
         } catch (Exception ex) {
             logger.warn("创建初始 AI 线程失败, puppetId={}, sessionId={}: {}",
                     puppetId, session.getSessionId(), ex.getMessage());

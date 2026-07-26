@@ -1,6 +1,7 @@
 package org.leo.web.security;
 
 import org.junit.jupiter.api.Test;
+import org.leo.web.controller.platform.ai.PlatformAiController;
 import org.leo.web.controller.platform.disguise.DisguiseManagerController;
 import org.leo.web.controller.platform.fingerprint.FingerprintManageController;
 import org.leo.web.controller.platform.plugin.PluginManageController;
@@ -25,6 +26,7 @@ class AdminOnlyEndpointCoverageTest {
                 Set.of("saveFingerprint", "deleteFingerprint", "importFingerprints"));
         assertAdminOnly(SkillController.class,
                 Set.of("save", "delete", "toggle", "saveFile", "deleteFile", "moveFile", "importSkills"));
+        assertAdminOnly(PlatformAiController.class, Set.of("telemetry"));
     }
 
     private static void assertAdminOnly(Class<?> controllerType, Set<String> methodNames) {

@@ -1,0 +1,368 @@
+package org.leo.ai.runtime;
+
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.PartialResponse;
+import dev.langchain4j.model.chat.response.PartialResponseContext;
+import dev.langchain4j.model.chat.response.PartialThinking;
+import dev.langchain4j.model.chat.response.PartialThinkingContext;
+import dev.langchain4j.model.chat.response.PartialToolCall;
+import dev.langchain4j.model.chat.response.PartialToolCallContext;
+import dev.langchain4j.model.chat.response.StreamingHandle;
+import dev.langchain4j.rag.content.Content;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.tool.BeforeToolExecution;
+import dev.langchain4j.service.tool.ToolExecution;
+import org.junit.jupiter.api.Test;
+import org.leo.core.ai.AiTurnRuntime;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+
+class AiTurnExecutionEngineTest {
+
+    private final AiTurnCoordinator coordinator = new AiTurnCoordinator();
+    private final AiTurnExecutionEngine engine = new AiTurnExecutionEngine();
+
+    @Test
+    void emitsTransportIndependentDeltasAndCompletesOnlyOnce() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        TestHandle handle = new TestHandle();
+        ChatResponse response = mock(ChatResponse.class);
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
+            tokenStream.thinking.accept(
+                    new PartialThinking("分析"),
+                    new PartialThinkingContext(handle));
+            tokenStream.response.accept(
+                    new PartialResponse("结果"),
+                    new PartialResponseContext(handle));
+            tokenStream.complete.accept(response);
+            tokenStream.error.accept(new IllegalStateException("late error"));
+        });
+        RecordingListener listener = new RecordingListener();
+
+        engine.execute(command(turn, stream), listener);
+
+        assertEquals(List.of(
+                AiTurnEvent.Type.THINKING_DELTA,
+                AiTurnEvent.Type.TEXT_DELTA), listener.eventTypes());
+        assertEquals(1, listener.completed.get());
+        assertEquals(0, listener.failed.get());
+        assertEquals("结果", listener.lastResult.output());
+        assertEquals(response, listener.lastResult.response());
+        assertEquals(AiTurnOutcome.COMPLETED, runtime.outcome);
+        assertEquals(1, runtime.clearCount);
+    }
+
+    @Test
+    void cancelsStreamingHandleEvenWhenItArrivesAfterStopRequest() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        TestHandle handle = new TestHandle();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
+            runtime.requestStop("用户停止");
+            tokenStream.response.accept(
+                    new PartialResponse("late"),
+                    new PartialResponseContext(handle));
+            tokenStream.error.accept(new InterruptedException("stopped"));
+        });
+        RecordingListener listener = new RecordingListener();
+
+        engine.execute(command(turn, stream), listener);
+
+        assertTrue(handle.isCancelled());
+        assertEquals(1, listener.failed.get());
+        assertTrue(listener.lastFailure.cancelled());
+        assertEquals("用户停止", listener.lastFailure.cancellationReason());
+        assertEquals(AiTurnOutcome.CANCELLED, runtime.outcome);
+    }
+
+    @Test
+    void doesNotCreateModelStreamWhenTurnWasAlreadyCancelled() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        runtime.requestStop("启动前停止");
+        AtomicBoolean streamCreated = new AtomicBoolean(false);
+        RecordingListener listener = new RecordingListener();
+
+        engine.execute(new AiTurnCommand(
+                "thread-1", "memory-1", turn, () -> {
+                    streamCreated.set(true);
+                    return new ScriptedTokenStream(tokenStream -> {});
+                }), listener);
+
+        assertFalse(streamCreated.get());
+        assertTrue(listener.lastFailure.cancelled());
+        assertEquals("启动前停止", listener.lastFailure.cancellationReason());
+    }
+
+    @Test
+    void convertsSynchronousStartFailureIntoFailedTurn() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        RecordingListener listener = new RecordingListener();
+
+        engine.execute(command(turn, new ScriptedTokenStream(tokenStream -> {
+            throw new IllegalStateException("start failed");
+        })), listener);
+
+        assertEquals(1, listener.failed.get());
+        assertEquals("start failed", listener.lastFailure.cause().getMessage());
+        assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
+        assertFalse(runtime.claimed);
+    }
+
+    @Test
+    void reportsTerminalPersistenceFailureAndMarksRuntimeFailed() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        RecordingListener listener = new RecordingListener();
+        listener.failCompletion = true;
+
+        engine.execute(command(turn, new ScriptedTokenStream(tokenStream ->
+                tokenStream.complete.accept(mock(ChatResponse.class)))), listener);
+
+        assertEquals(1, listener.terminalFailures.get());
+        assertEquals(AiTurnOutcome.COMPLETED, listener.attemptedOutcome);
+        assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
+        assertFalse(runtime.claimed);
+    }
+
+    private RecordingRuntime claimedRuntime() {
+        RecordingRuntime runtime = new RecordingRuntime();
+        assertTrue(coordinator.tryClaim(runtime));
+        return runtime;
+    }
+
+    private AiTurnCommand command(AiTurnCoordinator.Execution turn, TokenStream stream) {
+        return new AiTurnCommand("thread-1", "memory-1", turn, () -> stream);
+    }
+
+    private static final class RecordingListener implements AiTurnExecutionListener {
+        private final List<AiTurnEvent> events = new ArrayList<>();
+        private final AtomicInteger completed = new AtomicInteger();
+        private final AtomicInteger failed = new AtomicInteger();
+        private final AtomicInteger terminalFailures = new AtomicInteger();
+        private AiTurnFailure lastFailure;
+        private AiTurnResult lastResult;
+        private AiTurnOutcome attemptedOutcome;
+        private boolean failCompletion;
+
+        @Override
+        public void onEvent(AiTurnEvent event) {
+            events.add(event);
+        }
+
+        @Override
+        public void onCompleted(AiTurnResult result) {
+            completed.incrementAndGet();
+            lastResult = result;
+            if (failCompletion) {
+                throw new IllegalStateException("database unavailable");
+            }
+        }
+
+        @Override
+        public void onFailed(AiTurnFailure failure) {
+            failed.incrementAndGet();
+            lastFailure = failure;
+        }
+
+        @Override
+        public void onTerminalFailure(AiTurnOutcome attemptedOutcome, Exception error) {
+            terminalFailures.incrementAndGet();
+            this.attemptedOutcome = attemptedOutcome;
+        }
+
+        private List<AiTurnEvent.Type> eventTypes() {
+            return events.stream().map(AiTurnEvent::type).toList();
+        }
+    }
+
+    private static final class ScriptedTokenStream implements TokenStream {
+        private final Consumer<ScriptedTokenStream> script;
+        private BiConsumer<PartialResponse, PartialResponseContext> response = (value, context) -> {};
+        private BiConsumer<PartialThinking, PartialThinkingContext> thinking = (value, context) -> {};
+        private BiConsumer<PartialToolCall, PartialToolCallContext> partialTool = (value, context) -> {};
+        private Consumer<BeforeToolExecution> beforeTool = value -> {};
+        private Consumer<ToolExecution> toolExecuted = value -> {};
+        private Consumer<ChatResponse> complete = value -> {};
+        private Consumer<Throwable> error = value -> {};
+
+        private ScriptedTokenStream(Consumer<ScriptedTokenStream> script) {
+            this.script = script;
+        }
+
+        @Override
+        public TokenStream onPartialResponse(Consumer<String> consumer) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialResponseWithContext(
+                BiConsumer<PartialResponse, PartialResponseContext> consumer) {
+            response = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialThinking(Consumer<PartialThinking> consumer) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialThinkingWithContext(
+                BiConsumer<PartialThinking, PartialThinkingContext> consumer) {
+            thinking = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialToolCall(Consumer<PartialToolCall> consumer) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onPartialToolCallWithContext(
+                BiConsumer<PartialToolCall, PartialToolCallContext> consumer) {
+            partialTool = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onRetrieved(Consumer<List<Content>> consumer) {
+            return this;
+        }
+
+        @Override
+        public TokenStream onIntermediateResponse(Consumer<ChatResponse> consumer) {
+            return this;
+        }
+
+        @Override
+        public TokenStream beforeToolExecution(Consumer<BeforeToolExecution> consumer) {
+            beforeTool = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onToolExecuted(Consumer<ToolExecution> consumer) {
+            toolExecuted = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onCompleteResponse(Consumer<ChatResponse> consumer) {
+            complete = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream onError(Consumer<Throwable> consumer) {
+            error = consumer;
+            return this;
+        }
+
+        @Override
+        public TokenStream ignoreErrors() {
+            return this;
+        }
+
+        @Override
+        public void start() {
+            script.accept(this);
+        }
+    }
+
+    private static final class TestHandle implements StreamingHandle {
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+
+        @Override
+        public void cancel() {
+            cancelled.set(true);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled.get();
+        }
+    }
+
+    private static final class RecordingRuntime implements AiTurnRuntime {
+        private boolean claimed;
+        private boolean stopRequested;
+        private String stopReason;
+        private Runnable stopCallback;
+        private AiTurnOutcome outcome;
+        private int clearCount;
+
+        @Override
+        public boolean claimExecution() {
+            if (claimed) return false;
+            claimed = true;
+            stopRequested = false;
+            stopReason = null;
+            return true;
+        }
+
+        @Override
+        public void markExecuting(Thread thread) {
+            claimed = true;
+        }
+
+        @Override
+        public void clearExecuting() {
+            claimed = false;
+            stopRequested = false;
+            stopCallback = null;
+            clearCount++;
+        }
+
+        @Override
+        public boolean isStopRequested() {
+            return stopRequested;
+        }
+
+        @Override
+        public String getStopReason() {
+            return stopReason;
+        }
+
+        @Override
+        public void setStopCallback(Runnable callback) {
+            stopCallback = callback;
+        }
+
+        @Override
+        public void markCompleted() {
+            outcome = AiTurnOutcome.COMPLETED;
+        }
+
+        @Override
+        public void markFailed() {
+            outcome = AiTurnOutcome.FAILED;
+        }
+
+        @Override
+        public void markCancelled() {
+            outcome = AiTurnOutcome.CANCELLED;
+        }
+
+        private void requestStop(String reason) {
+            stopRequested = true;
+            stopReason = reason;
+            if (stopCallback != null) {
+                stopCallback.run();
+            }
+        }
+    }
+}

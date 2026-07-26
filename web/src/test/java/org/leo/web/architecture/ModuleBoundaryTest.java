@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ModuleBoundaryTest {
 
@@ -55,13 +56,243 @@ class ModuleBoundaryTest {
         List<Path> entryPoints = List.of(
                 webSource.resolve("controller/platform/ai/PlatformAiController.java"),
                 webSource.resolve("controller/puppetnode/ai/PuppetNodeAiController.java"),
-                webSource.resolve("service/PlatformAiService.java"),
-                webSource.resolve("service/PuppetNodeAiThreadService.java"));
+                webSource.resolve("service/PlatformAiTurnService.java"),
+                webSource.resolve("service/PuppetNodeAiTurnService.java"),
+                webSource.resolve("service/PuppetNodeAiDelegationService.java"));
 
         for (Path entryPoint : entryPoints) {
             String source = Files.readString(entryPoint);
             assertFalse(source.contains("Executors.newCachedThreadPool"), entryPoint.toString());
             assertFalse(source.contains("static final ExecutorService"), entryPoint.toString());
+        }
+    }
+
+    @Test
+    void aiEntryPointsUseSharedTurnCoordinatorForLifecycleTransitions() throws Exception {
+        Path webSource = repositoryRoot().resolve("web/src/main/java/org/leo/web");
+        List<Path> entryPoints = List.of(
+                webSource.resolve("controller/platform/ai/PlatformAiController.java"),
+                webSource.resolve("controller/puppetnode/ai/PuppetNodeAiController.java"),
+                webSource.resolve("service/PlatformAiTurnService.java"),
+                webSource.resolve("service/PuppetNodeAiTurnService.java"),
+                webSource.resolve("service/PuppetNodeAiDelegationService.java"));
+        List<String> directTransitions = List.of(
+                ".claimExecution(",
+                ".markExecuting(",
+                ".markCompleted(",
+                ".markFailed(",
+                ".markCancelled(",
+                ".clearExecuting(");
+
+        for (Path entryPoint : entryPoints) {
+            String source = Files.readString(entryPoint);
+            for (String transition : directTransitions) {
+                assertFalse(source.contains(transition), entryPoint + " 直接调用了 " + transition);
+            }
+        }
+    }
+
+    @Test
+    void aiWebServicesDoNotManipulateLangChainMemoryDirectly() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> services = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+
+        for (Path service : services) {
+            String source = Files.readString(service);
+            assertFalse(source.contains("import dev.langchain4j.memory.ChatMemory"), service.toString());
+            assertFalse(source.contains(".getChatMemory("), service.toString());
+            assertFalse(source.contains("rollbackCancelledTurn"), service.toString());
+            assertFalse(source.contains("withPersistedHistoryContext"), service.toString());
+        }
+    }
+
+    @Test
+    void aiWebServicesDelegateLangChainStreamingCallbacksToExecutionEngine() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> services = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+        List<String> callbacks = List.of(
+                ".onPartialThinkingWithContext(",
+                ".onPartialResponseWithContext(",
+                ".onPartialToolCallWithContext(",
+                ".beforeToolExecution(",
+                ".onToolExecuted(",
+                ".onCompleteResponse(",
+                ".onError(");
+
+        for (Path service : services) {
+            String source = Files.readString(service);
+            for (String callback : callbacks) {
+                assertFalse(source.contains(callback),
+                        service + " 直接注册了 LangChain 回调 " + callback);
+            }
+        }
+    }
+
+    @Test
+    void aiWebServicesDelegateSseTransportAndAgentRuntimeCaching() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> services = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"));
+        List<String> transportInternals = List.of(
+                "SseEmitter.event()",
+                "AiSseEventPump",
+                "startQueueDrain(",
+                "sendExistingEvent(");
+        List<String> agentRuntimeInternals = List.of(
+                "AiAgentFactory",
+                "DynamicModelProvider",
+                "plannedRuntimeCacheKey(",
+                "buildRuntime(",
+                "ConcurrentMap<");
+
+        for (Path service : services) {
+            String source = Files.readString(service);
+            for (String internal : transportInternals) {
+                assertFalse(source.contains(internal),
+                        service + " 直接实现了 SSE transport 细节 " + internal);
+            }
+            for (String internal : agentRuntimeInternals) {
+                assertFalse(source.contains(internal),
+                        service + " 直接实现了 Agent runtime 缓存细节 " + internal);
+            }
+        }
+    }
+
+    @Test
+    void aiApplicationServicesKeepThreadAndTurnUseCasesSeparate() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> threadServices = List.of(
+                serviceSource.resolve("PlatformAiThreadService.java"),
+                serviceSource.resolve("PuppetNodeAiThreadService.java"));
+        List<Path> turnServices = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+
+        for (Path service : threadServices) {
+            String source = Files.readString(service);
+            assertFalse(source.contains("AiTurnExecutionEngine"), service.toString());
+            assertFalse(source.contains("SseEmitter"), service.toString());
+            assertFalse(source.contains("executeChat("), service.toString());
+        }
+        for (Path service : turnServices) {
+            String source = Files.readString(service);
+            assertFalse(source.contains("listThreads("), service.toString());
+            assertFalse(source.contains("createThread("), service.toString());
+            assertFalse(source.contains("deleteThread("), service.toString());
+            assertFalse(source.contains("restorePersistedThread("), service.toString());
+        }
+    }
+
+    @Test
+    void aiTurnServicesDelegatePersistenceFinalization() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> turnServices = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+        List<String> finalizationInternals = List.of(
+                ".completeTurn(",
+                ".discardTurn(",
+                ".recordSuccess(",
+                ".recordFailure(",
+                "managedMemory.rebuild(");
+
+        for (Path service : turnServices) {
+            String source = Files.readString(service);
+            for (String internal : finalizationInternals) {
+                assertFalse(source.contains(internal),
+                        service + " 绕过了统一 Turn 终结器: " + internal);
+            }
+        }
+    }
+
+    @Test
+    void aiTurnServicesDelegateExecutionOrchestration() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> turnServices = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+        List<String> orchestrationInternals = List.of(
+                "AiTurnExecutionEngine",
+                "AiTurnExecutionListener",
+                ".commit(",
+                ".discard(",
+                ".recoverTerminalFailure(");
+
+        for (Path service : turnServices) {
+            String source = Files.readString(service);
+            for (String internal : orchestrationInternals) {
+                assertFalse(source.contains(internal),
+                        service + " 绕过了统一 Turn 编排器: " + internal);
+            }
+            assertFalse(source.contains("AiTurnOrchestrator") && !source.contains(
+                    "turnOrchestrator.execute("), service.toString());
+        }
+    }
+
+    @Test
+    void aiTurnServicesDelegateTerminalPresentation() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        Path platform = serviceSource.resolve("PlatformAiTurnService.java");
+        Path puppet = serviceSource.resolve("PuppetNodeAiTurnService.java");
+        Path delegation = serviceSource.resolve("PuppetNodeAiDelegationService.java");
+        List<String> presentationInternals = List.of(
+                "new AiTurnOrchestrator.Lifecycle",
+                "AiTimelineRecorder",
+                "AiTurnTimelineEventAdapter",
+                "AiSseTransport",
+                "AiControllerUtil",
+                "onCommitted(",
+                "onDiscarded(",
+                "onTerminal(");
+
+        for (Path service : List.of(platform, puppet, delegation)) {
+            String source = Files.readString(service);
+            for (String internal : presentationInternals) {
+                assertFalse(source.contains(internal),
+                        service + " 绕过了 Turn Presenter: " + internal);
+            }
+        }
+
+        String platformSource = Files.readString(platform);
+        String puppetSource = Files.readString(puppet);
+        String delegationSource = Files.readString(delegation);
+        assertTrue(platformSource.contains("sseTurnPresenter.open("), platform.toString());
+        assertTrue(puppetSource.contains("sseTurnPresenter.open("), puppet.toString());
+        assertTrue(delegationSource.contains("delegationPresenter.open("),
+                delegation.toString());
+    }
+
+    @Test
+    void aiTurnServicesPropagateOneTraceAndDelegateItsFinalization() throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> services = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+
+        for (Path service : services) {
+            String source = Files.readString(service);
+            assertTrue(source.contains("AiTurnTrace.start("),
+                    service + " 未在准备阶段创建 trace");
+            assertTrue(source.contains("AiTurnTrace.Checkpoint.AGENT_RESOLVED"),
+                    service + " 未记录 Agent 解析阶段");
+            assertTrue(source.contains("agentRuntime.runtimeJson(),")
+                            && source.contains("trace);"),
+                    service + " 未把同一 trace 绑定到持久化 Run");
+            assertFalse(source.contains(".updateRunTrace("),
+                    service + " 不应直接完成 trace 持久化");
+            assertFalse(source.contains("telemetryRegistry.record("),
+                    service + " 不应直接完成终态指标");
         }
     }
 

@@ -10,6 +10,7 @@ import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.entity.AiTurnRecord;
 
 import java.util.List;
 
@@ -78,22 +79,25 @@ public interface AiConversationMapper {
     @Delete("DELETE FROM ai_threads WHERE thread_id = #{threadId}")
     int deleteThread(@Param("threadId") String threadId);
 
-    @Delete("DELETE FROM ai_messages WHERE thread_id = #{threadId}")
-    int deleteMessages(@Param("threadId") String threadId);
+    @Insert("INSERT INTO ai_turns (turn_id, thread_id, status, created_at, completed_at) "
+            + "VALUES (#{turnId}, #{threadId}, #{status}, #{createdAt}, #{completedAt})")
+    int insertTurn(AiTurnRecord row);
 
-    @Delete("DELETE FROM ai_runs WHERE thread_id = #{threadId}")
-    int deleteRuns(@Param("threadId") String threadId);
+    @Update("UPDATE ai_turns SET status = #{status}, completed_at = #{completedAt} "
+            + "WHERE turn_id = #{turnId}")
+    int finishTurn(AiTurnRecord row);
 
-    @Delete("DELETE FROM ai_subagent_invocations WHERE parent_thread_id = #{threadId} OR child_thread_id = #{threadId}")
-    int deleteSubagentInvocations(@Param("threadId") String threadId);
-
-    @Insert("INSERT INTO ai_messages (message_id, thread_id, role, content, timestamp, attachments_json, "
-            + "nodes_json, review_json, plan_json) "
-            + "VALUES (#{messageId}, #{threadId}, #{role}, #{content}, #{timestamp}, #{attachmentsJson}, "
+    @Insert("INSERT INTO ai_messages (message_id, thread_id, turn_id, run_id, message_seq, status, "
+            + "role, content, timestamp, attachments_json, nodes_json, review_json, plan_json) "
+            + "VALUES (#{messageId}, #{threadId}, #{turnId}, #{runId}, "
+            + "COALESCE(#{messageSeq}, (SELECT COALESCE(MAX(message_seq), 0) + 1 "
+            + "FROM ai_messages WHERE thread_id = #{threadId})), "
+            + "#{status}, #{role}, #{content}, #{timestamp}, #{attachmentsJson}, "
             + "#{nodesJson}, #{reviewJson}, #{planJson})")
     int insertMessage(AiMessageRecord row);
 
-    @Select("SELECT * FROM ai_messages WHERE thread_id = #{threadId} ORDER BY timestamp ASC, message_id ASC "
+    @Select("SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
+            + "ORDER BY timestamp ASC, message_seq ASC, message_id ASC "
             + "LIMIT #{limit} OFFSET #{offset}")
     List<AiMessageRecord> listMessages(@Param("threadId") String threadId,
                                        @Param("offset") int offset,
@@ -103,19 +107,32 @@ public interface AiConversationMapper {
     int countMessages(@Param("threadId") String threadId);
 
     @Select("SELECT * FROM (SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
-            + "ORDER BY timestamp DESC, message_id DESC LIMIT #{limit}) ORDER BY timestamp ASC, message_id ASC")
+            + "AND status = 'committed' ORDER BY timestamp DESC, message_seq DESC, message_id DESC "
+            + "LIMIT #{limit}) ORDER BY timestamp ASC, message_seq ASC, message_id ASC")
     List<AiMessageRecord> recentMessages(@Param("threadId") String threadId, @Param("limit") int limit);
 
-    @Insert("INSERT INTO ai_runs (run_id, thread_id, status, started_at, finished_at, duration_ms, "
-            + "config_id, input, output, error_message, tool_call_count, runtime_json) "
-            + "VALUES (#{runId}, #{threadId}, #{status}, #{startedAt}, #{finishedAt}, #{durationMs}, "
-            + "#{configId}, #{input}, #{output}, #{errorMessage}, #{toolCallCount}, #{runtimeJson})")
+    @Update("UPDATE ai_messages SET status = #{status} "
+            + "WHERE thread_id = #{threadId} AND turn_id = #{turnId}")
+    int updateTurnMessageStatus(@Param("threadId") String threadId,
+                                @Param("turnId") String turnId,
+                                @Param("status") String status);
+
+    @Insert("INSERT INTO ai_runs (run_id, thread_id, turn_id, status, started_at, finished_at, duration_ms, "
+            + "config_id, input, output, error_message, error_category, raw_error_message, "
+            + "tool_call_count, runtime_json, trace_id, trace_json) "
+            + "VALUES (#{runId}, #{threadId}, #{turnId}, #{status}, #{startedAt}, #{finishedAt}, #{durationMs}, "
+            + "#{configId}, #{input}, #{output}, #{errorMessage}, #{errorCategory}, #{rawErrorMessage}, "
+            + "#{toolCallCount}, #{runtimeJson}, #{traceId}, #{traceJson})")
     int insertRun(AiRunRecord row);
 
     @Update("UPDATE ai_runs SET status = #{status}, finished_at = #{finishedAt}, duration_ms = #{durationMs}, "
-            + "output = #{output}, error_message = #{errorMessage}, tool_call_count = #{toolCallCount} "
+            + "output = #{output}, error_message = #{errorMessage}, error_category = #{errorCategory}, "
+            + "raw_error_message = #{rawErrorMessage}, tool_call_count = #{toolCallCount} "
             + "WHERE run_id = #{runId}")
     int finishRun(AiRunRecord row);
+
+    @Update("UPDATE ai_runs SET trace_json = #{traceJson} WHERE run_id = #{runId}")
+    int updateRunTrace(AiRunRecord row);
 
     // ── 子 Agent 调用记录 ─────────────────────────────────────────────────────
     @Insert("INSERT INTO ai_subagent_invocations (invocation_id, parent_thread_id, parent_message_id, "

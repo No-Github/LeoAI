@@ -312,11 +312,61 @@ CREATE INDEX IF NOT EXISTS idx_ai_threads_scope
 CREATE INDEX IF NOT EXISTS idx_ai_threads_parent
     ON ai_threads(parent_thread_id);
 
--- 16. AI 对话消息
+-- 16. AI 对话轮次：一轮用户输入及其最终 assistant 输出
+CREATE TABLE IF NOT EXISTS ai_turns (
+    turn_id VARCHAR(64) PRIMARY KEY,
+    thread_id VARCHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'committed', 'discarded')),
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_turns_thread_time
+    ON ai_turns(thread_id, created_at);
+
+-- 17. AI 单次运行记录：当前一个 Turn 对应一个 Run
+CREATE TABLE IF NOT EXISTS ai_runs (
+    run_id VARCHAR(64) PRIMARY KEY,
+    thread_id VARCHAR(64) NOT NULL,
+    turn_id VARCHAR(64) NOT NULL UNIQUE,
+    status VARCHAR(32) NOT NULL
+        CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    duration_ms INTEGER,
+    config_id INTEGER,
+    input TEXT,
+    output TEXT,
+    error_message TEXT,
+    error_category VARCHAR(64),
+    raw_error_message TEXT,
+    tool_call_count INTEGER,
+    runtime_json TEXT,
+    trace_id VARCHAR(64) NOT NULL UNIQUE,
+    trace_json TEXT,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+    FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_runs_thread_time
+    ON ai_runs(thread_id, started_at);
+
+CREATE INDEX IF NOT EXISTS idx_ai_runs_turn
+    ON ai_runs(turn_id);
+
+-- 18. AI 对话消息
 CREATE TABLE IF NOT EXISTS ai_messages (
     message_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,
-    role VARCHAR(32) NOT NULL,
+    turn_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    message_seq INTEGER NOT NULL CHECK (message_seq > 0),
+    status VARCHAR(16) NOT NULL
+        CHECK (status IN ('pending', 'committed', 'discarded')),
+    role VARCHAR(32) NOT NULL
+        CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content TEXT,
     timestamp INTEGER NOT NULL,
     attachments_json TEXT,
@@ -325,33 +375,22 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     nodes_json TEXT,
     review_json TEXT,
     plan_json TEXT,
-    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+    FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE CASCADE,
+    FOREIGN KEY (run_id) REFERENCES ai_runs(run_id) ON DELETE CASCADE,
+    UNIQUE (thread_id, message_seq)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_messages_thread_time
     ON ai_messages(thread_id, timestamp);
 
--- 17. AI 单次运行记录
-CREATE TABLE IF NOT EXISTS ai_runs (
-    run_id VARCHAR(64) PRIMARY KEY,
-    thread_id VARCHAR(64) NOT NULL,
-    status VARCHAR(32) NOT NULL,
-    started_at INTEGER NOT NULL,
-    finished_at INTEGER,
-    duration_ms INTEGER,
-    config_id INTEGER,
-    input TEXT,
-    output TEXT,
-    error_message TEXT,
-    tool_call_count INTEGER,
-    runtime_json TEXT,
-    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
-);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_thread_status_seq
+    ON ai_messages(thread_id, status, message_seq);
 
-CREATE INDEX IF NOT EXISTS idx_ai_runs_thread_time
-    ON ai_runs(thread_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_turn
+    ON ai_messages(turn_id);
 
--- 18. AI 运行事件（SSE 事件持久化）
+-- 19. AI 运行事件（SSE 事件持久化）
 CREATE TABLE IF NOT EXISTS ai_events (
     event_id VARCHAR(64) PRIMARY KEY,
     run_id VARCHAR(64),
@@ -370,7 +409,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
 CREATE INDEX IF NOT EXISTS idx_ai_events_run_seq
     ON ai_events(run_id, event_seq);
 
--- 19. AI 子 Agent 调用记录（Phase 1 脚手架，父会话→子会话的派发关系）
+-- 20. AI 子 Agent 调用记录（父会话→子会话的派发关系）
 CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
     invocation_id VARCHAR(64) PRIMARY KEY,
     parent_thread_id VARCHAR(64) NOT NULL,

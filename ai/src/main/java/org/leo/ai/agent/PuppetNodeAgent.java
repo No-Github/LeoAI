@@ -3,6 +3,7 @@ package org.leo.ai.agent;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.UserMessage;
+import dev.langchain4j.service.memory.ChatMemoryAccess;
 
 /**
  * PuppetNode 侧 AI Agent 接口。
@@ -14,7 +15,7 @@ import dev.langchain4j.service.UserMessage;
  * - chat: 流式，用于 SSE 实时推送
  * - chatSync: 非流式，返回完整响应（含 thinking）
  */
-public interface PuppetNodeAgent {
+public interface PuppetNodeAgent extends ChatMemoryAccess {
 
     TokenStream chat(@MemoryId String memoryId, @UserMessage String message);
 

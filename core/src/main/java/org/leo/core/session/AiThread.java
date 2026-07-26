@@ -1,5 +1,6 @@
 package org.leo.core.session;
 
+import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiRuntimeStats;
@@ -28,7 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>以 false 完成所有挂起的工具确认 Future，防止拦截器永久阻塞</li>
  * </ol>
  */
-public class AiThread {
+public class AiThread implements AiEventStreamRuntime {
 
     private static final int MAX_TURNS_WARN = 25;
     /** 为页面刷新和较长时间网络中断保留足够的可重放事件。 */
@@ -138,6 +139,7 @@ public class AiThread {
     /** 在 SSE 任务线程 finally 块中调用，清除引用。 */
     public void clearExecuting() {
         this.executingThread = null;
+        this.stopCallback = null;
         executionClaimed.set(false);
         stopRequested.set(false);
     }
@@ -191,6 +193,9 @@ public class AiThread {
     // ── SSE 事件队列 ──────────────────────────────────────────────────────────
 
     public LinkedBlockingQueue<AiSseEvent> getSseEventQueue() { return sseEventQueue; }
+
+    @Override
+    public LinkedBlockingQueue<AiSseEvent> getAiSseEventQueue() { return sseEventQueue; }
 
     public AiSseEvent offerSseEvent(String name, Object data) {
         AiSseEvent event = recordSseEvent(name, data);

@@ -11,6 +11,7 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.ai.*;
 import org.leo.web.service.PuppetNodeAiThreadService;
+import org.leo.web.service.PuppetNodeAiTurnService;
 import org.leo.web.util.AiAttachmentPrompt;
 import org.leo.web.util.AiControllerUtil;
 import org.leo.web.util.AiSseExecutor;
@@ -30,15 +31,18 @@ import java.util.concurrent.RejectedExecutionException;
 public class PuppetNodeAiController {
 
     private final PuppetNodeAiThreadService aiThreadService;
+    private final PuppetNodeAiTurnService turnService;
     private final AiAuditLogStore auditLogStore;
     private final PlanTools planTools;
     private final AiSseExecutor aiSseExecutor;
 
     public PuppetNodeAiController(PuppetNodeAiThreadService aiThreadService,
+                                  PuppetNodeAiTurnService turnService,
                                   AiAuditLogStore auditLogStore,
                                   PlanTools planTools,
                                   AiSseExecutor aiSseExecutor) {
         this.aiThreadService = aiThreadService;
+        this.turnService = turnService;
         this.auditLogStore = auditLogStore;
         this.planTools = planTools;
         this.aiSseExecutor = aiSseExecutor;
@@ -98,7 +102,7 @@ public class PuppetNodeAiController {
             AiControllerUtil.safeSendError(emitter, resolution.errorMessage());
             return emitter;
         }
-        if (!thread.claimExecution()) {
+        if (!turnService.tryClaimExecution(thread)) {
             AiControllerUtil.safeSendError(emitter, "当前对话正在执行中，请等待完成或先停止后再发送新消息");
             return emitter;
         }
@@ -118,23 +122,18 @@ public class PuppetNodeAiController {
 
             String guardedMessage = AiAttachmentPrompt.appendTo(
                     ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
-            final String messageForAgent = resolution.restoredFromPersistence() && !resolution.hasPersistentCheckpoint()
-                    ? aiThreadService.withPersistedHistoryContext(session, threadId, guardedMessage)
-                    : guardedMessage;
+            final String messageForAgent = guardedMessage;
 
-            // 持久化 user 消息
-            aiThreadService.persistMessage(session, threadId, "user", message,
-                    AiAttachmentPrompt.metadata(body.attachments()));
-
-            aiSseExecutor.submitChat(() -> aiThreadService.executeChat(
+            aiSseExecutor.submitChat(() -> turnService.executeChat(
                     session, thread, threadId, messageForAgent, audit, emitter, startMs,
-                    body.reasoningEffort()));
+                    body.reasoningEffort(), message,
+                    AiAttachmentPrompt.metadata(body.attachments())));
         } catch (RejectedExecutionException e) {
-            thread.clearExecuting();
+            turnService.releaseExecutionClaim(thread);
             AiControllerUtil.safeSendError(emitter, "AI 执行队列繁忙，请稍后重试");
             return emitter;
         } catch (RuntimeException e) {
-            thread.clearExecuting();
+            turnService.releaseExecutionClaim(thread);
             AiControllerUtil.safeSendError(emitter, "启动 AI 对话失败: " + e.getMessage());
             return emitter;
         }

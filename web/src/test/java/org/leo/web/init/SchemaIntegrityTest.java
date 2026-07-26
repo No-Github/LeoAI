@@ -40,10 +40,27 @@ class SchemaIntegrityTest {
                           (thread_id, scope, title, created_at, last_active_at)
                         VALUES ('thread-1', 'platform', 'test', 1, 1)
                         """);
+                assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                        INSERT INTO ai_turns
+                          (turn_id, thread_id, status, created_at)
+                        VALUES ('invalid-turn', 'thread-1', 'completed', 1)
+                        """));
+                statement.executeUpdate("""
+                        INSERT INTO ai_turns
+                          (turn_id, thread_id, status, created_at)
+                        VALUES ('turn-1', 'thread-1', 'pending', 1)
+                        """);
+                statement.executeUpdate("""
+                        INSERT INTO ai_runs
+                          (run_id, thread_id, turn_id, status, started_at, trace_id)
+                        VALUES ('run-1', 'thread-1', 'turn-1', 'running', 1, 'trace-1')
+                        """);
                 statement.executeUpdate("""
                         INSERT INTO ai_messages
-                          (message_id, thread_id, role, content, timestamp)
-                        VALUES ('message-1', 'thread-1', 'user', 'hello', 1)
+                          (message_id, thread_id, turn_id, run_id, message_seq, status,
+                           role, content, timestamp)
+                        VALUES ('message-1', 'thread-1', 'turn-1', 'run-1', 1, 'pending',
+                                'user', 'hello', 1)
                         """);
                 statement.executeUpdate("DELETE FROM ai_threads WHERE thread_id = 'thread-1'");
             }
@@ -53,6 +70,17 @@ class SchemaIntegrityTest {
                 assertTrue(resultSet.next());
                 assertEquals(0, resultSet.getInt(1));
             }
+            try (Statement statement = connection.createStatement()) {
+                assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_turns"));
+                assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_runs"));
+            }
+        }
+    }
+
+    private int scalar(Statement statement, String sql) throws SQLException {
+        try (ResultSet resultSet = statement.executeQuery(sql)) {
+            assertTrue(resultSet.next());
+            return resultSet.getInt(1);
         }
     }
 }

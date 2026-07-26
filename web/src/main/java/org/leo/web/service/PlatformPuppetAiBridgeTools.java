@@ -35,20 +35,23 @@ public class PlatformPuppetAiBridgeTools {
 
     private static final int MAX_SUMMARY_CHARS = 12_000;
 
-    private final PuppetNodeAiThreadService puppetAiService;
+    private final PuppetNodeAiThreadService threadService;
+    private final PuppetNodeAiDelegationService delegationService;
     private final PuppetNodeLifecycleService lifecycleService;
     private final PermissionService permissionService;
     private final UserService userService;
     private final AiConversationStoreService conversationStore;
     private final AiAuditLogStore auditLogStore;
 
-    public PlatformPuppetAiBridgeTools(PuppetNodeAiThreadService puppetAiService,
+    public PlatformPuppetAiBridgeTools(PuppetNodeAiThreadService threadService,
+                                       PuppetNodeAiDelegationService delegationService,
                                        PuppetNodeLifecycleService lifecycleService,
                                        PermissionService permissionService,
                                        UserService userService,
                                        AiConversationStoreService conversationStore,
                                        AiAuditLogStore auditLogStore) {
-        this.puppetAiService = puppetAiService;
+        this.threadService = threadService;
+        this.delegationService = delegationService;
         this.lifecycleService = lifecycleService;
         this.permissionService = permissionService;
         this.userService = userService;
@@ -101,7 +104,7 @@ public class PlatformPuppetAiBridgeTools {
         emitSubagentEvent(caller.state(), invocation, session.getSessionId(), resolvePuppetId(session));
 
         try {
-            Map<String, Object> created = puppetAiService.createChildThread(
+            Map<String, Object> created = threadService.createChildThread(
                     session, childTitle(normalizedTask), effectiveConfigId, AiThread.MODE_AUTO, parentThreadId);
             String childThreadId = String.valueOf(created.get("threadId"));
             AiThread childThread = session.getAiThread(childThreadId);
@@ -121,7 +124,7 @@ public class PlatformPuppetAiBridgeTools {
                     normalizedTask, false);
             auditLogStore.append(audit);
             String guardedMessage = ControllerUtil.buildAiPolicyPrompt(policy, normalizedTask);
-            Map<String, Object> delegated = puppetAiService.executeDelegatedChat(
+            Map<String, Object> delegated = delegationService.execute(
                     session, childThread, normalizedTask, guardedMessage, audit,
                     invocationId, event -> forwardChildEvent(caller.state(), invocation, event));
 

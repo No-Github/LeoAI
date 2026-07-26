@@ -40,6 +40,22 @@ class DatabaseInitializerFreshStartTest {
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM pragma_table_info('ai_runs') WHERE name='runtime_json'"));
             assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_runs') WHERE name='trace_id'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_runs') WHERE name='trace_json'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='turn_id'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='run_id'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='message_seq'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='status'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_runs') WHERE name='turn_id'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_turns'"));
+            assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='uk_users_user_name_nocase'"));
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM system_configs WHERE config_key='system.version' AND config_value='1.0.0'"));
@@ -53,6 +69,34 @@ class DatabaseInitializerFreshStartTest {
                     """));
             assertTrue(rejected.getMessage().contains("CHECK constraint"));
         }
+    }
+
+    @Test
+    void rejectsLegacyAiSchemaWithActionableMessage() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy.db"));
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    CREATE TABLE ai_messages (
+                        message_id VARCHAR(64) PRIMARY KEY,
+                        thread_id VARCHAR(64) NOT NULL,
+                        role VARCHAR(32) NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE ai_runs (
+                        run_id VARCHAR(64) PRIMARY KEY,
+                        thread_id VARCHAR(64) NOT NULL,
+                        status VARCHAR(32) NOT NULL
+                    )
+                    """);
+        }
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> new DatabaseInitializer(dataSource).run());
+
+        assertTrue(error.getMessage().contains("不兼容旧 AI 对话数据"));
     }
 
     private int scalar(Statement statement, String sql) throws SQLException {

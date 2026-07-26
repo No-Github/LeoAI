@@ -1,6 +1,7 @@
 package org.leo.ai.platform;
 
 import org.leo.ai.agent.AiStateAccessor;
+import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiRuntimeStats;
@@ -20,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>生命周期由 {@link PlatformAiStateStore} 管理，绑定到 HTTP Session。
  */
-public class PlatformAiState implements AiStateAccessor {
+public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
 
     /** 为页面刷新和较长时间网络中断保留足够的可重放事件。 */
     private static final int MAX_RECENT_EVENTS = 2000;
@@ -80,7 +81,10 @@ public class PlatformAiState implements AiStateAccessor {
     }
 
     public void clearExecuting() {
-        this.executingThread = null; executionClaimed.set(false); stopRequested.set(false);
+        this.executingThread = null;
+        this.stopCallback = null;
+        executionClaimed.set(false);
+        stopRequested.set(false);
     }
 
     @Override public boolean isStopRequested() { return stopRequested.get(); }

@@ -5,6 +5,7 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
 import dev.langchain4j.model.TokenCountEstimator;
 import org.leo.ai.config.AiAgentProperties;
+import org.leo.ai.memory.ManagedConversationMemory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,13 +20,16 @@ public class AiChatMemoryProviderFactory {
     private final TokenCountEstimator tokenEstimator;
     private final ContextCompressionService compressionService;
     private final AiAgentProperties agentProperties;
+    private final ManagedConversationMemory managedMemory;
 
     public AiChatMemoryProviderFactory(TokenCountEstimator tokenEstimator,
                                        ContextCompressionService compressionService,
-                                       AiAgentProperties agentProperties) {
+                                       AiAgentProperties agentProperties,
+                                       ManagedConversationMemory managedMemory) {
         this.tokenEstimator = tokenEstimator;
         this.compressionService = compressionService;
         this.agentProperties = agentProperties;
+        this.managedMemory = managedMemory;
     }
 
     public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens) {
@@ -42,17 +46,17 @@ public class AiChatMemoryProviderFactory {
         int effectiveWindow = effectiveContextWindowTokens(modelContextWindowTokens, configuredMaxTokens);
         return memoryId -> {
             if (effectiveWindow <= 96_000) {
-                return TokenWindowChatMemory.builder()
+                return managedMemory.initialize(TokenWindowChatMemory.builder()
                         .id(memoryId)
                         .maxTokens(effectiveWindow, tokenEstimator)
-                        .build();
+                        .build());
             }
             int maxMessages = Math.max(50, effectiveWindow / 2_000);
-            return new CompressingChatMemory(
+            return managedMemory.initialize(new CompressingChatMemory(
                     memoryId,
                     MessageWindowChatMemory.builder().id(memoryId).maxMessages(maxMessages).build(),
                     compressionService,
-                    effectiveWindow);
+                    effectiveWindow));
         };
     }
 

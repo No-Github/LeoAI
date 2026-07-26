@@ -64,7 +64,7 @@ class PlatformPuppetAiBridgeToolsTest {
                     thread.setAiConfigId(7);
                     return Map.of("threadId", "child-1");
                 });
-        when(fixture.puppetAiService.executeDelegatedChat(
+        when(fixture.delegationService.execute(
                 eq(session), any(), eq("检查当前身份"), any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
                     @SuppressWarnings("unchecked")
@@ -92,6 +92,8 @@ class PlatformPuppetAiBridgeToolsTest {
 
     private Fixture fixture(String recordOwner) {
         PuppetNodeAiThreadService puppetAiService = mock(PuppetNodeAiThreadService.class);
+        PuppetNodeAiDelegationService delegationService =
+                mock(PuppetNodeAiDelegationService.class);
         PuppetNodeLifecycleService lifecycleService = mock(PuppetNodeLifecycleService.class);
         PermissionService permissionService = mock(PermissionService.class);
         UserService userService = mock(UserService.class);
@@ -116,13 +118,16 @@ class PlatformPuppetAiBridgeToolsTest {
         state.setExecutionPolicy(new AiExecutionPolicy("user-1", "alice", "normal"));
 
         PlatformPuppetAiBridgeTools tools = new PlatformPuppetAiBridgeTools(
-                puppetAiService, lifecycleService, permissionService, userService,
+                puppetAiService, delegationService, lifecycleService,
+                permissionService, userService,
                 conversationStore, auditLogStore);
-        return new Fixture(tools, puppetAiService, permissionService, conversationStore, user, state);
+        return new Fixture(tools, puppetAiService, delegationService,
+                permissionService, conversationStore, user, state);
     }
 
     private record Fixture(PlatformPuppetAiBridgeTools tools,
                            PuppetNodeAiThreadService puppetAiService,
+                           PuppetNodeAiDelegationService delegationService,
                            PermissionService permissionService,
                            AiConversationStoreService conversationStore,
                            User user,

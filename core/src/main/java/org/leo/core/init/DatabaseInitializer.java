@@ -14,6 +14,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Initializes the current release schema and seed data for a fresh installation. */
 @Component
@@ -35,6 +37,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enableWalMode();
+        validateAiConversationSchema();
         validateApiKeys();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
@@ -80,4 +83,43 @@ public class DatabaseInitializer implements CommandLineRunner {
             log.warn("开启 WAL 模式失败: {}", error.getMessage());
         }
     }
+
+    /**
+     * AI 对话结构采用全新 Turn 模型，不对旧表做隐式兼容或半迁移。
+     * 发现旧结构时直接失败，避免应用运行到首轮消息写入时才产生难以理解的 SQL 异常。
+     */
+    private void validateAiConversationSchema() {
+        try (Connection connection = dataSource.getConnection()) {
+            requireColumns(connection, "ai_turns",
+                    Set.of("turn_id", "thread_id", "status", "created_at", "completed_at"));
+            requireColumns(connection, "ai_runs",
+                    Set.of("run_id", "thread_id", "turn_id", "status",
+                            "error_category", "raw_error_message",
+                            "trace_id", "trace_json"));
+            requireColumns(connection, "ai_messages",
+                    Set.of("message_id", "thread_id", "turn_id", "run_id",
+                            "message_seq", "status", "role"));
+        } catch (SQLException error) {
+            throw new IllegalStateException("校验 AI 对话数据库结构失败", error);
+        }
+    }
+
+    private void requireColumns(Connection connection, String table,
+                                Set<String> requiredColumns) throws SQLException {
+        Set<String> actual = new HashSet<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA table_info('" + table + "')")) {
+            while (result.next()) {
+                actual.add(result.getString("name"));
+            }
+        }
+        if (!actual.containsAll(requiredColumns)) {
+            Set<String> missing = new HashSet<>(requiredColumns);
+            missing.removeAll(actual);
+            throw new IllegalStateException(
+                    "AI 数据库结构已过期，缺少 " + table + "." + missing
+                            + "；当前版本不兼容旧 AI 对话数据，请重建数据库");
+        }
+    }
+
 }

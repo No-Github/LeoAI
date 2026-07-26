@@ -2,14 +2,17 @@ package org.leo.ai.thread;
 
 import com.alibaba.fastjson.JSON;
 import org.leo.ai.channel.DynamicModelProvider;
+import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,6 +25,11 @@ public class AiConversationStoreService {
 
     public static final String SCOPE_PUPPET = "puppet";
     public static final String SCOPE_PLATFORM = "platform";
+    public static final String MESSAGE_PENDING = "pending";
+    public static final String MESSAGE_COMMITTED = "committed";
+    public static final String MESSAGE_DISCARDED = "discarded";
+    public static final String ERROR_CANCELLED = "cancelled";
+    public static final String ERROR_PERSISTENCE = "persistence";
 
     private final AiConversationMapper mapper;
 
@@ -123,9 +131,6 @@ public class AiConversationStoreService {
     }
 
     public void deleteThread(String threadId) {
-        mapper.deleteMessages(threadId);
-        mapper.deleteRuns(threadId);
-        mapper.deleteSubagentInvocations(threadId);
         mapper.deleteThread(threadId);
     }
 
@@ -163,36 +168,19 @@ public class AiConversationStoreService {
         return mapper.listSubagentInvocations(parentThreadId);
     }
 
-    public void appendMessage(String threadId, String role, String content) {
-        appendMessage(threadId, role, content, null, null, null, null);
-    }
-
-    public void appendMessage(String threadId, String role, String content, Object attachments) {
-        appendMessage(threadId, role, content, null, null, null, attachments);
-    }
-
-    public void appendMessage(String threadId, String role, String content,
-                              List<Object> nodes,
-                              Map<String, Object> review) {
-        appendMessage(threadId, role, content, nodes, review, null, null);
-    }
-
-    public void appendMessage(String threadId, String role, String content,
-                              List<Object> nodes,
-                              Map<String, Object> review,
-                              Object planSnapshot) {
-        appendMessage(threadId, role, content, nodes, review, planSnapshot, null);
-    }
-
-    private void appendMessage(String threadId, String role, String content,
-                               List<Object> nodes,
-                               Map<String, Object> review,
-                               Object planSnapshot,
-                               Object attachments) {
+    private String appendMessage(String threadId, String turnId, String runId, String status,
+                                 String role, String content,
+                                 List<Object> nodes,
+                                 Map<String, Object> review,
+                                 Object planSnapshot,
+                                 Object attachments) {
         long now = System.currentTimeMillis();
         AiMessageRecord row = new AiMessageRecord();
         row.setMessageId(UUID.randomUUID().toString());
         row.setThreadId(threadId);
+        row.setTurnId(turnId);
+        row.setRunId(runId);
+        row.setStatus(status);
         row.setRole(role);
         row.setContent(content);
         row.setTimestamp(now);
@@ -202,6 +190,95 @@ public class AiConversationStoreService {
         row.setPlanJson(toJsonOrNull(planSnapshot));
         mapper.insertMessage(row);
         mapper.refreshMessageCount(threadId, now);
+        return row.getMessageId();
+    }
+
+    /**
+     * 原子创建一次 Turn：先写入运行记录，再写入 pending 用户消息。
+     * 这样消息永远可以追溯到所属 Run，执行队列拒绝也不会产生孤立消息。
+     */
+    @Transactional
+    public PersistedTurn beginTurn(String threadId, Integer configId,
+                                   String input, String userContent, Object attachments,
+                                   long startedAt, String runtimeJson,
+                                   AiTurnTrace trace) {
+        if (trace == null) {
+            throw new IllegalArgumentException("trace 不能为空");
+        }
+        String turnId = UUID.randomUUID().toString();
+        String runId = UUID.randomUUID().toString();
+        trace.bind(turnId, runId);
+
+        AiTurnRecord turn = new AiTurnRecord();
+        turn.setTurnId(turnId);
+        turn.setThreadId(threadId);
+        turn.setStatus(MESSAGE_PENDING);
+        turn.setCreatedAt(startedAt);
+        mapper.insertTurn(turn);
+
+        AiRunRecord run = new AiRunRecord();
+        run.setRunId(runId);
+        run.setThreadId(threadId);
+        run.setTurnId(turnId);
+        run.setStatus(AiThread.STATUS_RUNNING);
+        run.setStartedAt(startedAt);
+        run.setConfigId(configId);
+        run.setInput(input);
+        run.setRuntimeJson(runtimeJson);
+        run.setTraceId(trace.traceId());
+        run.setTraceJson(trace.toJson());
+        mapper.insertRun(run);
+
+        String userMessageId = appendMessage(
+                threadId, turnId, runId, MESSAGE_PENDING,
+                "user", userContent, null, null, null, attachments);
+        return new PersistedTurn(turnId, runId, threadId, userMessageId, startedAt);
+    }
+
+    /** 持久化 Presenter 完成后的最终阶段轨迹；失败不应改变已经确定的 Turn 终态。 */
+    public void updateRunTrace(PersistedTurn turn, AiTurnTrace trace) {
+        if (turn == null || trace == null) return;
+        AiRunRecord row = new AiRunRecord();
+        row.setRunId(turn.runId());
+        row.setTraceJson(trace.toJson());
+        mapper.updateRunTrace(row);
+    }
+
+    /**
+     * 原子提交成功 Turn：写入 assistant 消息、提交用户消息并结束 Run。
+     */
+    @Transactional
+    public void completeTurn(PersistedTurn turn, String output,
+                             List<Object> nodes, Map<String, Object> review,
+                             Object planSnapshot, int toolCallCount) {
+        if (turn == null) return;
+        appendMessage(turn.threadId(), turn.turnId(), turn.runId(), MESSAGE_COMMITTED,
+                "assistant", output, nodes, review, planSnapshot, null);
+        mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), MESSAGE_COMMITTED);
+        finishTurn(turn, MESSAGE_COMMITTED);
+        finishRun(turn.runId(), AiThread.STATUS_COMPLETED, turn.startedAt(),
+                output, null, null, null, toolCallCount);
+    }
+
+    /**
+     * 丢弃未完成 Turn 的上下文消息，同时保留记录供历史界面和审计追溯。
+     */
+    @Transactional
+    public void discardTurn(PersistedTurn turn, String runStatus, String errorCategory,
+                            String errorMessage, String rawErrorMessage, int toolCallCount) {
+        if (turn == null) return;
+        mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), MESSAGE_DISCARDED);
+        finishTurn(turn, MESSAGE_DISCARDED);
+        finishRun(turn.runId(), runStatus, turn.startedAt(), null,
+                errorCategory, errorMessage, rawErrorMessage, toolCallCount);
+    }
+
+    private void finishTurn(PersistedTurn turn, String status) {
+        AiTurnRecord row = new AiTurnRecord();
+        row.setTurnId(turn.turnId());
+        row.setStatus(status);
+        row.setCompletedAt(System.currentTimeMillis());
+        mapper.finishTurn(row);
     }
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
@@ -210,8 +287,10 @@ public class AiConversationStoreService {
         return toMessageMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
     }
 
-    public List<Map<String, Object>> recentMessages(String threadId, int limit) {
-        return toMessageMaps(mapper.recentMessages(threadId, Math.max(1, Math.min(limit, 50))));
+    public List<ConversationMessage> committedMessages(String threadId, int limit) {
+        return mapper.recentMessages(threadId, Math.max(1, Math.min(limit, 200))).stream()
+                .map(record -> new ConversationMessage(record.getRole(), record.getContent()))
+                .toList();
     }
 
     public int countMessages(String threadId) {
@@ -237,33 +316,9 @@ public class AiConversationStoreService {
         return null;
     }
 
-    public String startRun(AiThread thread, String input, long startedAt) {
-        return startRun(thread.getThreadId(), thread.getAiConfigId(), input, startedAt, null);
-    }
-
-    public String startRun(AiThread thread, String input, long startedAt, String runtimeJson) {
-        return startRun(thread.getThreadId(), thread.getAiConfigId(), input, startedAt, runtimeJson);
-    }
-
-    public String startRun(String threadId, Integer configId, String input, long startedAt) {
-        return startRun(threadId, configId, input, startedAt, null);
-    }
-
-    public String startRun(String threadId, Integer configId, String input, long startedAt, String runtimeJson) {
-        AiRunRecord row = new AiRunRecord();
-        row.setRunId(UUID.randomUUID().toString());
-        row.setThreadId(threadId);
-        row.setStatus(AiThread.STATUS_RUNNING);
-        row.setStartedAt(startedAt);
-        row.setConfigId(configId);
-        row.setInput(input);
-        row.setRuntimeJson(runtimeJson);
-        mapper.insertRun(row);
-        return row.getRunId();
-    }
-
-    public void finishRun(String runId, String status, long startedAt, String output,
-                          String errorMessage, int toolCallCount) {
+    private void finishRun(String runId, String status, long startedAt, String output,
+                           String errorCategory, String errorMessage,
+                           String rawErrorMessage, int toolCallCount) {
         AiRunRecord row = new AiRunRecord();
         row.setRunId(runId);
         row.setStatus(status);
@@ -271,7 +326,9 @@ public class AiConversationStoreService {
         row.setFinishedAt(finishedAt);
         row.setDurationMs(Math.max(0L, finishedAt - startedAt));
         row.setOutput(output);
+        row.setErrorCategory(errorCategory);
         row.setErrorMessage(errorMessage);
+        row.setRawErrorMessage(rawErrorMessage);
         row.setToolCallCount(toolCallCount);
         mapper.finishRun(row);
     }
@@ -294,6 +351,10 @@ public class AiConversationStoreService {
         for (AiMessageRecord record : records) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("messageId", record.getMessageId());
+            item.put("turnId", record.getTurnId());
+            item.put("runId", record.getRunId());
+            item.put("sequence", record.getMessageSeq());
+            item.put("status", record.getStatus());
             item.put("role", record.getRole());
             item.put("content", record.getContent());
             item.put("timestamp", record.getTimestamp());
@@ -339,5 +400,12 @@ public class AiConversationStoreService {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    public record PersistedTurn(String turnId, String runId, String threadId,
+                                String userMessageId, long startedAt) {
+    }
+
+    public record ConversationMessage(String role, String content) {
     }
 }

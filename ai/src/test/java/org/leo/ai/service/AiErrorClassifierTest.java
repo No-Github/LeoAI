@@ -36,4 +36,16 @@ class AiErrorClassifierTest {
         assertEquals("HTTP 401 Unauthorized", result.toMap().get("rawMessage"));
         assertEquals(2, result.actions().size());
     }
+
+    @Test
+    void classifiesToolCallingProtocolFailuresForChannelSwitchGuidance() {
+        AiErrorClassifier.Classification result = classifier.classify(
+                "tool_calls format is unsupported by this endpoint");
+
+        assertEquals(AiErrorClassifier.CATEGORY_TOOL_CALLING, result.category());
+        assertEquals(
+                "当前接口的工具调用格式不可用，请切换到支持 tool calling 的通道",
+                result.message());
+        assertEquals("switch_tool_channel", result.actions().get(0).code());
+    }
 }

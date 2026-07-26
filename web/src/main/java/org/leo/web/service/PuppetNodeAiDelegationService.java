@@ -1,0 +1,126 @@
+package org.leo.web.service;
+
+import org.leo.ai.channel.AiModelConfigService;
+import org.leo.ai.runtime.AiTurnCommand;
+import org.leo.ai.runtime.AiTurnCoordinator;
+import org.leo.ai.runtime.AiTurnOrchestrator;
+import org.leo.ai.runtime.AiTurnTrace;
+import org.leo.ai.runtime.AiTurnTransaction;
+import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.entity.AiChatAuditEntry;
+import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiSseEvent;
+import org.leo.core.session.AiThread;
+import org.leo.core.session.PuppetNodeSession;
+import org.leo.web.exception.ApiException;
+import org.springframework.stereotype.Service;
+
+import java.util.Map;
+import java.util.function.Consumer;
+
+/** 执行平台 AI 派发给 Puppet AI 的同步隔离 Turn。 */
+@Service
+public class PuppetNodeAiDelegationService {
+
+    private final AiModelConfigService modelConfigService;
+    private final AiConversationStoreService conversationStore;
+    private final PuppetNodeAiAgentRegistry agentRegistry;
+    private final PuppetNodeAiDelegationPresenter delegationPresenter;
+    private final AiTurnCoordinator turnCoordinator;
+    private final AiTurnOrchestrator turnOrchestrator;
+
+    public PuppetNodeAiDelegationService(AiModelConfigService modelConfigService,
+                                         AiConversationStoreService conversationStore,
+                                         PuppetNodeAiAgentRegistry agentRegistry,
+                                         PuppetNodeAiDelegationPresenter delegationPresenter,
+                                         AiTurnCoordinator turnCoordinator,
+                                         AiTurnOrchestrator turnOrchestrator) {
+        this.modelConfigService = modelConfigService;
+        this.conversationStore = conversationStore;
+        this.agentRegistry = agentRegistry;
+        this.delegationPresenter = delegationPresenter;
+        this.turnCoordinator = turnCoordinator;
+        this.turnOrchestrator = turnOrchestrator;
+    }
+
+    public Map<String, Object> execute(PuppetNodeSession session,
+                                       AiThread thread,
+                                       String userMessage,
+                                       String messageForAgent,
+                                       AiChatAuditEntry audit,
+                                       String subagentInvocationId,
+                                       Consumer<AiSseEvent> eventSink) {
+        if (session == null || thread == null) {
+            throw ApiException.badRequest("Puppet AI 会话或线程不存在");
+        }
+        if (!turnCoordinator.tryClaim(thread)) {
+            throw ApiException.badRequest("目标 Puppet AI 线程正在执行中");
+        }
+        AiTurnCoordinator.Execution turn = turnCoordinator.attach(thread);
+        long startMs = System.currentTimeMillis();
+        String threadId = thread.getThreadId();
+        String memoryId = session.getSessionId() + ":" + threadId;
+        AiTurnTrace trace = AiTurnTrace.start(
+                "delegation", threadId, startMs);
+        PuppetNodeAiDelegationPresenter.Session presentation =
+                delegationPresenter.open(
+                        new PuppetNodeAiDelegationPresenter.Context(
+                                session, thread, audit, startMs,
+                                trace,
+                                subagentInvocationId, eventSink));
+        try {
+            thread.touchLastActiveAt();
+            PuppetNodeAiAgentRegistry.Runtime agentRuntime = resolveAgent(session, thread);
+            trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
+            presentation.emitWarning(agentRuntime.failoverMessage());
+            AiConversationStoreService.PersistedTurn persistedTurn =
+                    conversationStore.beginTurn(
+                    threadId, agentRuntime.effectiveConfigId(), messageForAgent,
+                    userMessage, null, startMs, agentRuntime.runtimeJson(),
+                    trace);
+
+            turnOrchestrator.execute(
+                    new AiTurnOrchestrator.Request(
+                            new AiTurnCommand(
+                                    threadId, memoryId, turn,
+                                    () -> agentRuntime.agent().chat(
+                                            memoryId, messageForAgent)),
+                            new AiTurnTransaction.Context(
+                                    persistedTurn, agentRuntime.effectiveConfigId(),
+                                    agentRuntime.agent(), memoryId, audit, startMs,
+                                    trace),
+                            presentation.eventLog(),
+                            thread::getCurrentPlan,
+                            null),
+                    presentation);
+            return presentation.await();
+        } catch (Throwable error) {
+            throw presentation.executionFailure(turn, error);
+        }
+    }
+
+    private PuppetNodeAiAgentRegistry.Runtime resolveAgent(
+            PuppetNodeSession session, AiThread thread) {
+        AiModelConfig requested = resolveChannel(thread.getAiConfigId());
+        if (thread.getAiConfigId() == null) thread.setAiConfigId(requested.getId());
+        return agentRegistry.resolve(session, thread, requested, null);
+    }
+
+    private AiModelConfig resolveChannel(Integer configId) {
+        try {
+            AiModelConfig resolved = modelConfigService.resolve(configId);
+            if (resolved == null) {
+                if (configId != null) {
+                    throw ApiException.notFound(
+                            "AI 模型不存在或已删除，configId: " + configId);
+                }
+                throw ApiException.notFound(
+                        "未配置激活的 AI 模型，请先在设置中添加并激活一条");
+            }
+            return resolved;
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            throw ApiException.notFound(error.getMessage());
+        }
+    }
+
+}

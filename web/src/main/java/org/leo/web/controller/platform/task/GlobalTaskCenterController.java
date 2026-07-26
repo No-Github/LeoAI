@@ -14,7 +14,7 @@ import org.leo.service.UploadEngineService;
 import org.leo.service.sql.SqlExportService;
 import org.leo.web.exception.ApiException;
 import org.leo.web.service.AsyncShellService;
-import org.leo.web.service.PlatformAiService;
+import org.leo.web.service.PlatformAiThreadService;
 import org.leo.web.service.PuppetNodeAiThreadService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,20 +45,20 @@ public class GlobalTaskCenterController {
     private final UploadEngineService uploadEngineService;
     private final SqlExportService sqlExportService;
     private final PuppetNodeAiThreadService puppetNodeAiThreadService;
-    private final PlatformAiService platformAiService;
+    private final PlatformAiThreadService platformAiThreadService;
 
     public GlobalTaskCenterController(AsyncShellService asyncShellService,
                                       DownloadEngineService downloadEngineService,
                                       UploadEngineService uploadEngineService,
                                       SqlExportService sqlExportService,
                                       PuppetNodeAiThreadService puppetNodeAiThreadService,
-                                      PlatformAiService platformAiService) {
+                                      PlatformAiThreadService platformAiThreadService) {
         this.asyncShellService = asyncShellService;
         this.downloadEngineService = downloadEngineService;
         this.uploadEngineService = uploadEngineService;
         this.sqlExportService = sqlExportService;
         this.puppetNodeAiThreadService = puppetNodeAiThreadService;
-        this.platformAiService = platformAiService;
+        this.platformAiThreadService = platformAiThreadService;
     }
 
     @GetMapping("/snapshot")
@@ -120,7 +120,7 @@ public class GlobalTaskCenterController {
                 result = true;
             }
             case "platform_ai" -> {
-                PlatformAiState state = platformAiService.stateForUser(user, taskId);
+                PlatformAiState state = platformAiThreadService.stateForUser(user, taskId);
                 if (state == null) {
                     throw ApiException.notFound("平台 AI 任务不存在或已结束");
                 }
@@ -199,7 +199,7 @@ public class GlobalTaskCenterController {
     }
 
     private void appendPlatformAiTasks(List<Map<String, Object>> target, User user) {
-        for (Map<String, Object> thread : platformAiService.listThreads(user)) {
+        for (Map<String, Object> thread : platformAiThreadService.listThreads(user)) {
             String status = normalizeStatus(text(thread.get("runStatus")));
             if ("idle".equals(status)) {
                 continue;
