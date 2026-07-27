@@ -115,6 +115,8 @@ class PackerRegistryTest {
                 .get("requiredCapabilities")).contains("javascript-engine"));
         assertTrue(((List<?>) compatibility.get("JXPathScriptEngine")
                 .get("requiredCapabilities")).contains("javascript-engine"));
+        assertEquals(java.util.Arrays.asList("http", "httpchunk", "websocket"),
+                compatibility.get("DefaultBase64").get("supportedProtocols"));
     }
 
     @Test

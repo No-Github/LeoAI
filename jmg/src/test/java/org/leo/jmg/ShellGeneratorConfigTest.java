@@ -51,6 +51,7 @@ class ShellGeneratorConfigTest {
         // Shell 模板通过 Servlet API 透明处理 chunked 编码。
         ShellGeneratorConfig chunkedMemory = injectorBuilder()
                 .protocol("httpchunk")
+                .shellType("FilterInjector-HTTPCHUNK")
                 .build();
         assertDoesNotThrow(() -> chunkedMemory.validateForInjector());
 

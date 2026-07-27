@@ -175,6 +175,22 @@ public final class PackerRegistry {
         return result;
     }
 
+    /** 校验 Packer 是否声明支持当前传输协议。 */
+    public static void validateProtocolCompatibility(String name, String protocol) {
+        PackerMeta meta = getMeta(name);
+        if (meta == null) {
+            throw new IllegalArgumentException("不支持的 packerType: " + name);
+        }
+        String normalizedProtocol = protocol == null ? "" : protocol.trim().toLowerCase(Locale.ROOT);
+        for (String supportedProtocol : meta.supportedProtocols()) {
+            if (normalizedProtocol.equals(supportedProtocol.trim().toLowerCase(Locale.ROOT))) {
+                return;
+            }
+        }
+        throw new IllegalArgumentException(
+                "Packer " + meta.name() + " 不支持传输协议 " + protocol);
+    }
+
     /**
      * 评估兼容性。明确不兼容的条件进入 errors；依赖目标环境能力的条件进入 warnings。
      */
@@ -231,6 +247,7 @@ public final class PackerRegistry {
             compatibility.put("dependencies", Arrays.asList(meta.dependencies()));
             compatibility.put("requiredCapabilities", capabilityValues(resolveCapabilities(meta.name())));
             compatibility.put("requiredClasses", new ArrayList<String>(resolveRequiredClasses(meta.name())));
+            compatibility.put("supportedProtocols", Arrays.asList(meta.supportedProtocols()));
             Registration registration = REGISTRY.get(normalize(meta.name()));
             compatibility.put("status", registration == null
                     ? PackerStatus.FAILED.getValue()

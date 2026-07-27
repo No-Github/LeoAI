@@ -254,16 +254,73 @@ public class ServerInjectorMapper {
     }
 
     /**
-     * 所有应用服务器类型及其支持的注入器形态名列表
+     * 检查应用服务器是否支持指定协议下的注入器形态。
+     */
+    public static boolean isInjectorTypeSupported(String serverType, String injectorType, String protocol) {
+        return getInjectorTemplate(serverType, injectorType, protocol) != null;
+    }
+
+    /**
+     * 获取指定 serverType + shellType + protocol 的模板对。
+     * HTTPCHUNK 对外仍表现为 FilterInjector，内部选择独立的 Chunk Shell 模板；
+     * 旧的 FilterInjector-HTTPCHUNK 名称继续作为兼容别名。
+     */
+    public static InjectorTemplatePair getInjectorTemplate(String serverType, String shellType, String protocol) {
+        String effectiveShellType = shellType;
+        if ("httpchunk".equals(protocol) && "FilterInjector".equals(shellType)) {
+            effectiveShellType = "FilterInjector-HTTPCHUNK";
+        }
+        return getInjectorTemplate(serverType, effectiveShellType);
+    }
+
+    /**
+     * 所有应用服务器类型及其公开的注入器形态名列表。
+     * 内部 HTTPCHUNK 别名不对外展示，协议能力由 getServerProtocolInjectorMapAsString 表达。
      */
     public static Map<String, List<String>> getAllServerInjectorMapAsString() {
         Map<String, List<String>> result = new LinkedHashMap<>();
         for (Map.Entry<String, List<InjectorTemplatePair>> entry : serverInjectorTypeMap.entrySet()) {
             List<String> injectorNames = new ArrayList<>();
             for (InjectorTemplatePair pair : entry.getValue()) {
-                injectorNames.add(pair.getInjectorName());
+                if (!"FilterInjector-HTTPCHUNK".equals(pair.getInjectorName())) {
+                    injectorNames.add(pair.getInjectorName());
+                }
             }
             result.put(entry.getKey(), injectorNames);
+        }
+        return result;
+    }
+
+    /**
+     * 按协议输出应用服务器与公开 Injector 名称，供 REST/AI/前端直接消费。
+     */
+    public static Map<String, Map<String, List<String>>> getServerProtocolInjectorMapAsString() {
+        Map<String, Map<String, List<String>>> result = new LinkedHashMap<>();
+        result.put("http", getServerInjectorMapForProtocol("http"));
+        result.put("httpchunk", getServerInjectorMapForProtocol("httpchunk"));
+        result.put("websocket", getServerInjectorMapForProtocol("websocket"));
+        return result;
+    }
+
+    private static Map<String, List<String>> getServerInjectorMapForProtocol(String protocol) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        for (Map.Entry<String, List<InjectorTemplatePair>> entry : serverInjectorTypeMap.entrySet()) {
+            List<String> names = new ArrayList<>();
+            for (InjectorTemplatePair pair : entry.getValue()) {
+                String name = pair.getInjectorName();
+                if ("websocket".equals(protocol) && "WebSocketInjector".equals(name)) {
+                    names.add(name);
+                } else if ("httpchunk".equals(protocol) && "FilterInjector-HTTPCHUNK".equals(name)) {
+                    names.add("FilterInjector");
+                } else if ("http".equals(protocol)
+                        && !"WebSocketInjector".equals(name)
+                        && !"FilterInjector-HTTPCHUNK".equals(name)) {
+                    names.add(name);
+                }
+            }
+            if (!names.isEmpty()) {
+                result.put(entry.getKey(), names);
+            }
         }
         return result;
     }

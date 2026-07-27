@@ -4,6 +4,7 @@ package org.leo.jmg;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.core.util.request.GenerationRandom;
+import org.leo.jmg.mem.packer.PackerRegistry;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -593,14 +594,19 @@ public class ShellGeneratorConfig {
             throw new IllegalArgumentException(
                     "websocket 协议必须使用 WebSocketInjector 注入器");
         }
-        if ("http".equals(protocol) && webSocketInjector) {
+        if ("httpchunk".equals(protocol) && !chunkInjector) {
             throw new IllegalArgumentException(
-                    "WebSocketInjector 仅支持 websocket 协议");
+                    "httpchunk 协议必须使用 FilterInjector-HTTPCHUNK 注入器");
+        }
+        if ("http".equals(protocol) && (webSocketInjector || chunkInjector)) {
+            throw new IllegalArgumentException(
+                    "http 协议不能使用 WebSocketInjector 或 HTTPCHUNK 注入器");
         }
         if ("websocket".equals(protocol) && chunkInjector) {
             throw new IllegalArgumentException(
                     "HTTPCHUNK 注入器不支持 websocket 协议，请使用 httpchunk");
         }
+        PackerRegistry.validateProtocolCompatibility(packerType, protocol);
         // http 和 httpchunk 都是 HTTP 协议变体，使用相同的 Header 门禁。
         // httpchunk 使用 chunked 传输编码，但 Shell 模板通过 Servlet API
         // (request.getInputStream / response.getOutputStream) 透明处理，

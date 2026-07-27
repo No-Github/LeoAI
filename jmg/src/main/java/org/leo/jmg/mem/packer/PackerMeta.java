@@ -67,6 +67,14 @@ public @interface PackerMeta {
     String[] requiredClasses() default {};
 
     /**
+     * 该 Packer 支持包装的传输协议。
+     * <p>
+     * Packer 默认只处理生成后的 Injector 字节码，与传输层正交，因此默认支持全部
+     * 内存构建协议；只有确有载体限制的实现才需要收窄该列表。
+     */
+    String[] supportedProtocols() default {"http", "httpchunk", "websocket"};
+
+    /**
      * 该 Packer 支持的 JSP/JSPX 混淆步骤 ID 列表，顺序即推荐执行顺序。
      * <p>
      * 步骤 ID 与 {@link org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline} 中的常量名对应：
