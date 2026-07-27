@@ -10,23 +10,31 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.TypePath;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClassFileMinimizerTest {
 
     @Test
-    void removesOptionalClassFileMetadata() {
+    void removesOptionalClassFileMetadata_butPreservesGenericSignatures() {
         byte[] minimized = ClassFileMinimizer.transform(sampleClass());
         MetadataProbe probe = new MetadataProbe();
         new ClassReader(minimized).accept(probe, 0);
 
+        // 以下元数据仍然移除
         assertFalse(probe.source);
         assertFalse(probe.outerClass);
         assertFalse(probe.innerClass);
-        assertFalse(probe.classSignature);
-        assertFalse(probe.fieldSignature);
-        assertFalse(probe.methodSignature);
         assertFalse(probe.methodParameters);
-        assertFalse(probe.exceptions);
+
+        // 泛型 Signature 与 Exceptions 必须保留：运行时反射
+        // (如 Class.getGenericInterfaces / Method.getGenericParameterTypes)
+        // 依赖 Signature 解析参数化类型。Tomcat WebSocket 的
+        // Util.getGenericType() 会通过它推断 MessageHandler.Whole<ByteBuffer>
+        // 的类型参数，剥离后会导致 NullPointerException 并断开连接。
+        assertTrue(probe.classSignature, "类级泛型签名必须保留");
+        assertTrue(probe.fieldSignature, "字段泛型签名必须保留");
+        assertTrue(probe.methodSignature, "方法泛型签名必须保留");
+        assertTrue(probe.exceptions, "throws 声明必须保留");
     }
 
     private byte[] sampleClass() {

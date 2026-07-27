@@ -29,6 +29,7 @@ public final class AiSseExecutor implements AutoCloseable {
 
     private final ThreadPoolExecutor chatExecutor;
     private final ThreadPoolExecutor drainExecutor;
+    private final ThreadPoolExecutor subscriptionExecutor;
 
     public AiSseExecutor() {
         this(defaultChatThreads(), CHAT_QUEUE_CAPACITY, defaultDrainThreads());
@@ -57,6 +58,18 @@ public final class AiSseExecutor implements AutoCloseable {
                 daemonThreadFactory("ai-sse-drain-"),
                 new ThreadPoolExecutor.AbortPolicy());
         this.drainExecutor.allowCoreThreadTimeOut(true);
+
+        // 重连订阅与 Turn 执行事件泵隔离，避免大量刷新连接占满 drain 域，
+        // 进而阻塞新的 AI Turn 建立首条实时流。
+        this.subscriptionExecutor = new ThreadPoolExecutor(
+                drainThreads,
+                drainThreads,
+                60L,
+                TimeUnit.SECONDS,
+                new SynchronousQueue<>(),
+                daemonThreadFactory("ai-sse-subscription-"),
+                new ThreadPoolExecutor.AbortPolicy());
+        this.subscriptionExecutor.allowCoreThreadTimeOut(true);
     }
 
     public Future<?> submitChat(Runnable task) throws RejectedExecutionException {
@@ -65,6 +78,11 @@ public final class AiSseExecutor implements AutoCloseable {
 
     public Future<?> submitDrain(Runnable task) throws RejectedExecutionException {
         return drainExecutor.submit(task);
+    }
+
+    public Future<?> submitSubscription(Runnable task)
+            throws RejectedExecutionException {
+        return subscriptionExecutor.submit(task);
     }
 
     int activeChatTasks() {
@@ -107,5 +125,6 @@ public final class AiSseExecutor implements AutoCloseable {
     public void close() {
         chatExecutor.shutdownNow();
         drainExecutor.shutdownNow();
+        subscriptionExecutor.shutdownNow();
     }
 }

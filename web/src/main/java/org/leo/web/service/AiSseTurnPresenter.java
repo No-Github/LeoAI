@@ -324,7 +324,6 @@ public class AiSseTurnPresenter {
             if (source == null || source.isBlank()) source = "AI";
             Objects.requireNonNull(runtime, "runtime");
             Objects.requireNonNull(execution, "execution");
-            Objects.requireNonNull(emitter, "emitter");
             Objects.requireNonNull(trace, "trace");
             refreshRuntime = refreshRuntime != null
                     ? refreshRuntime : () -> {};

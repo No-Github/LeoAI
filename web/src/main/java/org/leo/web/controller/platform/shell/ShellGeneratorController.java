@@ -267,10 +267,6 @@ public class ShellGeneratorController {
             }
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
             String normalizedProtocol = ShellGeneratorConfig.normalizeProtocol(protocol);
-            if ("httpchunk".equals(normalizedProtocol)) {
-                return ApiResponse.badRequest(
-                        "httpchunk 协议仅支持 JSP/JSPX WebShell，内存构建仅支持 http 或 websocket");
-            }
             boolean webSocketBuild = "websocket".equals(normalizedProtocol)
                     || "WebSocketInjector".equals(shellType);
             String headerName = ControllerUtil.getOptionalStringParam(params, "headerName");

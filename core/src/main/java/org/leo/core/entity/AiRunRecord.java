@@ -19,6 +19,7 @@ public class AiRunRecord {
     private String runtimeJson;
     private String traceId;
     private String traceJson;
+    private String leaseToken;
 
     public String getRunId() { return runId; }
     public void setRunId(String runId) { this.runId = runId; }
@@ -70,4 +71,6 @@ public class AiRunRecord {
 
     public String getTraceJson() { return traceJson; }
     public void setTraceJson(String traceJson) { this.traceJson = traceJson; }
+    public String getLeaseToken() { return leaseToken; }
+    public void setLeaseToken(String leaseToken) { this.leaseToken = leaseToken; }
 }

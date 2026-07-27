@@ -7,10 +7,13 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.leo.core.entity.AiMessageRecord;
+import org.leo.core.entity.AiEventRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.entity.AiThreadLeaseRecord;
+import org.leo.core.entity.AiOrphanedRunRecord;
 
 import java.util.List;
 
@@ -53,6 +56,18 @@ public interface AiConversationMapper {
             + "run_status = #{runStatus} WHERE thread_id = #{threadId}")
     int updateThreadRuntime(AiThreadRecord row);
 
+    @Update("UPDATE ai_threads SET session_id = #{sessionId}, last_active_at = #{lastActiveAt}, "
+            + "run_status = #{runStatus} WHERE thread_id = #{threadId} "
+            + "AND EXISTS (SELECT 1 FROM ai_thread_leases l "
+            + "WHERE l.thread_id = ai_threads.thread_id AND l.lease_token = #{leaseToken} "
+            + "AND l.expires_at > #{writeAt})")
+    int updateThreadRuntimeFenced(@Param("threadId") String threadId,
+                                  @Param("sessionId") String sessionId,
+                                  @Param("lastActiveAt") long lastActiveAt,
+                                  @Param("runStatus") String runStatus,
+                                  @Param("leaseToken") String leaseToken,
+                                  @Param("writeAt") long writeAt);
+
     @Update("UPDATE ai_threads SET config_id = #{configId}, config_name = #{configName}, "
             + "config_protocol = #{configProtocol}, config_model = #{configModel}, "
             + "config_base_url = #{configBaseUrl}, config_completions_path = #{configCompletionsPath}, "
@@ -79,13 +94,115 @@ public interface AiConversationMapper {
     @Delete("DELETE FROM ai_threads WHERE thread_id = #{threadId}")
     int deleteThread(@Param("threadId") String threadId);
 
-    @Insert("INSERT INTO ai_turns (turn_id, thread_id, status, created_at, completed_at) "
-            + "VALUES (#{turnId}, #{threadId}, #{status}, #{createdAt}, #{completedAt})")
+    @Insert("INSERT OR IGNORE INTO ai_turns "
+            + "(turn_id, thread_id, status, created_at, completed_at, "
+            + "protocol_status, dispatch_status) "
+            + "VALUES (#{turnId}, #{threadId}, #{status}, #{createdAt}, "
+            + "#{completedAt}, 'completed', 'completed')")
     int insertTurn(AiTurnRecord row);
 
+    @Insert("INSERT OR IGNORE INTO ai_turns "
+            + "(turn_id, thread_id, status, created_at, protocol_status, "
+            + "dispatch_status, command_scope, command_json, "
+            + "client_user_message_id, user_item_id, assistant_item_id, "
+            + "interrupt_requested) VALUES "
+            + "(#{turnId}, #{threadId}, 'pending', #{createdAt}, #{protocolStatus}, "
+            + "'queued', #{commandScope}, #{commandJson}, "
+            + "#{clientUserMessageId}, #{userItemId}, #{assistantItemId}, 0)")
+    int insertProtocolTurn(AiTurnRecord row);
+
+    @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
+            + "AND client_user_message_id = #{clientUserMessageId}")
+    AiTurnRecord findTurnByClientMessage(
+            @Param("threadId") String threadId,
+            @Param("clientUserMessageId") String clientUserMessageId);
+
+    @Select("SELECT * FROM ai_turns WHERE turn_id = #{turnId}")
+    AiTurnRecord findTurnById(@Param("turnId") String turnId);
+
+    @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
+            + "AND protocol_status = 'inProgress' AND dispatch_status = 'queued' "
+            + "ORDER BY created_at, turn_id LIMIT 1")
+    AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId);
+
+    @Select("SELECT DISTINCT queued.thread_id FROM ai_turns queued "
+            + "WHERE queued.protocol_status = 'inProgress' "
+            + "AND queued.dispatch_status = 'queued' "
+            + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
+            + "WHERE active.thread_id = queued.thread_id "
+            + "AND active.dispatch_status IN ('running', 'cancelling'))")
+    List<String> listDispatchableThreadIds();
+
+    @Update("UPDATE ai_turns SET dispatch_status = 'running', "
+            + "started_at = COALESCE(started_at, #{startedAt}) "
+            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress' "
+            + "AND dispatch_status = 'queued' "
+            + "AND turn_id = (SELECT queued.turn_id FROM ai_turns queued "
+            + "WHERE queued.thread_id = ai_turns.thread_id "
+            + "AND queued.protocol_status = 'inProgress' "
+            + "AND queued.dispatch_status = 'queued' "
+            + "ORDER BY queued.created_at, queued.turn_id LIMIT 1) "
+            + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
+            + "WHERE active.thread_id = ai_turns.thread_id "
+            + "AND active.dispatch_status IN ('running', 'cancelling'))")
+    int markProtocolTurnStarted(@Param("turnId") String turnId,
+                                @Param("startedAt") long startedAt);
+
+    @Update("UPDATE ai_turns SET interrupt_requested = 1, "
+            + "dispatch_status = CASE WHEN dispatch_status = 'running' "
+            + "THEN 'cancelling' ELSE dispatch_status END "
+            + "WHERE turn_id = #{turnId} AND thread_id = #{threadId} "
+            + "AND protocol_status = 'inProgress'")
+    int requestProtocolTurnInterrupt(@Param("threadId") String threadId,
+                                     @Param("turnId") String turnId);
+
+    @Select("SELECT COUNT(*) FROM ai_turns WHERE thread_id = #{threadId} "
+            + "AND dispatch_status = 'cancelling' AND interrupt_requested = 1")
+    int countInterruptRequestedTurns(@Param("threadId") String threadId);
+
+    @Update("UPDATE ai_turns SET protocol_status = #{protocolStatus}, "
+            + "dispatch_status = #{protocolStatus}, "
+            + "completed_at = COALESCE(completed_at, #{completedAt}), "
+            + "error_message = #{errorMessage}, "
+            + "status = CASE WHEN NOT EXISTS "
+            + "(SELECT 1 FROM ai_runs r WHERE r.turn_id = ai_turns.turn_id) "
+            + "THEN 'discarded' ELSE status END "
+            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress'")
+    int completeProtocolTurn(AiTurnRecord row);
+
+    @Update("UPDATE ai_turns SET protocol_status = #{protocolStatus}, "
+            + "dispatch_status = #{protocolStatus}, "
+            + "completed_at = COALESCE(completed_at, #{completedAt}), "
+            + "error_message = #{errorMessage}, "
+            + "status = CASE WHEN NOT EXISTS "
+            + "(SELECT 1 FROM ai_runs r WHERE r.turn_id = ai_turns.turn_id) "
+            + "THEN 'discarded' ELSE status END "
+            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress' "
+            + "AND EXISTS (SELECT 1 FROM ai_thread_leases l "
+            + "WHERE l.thread_id = ai_turns.thread_id "
+            + "AND l.lease_token = #{leaseToken} "
+            + "AND l.expires_at > #{completedAt})")
+    int completeProtocolTurnFenced(@Param("turnId") String turnId,
+                                   @Param("protocolStatus") String protocolStatus,
+                                   @Param("errorMessage") String errorMessage,
+                                   @Param("completedAt") long completedAt,
+                                   @Param("leaseToken") String leaseToken);
+
+    @Update("UPDATE ai_turns SET dispatch_status = 'queued', started_at = NULL "
+            + "WHERE turn_id = #{turnId} AND protocol_status = 'inProgress' "
+            + "AND dispatch_status = 'running'")
+    int requeueProtocolTurn(@Param("turnId") String turnId);
+
     @Update("UPDATE ai_turns SET status = #{status}, completed_at = #{completedAt} "
-            + "WHERE turn_id = #{turnId}")
-    int finishTurn(AiTurnRecord row);
+            + "WHERE turn_id = #{turnId} AND status = 'pending' "
+            + "AND (#{leaseToken} IS NULL OR EXISTS "
+            + "(SELECT 1 FROM ai_runs r JOIN ai_thread_leases l ON l.thread_id = r.thread_id "
+            + "WHERE r.turn_id = ai_turns.turn_id AND r.lease_token = #{leaseToken} "
+            + "AND l.lease_token = #{leaseToken} AND l.expires_at > #{completedAt}))")
+    int finishTurn(@Param("turnId") String turnId,
+                   @Param("status") String status,
+                   @Param("completedAt") long completedAt,
+                   @Param("leaseToken") String leaseToken);
 
     @Insert("INSERT INTO ai_messages (message_id, thread_id, turn_id, run_id, message_seq, status, "
             + "role, content, timestamp, attachments_json, nodes_json, review_json, plan_json) "
@@ -96,8 +213,12 @@ public interface AiConversationMapper {
             + "#{nodesJson}, #{reviewJson}, #{planJson})")
     int insertMessage(AiMessageRecord row);
 
-    @Select("SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
-            + "ORDER BY timestamp ASC, message_seq ASC, message_id ASC "
+    @Select("SELECT m.*, r.status AS run_status, t.protocol_status AS protocol_status, "
+            + "t.error_message AS protocol_error_message FROM ai_messages m "
+            + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
+            + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
+            + "WHERE m.thread_id = #{threadId} "
+            + "ORDER BY m.timestamp ASC, m.message_seq ASC, m.message_id ASC "
             + "LIMIT #{limit} OFFSET #{offset}")
     List<AiMessageRecord> listMessages(@Param("threadId") String threadId,
                                        @Param("offset") int offset,
@@ -117,22 +238,202 @@ public interface AiConversationMapper {
                                 @Param("turnId") String turnId,
                                 @Param("status") String status);
 
+    @Update("UPDATE ai_messages SET status = #{status} "
+            + "WHERE thread_id = #{threadId} AND turn_id = #{turnId} "
+            + "AND EXISTS (SELECT 1 FROM ai_runs r JOIN ai_thread_leases l "
+            + "ON l.thread_id = r.thread_id WHERE r.turn_id = ai_messages.turn_id "
+            + "AND r.lease_token = #{leaseToken} AND l.lease_token = #{leaseToken} "
+            + "AND l.expires_at > #{writeAt})")
+    int updateTurnMessageStatusFenced(@Param("threadId") String threadId,
+                                      @Param("turnId") String turnId,
+                                      @Param("status") String status,
+                                      @Param("leaseToken") String leaseToken,
+                                      @Param("writeAt") long writeAt);
+
+    @Update("UPDATE ai_messages SET content = #{content}, nodes_json = #{nodesJson}, "
+            + "review_json = #{reviewJson}, plan_json = #{planJson}, status = #{status} "
+            + "WHERE message_id = #{messageId}")
+    int updateMessage(AiMessageRecord row);
+
+    @Update("UPDATE ai_messages SET content = #{content}, nodes_json = #{nodesJson}, "
+            + "review_json = #{reviewJson}, plan_json = #{planJson}, status = #{status} "
+            + "WHERE message_id = #{messageId} AND EXISTS "
+            + "(SELECT 1 FROM ai_runs r JOIN ai_thread_leases l ON l.thread_id = r.thread_id "
+            + "WHERE r.run_id = ai_messages.run_id AND r.lease_token = #{leaseToken} "
+            + "AND l.lease_token = #{leaseToken} AND l.expires_at > #{writeAt})")
+    int updateMessageFenced(@Param("messageId") String messageId,
+                            @Param("status") String status,
+                            @Param("content") String content,
+                            @Param("nodesJson") String nodesJson,
+                            @Param("reviewJson") String reviewJson,
+                            @Param("planJson") String planJson,
+                            @Param("leaseToken") String leaseToken,
+                            @Param("writeAt") long writeAt);
+
     @Insert("INSERT INTO ai_runs (run_id, thread_id, turn_id, status, started_at, finished_at, duration_ms, "
             + "config_id, input, output, error_message, error_category, raw_error_message, "
-            + "tool_call_count, runtime_json, trace_id, trace_json) "
+            + "tool_call_count, runtime_json, trace_id, trace_json, lease_token) "
             + "VALUES (#{runId}, #{threadId}, #{turnId}, #{status}, #{startedAt}, #{finishedAt}, #{durationMs}, "
             + "#{configId}, #{input}, #{output}, #{errorMessage}, #{errorCategory}, #{rawErrorMessage}, "
-            + "#{toolCallCount}, #{runtimeJson}, #{traceId}, #{traceJson})")
+            + "#{toolCallCount}, #{runtimeJson}, #{traceId}, #{traceJson}, #{leaseToken})")
     int insertRun(AiRunRecord row);
+
+    @Insert("INSERT INTO ai_runs (run_id, thread_id, turn_id, status, started_at, finished_at, duration_ms, "
+            + "config_id, input, output, error_message, error_category, raw_error_message, "
+            + "tool_call_count, runtime_json, trace_id, trace_json, lease_token) "
+            + "SELECT #{row.runId}, #{row.threadId}, #{row.turnId}, #{row.status}, #{row.startedAt}, "
+            + "#{row.finishedAt}, #{row.durationMs}, #{row.configId}, #{row.input}, #{row.output}, "
+            + "#{row.errorMessage}, #{row.errorCategory}, #{row.rawErrorMessage}, #{row.toolCallCount}, "
+            + "#{row.runtimeJson}, #{row.traceId}, #{row.traceJson}, #{row.leaseToken} "
+            + "WHERE EXISTS (SELECT 1 FROM ai_thread_leases l WHERE l.thread_id = #{row.threadId} "
+            + "AND l.lease_token = #{row.leaseToken} AND l.expires_at > #{writeAt})")
+    int insertRunFenced(@Param("row") AiRunRecord row,
+                        @Param("writeAt") long writeAt);
 
     @Update("UPDATE ai_runs SET status = #{status}, finished_at = #{finishedAt}, duration_ms = #{durationMs}, "
             + "output = #{output}, error_message = #{errorMessage}, error_category = #{errorCategory}, "
             + "raw_error_message = #{rawErrorMessage}, tool_call_count = #{toolCallCount} "
-            + "WHERE run_id = #{runId}")
+            + "WHERE run_id = #{runId} AND status = 'running' "
+            + "AND (#{leaseToken} IS NULL OR (lease_token = #{leaseToken} AND EXISTS "
+            + "(SELECT 1 FROM ai_thread_leases l WHERE l.thread_id = ai_runs.thread_id "
+            + "AND l.lease_token = #{leaseToken} AND l.expires_at > #{finishedAt})))")
     int finishRun(AiRunRecord row);
 
     @Update("UPDATE ai_runs SET trace_json = #{traceJson} WHERE run_id = #{runId}")
     int updateRunTrace(AiRunRecord row);
+
+    @Update("UPDATE ai_runs SET trace_json = #{traceJson} WHERE run_id = #{runId} "
+            + "AND lease_token = #{leaseToken} AND EXISTS "
+            + "(SELECT 1 FROM ai_thread_leases l WHERE l.thread_id = ai_runs.thread_id "
+            + "AND l.lease_token = #{leaseToken} AND l.expires_at > #{writeAt})")
+    int updateRunTraceFenced(@Param("runId") String runId,
+                             @Param("traceJson") String traceJson,
+                             @Param("leaseToken") String leaseToken,
+                             @Param("writeAt") long writeAt);
+
+    // ── 可重放事件日志 ───────────────────────────────────────────────────────
+    @Insert("INSERT INTO ai_events (event_id, run_id, thread_id, turn_id, item_id, "
+            + "subagent_invocation_id, event_seq, timestamp, name, data_json) "
+            + "SELECT #{eventId}, #{runId}, #{threadId}, #{turnId}, #{itemId}, "
+            + "#{subagentInvocationId}, #{eventSeq}, #{timestamp}, #{name}, #{dataJson} "
+            + "WHERE #{leaseToken} IS NULL OR EXISTS "
+            + "(SELECT 1 FROM ai_thread_leases l WHERE l.thread_id = #{threadId} "
+            + "AND l.lease_token = #{leaseToken} AND l.expires_at > #{writeAt})")
+    int insertEvent(@Param("eventId") String eventId,
+                    @Param("runId") String runId,
+                    @Param("threadId") String threadId,
+                    @Param("turnId") String turnId,
+                    @Param("itemId") String itemId,
+                    @Param("subagentInvocationId") String subagentInvocationId,
+                    @Param("eventSeq") long eventSeq,
+                    @Param("timestamp") long timestamp,
+                    @Param("name") String name,
+                    @Param("dataJson") String dataJson,
+                    @Param("leaseToken") String leaseToken,
+                    @Param("writeAt") long writeAt);
+
+    @Select("SELECT * FROM ai_events WHERE thread_id = #{threadId} AND event_seq > #{afterSeq} "
+            + "ORDER BY event_seq ASC LIMIT #{limit}")
+    List<AiEventRecord> listEventsAfter(@Param("threadId") String threadId,
+                                        @Param("afterSeq") long afterSeq,
+                                        @Param("limit") int limit);
+
+    @Select("SELECT * FROM ai_events WHERE run_id = #{runId} ORDER BY event_seq ASC")
+    List<AiEventRecord> listEventsByRun(@Param("runId") String runId);
+
+    @Select("SELECT COALESCE(MAX(event_seq), 0) FROM ai_events WHERE thread_id = #{threadId}")
+    long findLastEventSeq(@Param("threadId") String threadId);
+
+    @Select("SELECT COUNT(*) FROM ai_events WHERE thread_id = #{threadId} "
+            + "AND turn_id = #{turnId} AND name = 'turn/completed'")
+    int countTurnCompletedEvents(@Param("threadId") String threadId,
+                                 @Param("turnId") String turnId);
+
+    @Select("SELECT COALESCE(MAX(event_seq) - 1, 0) FROM ai_events "
+            + "WHERE thread_id = #{threadId} AND name = 'turn/started'")
+    long findLatestTurnStartSeq(@Param("threadId") String threadId);
+
+    @Select("SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM ai_events "
+            + "WHERE thread_id = #{threadId} AND name = 'turn/started') THEN 1 "
+            + "WHEN EXISTS (SELECT 1 FROM ai_events WHERE thread_id = #{threadId} "
+            + "AND name = 'turn/completed' AND turn_id = "
+            + "(SELECT turn_id FROM ai_events WHERE thread_id = #{threadId} "
+            + "AND name = 'turn/started' ORDER BY event_seq DESC LIMIT 1)) "
+            + "THEN 1 ELSE 0 END")
+    int hasLatestTurnCompletedEvent(@Param("threadId") String threadId);
+
+    // ── 跨实例线程执行租约 ───────────────────────────────────────────────────
+    @Insert("INSERT INTO ai_thread_leases "
+            + "(thread_id, owner_id, lease_token, acquired_at, heartbeat_at, expires_at) "
+            + "VALUES (#{threadId}, #{ownerId}, #{leaseToken}, #{acquiredAt}, "
+            + "#{heartbeatAt}, #{expiresAt}) "
+            + "ON CONFLICT(thread_id) DO UPDATE SET owner_id = excluded.owner_id, "
+            + "lease_token = excluded.lease_token, acquired_at = excluded.acquired_at, "
+            + "heartbeat_at = excluded.heartbeat_at, expires_at = excluded.expires_at "
+            + "WHERE ai_thread_leases.expires_at <= #{acquiredAt}")
+    int acquireThreadLease(AiThreadLeaseRecord row);
+
+    @Update("UPDATE ai_thread_leases SET heartbeat_at = #{heartbeatAt}, expires_at = #{expiresAt} "
+            + "WHERE thread_id = #{threadId} AND owner_id = #{ownerId} "
+            + "AND lease_token = #{leaseToken} AND expires_at > #{heartbeatAt}")
+    int renewThreadLease(AiThreadLeaseRecord row);
+
+    @Delete("DELETE FROM ai_thread_leases WHERE thread_id = #{threadId} "
+            + "AND owner_id = #{ownerId} AND lease_token = #{leaseToken}")
+    int releaseThreadLease(AiThreadLeaseRecord row);
+
+    @Select("SELECT * FROM ai_thread_leases WHERE expires_at <= #{now} ORDER BY expires_at ASC")
+    List<AiThreadLeaseRecord> listExpiredThreadLeases(@Param("now") long now);
+
+    @Update("UPDATE ai_thread_leases SET owner_id = #{ownerId}, lease_token = #{leaseToken}, "
+            + "acquired_at = #{acquiredAt}, heartbeat_at = #{heartbeatAt}, expires_at = #{expiresAt} "
+            + "WHERE thread_id = #{threadId} AND lease_token = #{previousToken} "
+            + "AND expires_at <= #{acquiredAt}")
+    int claimExpiredThreadLease(@Param("threadId") String threadId,
+                                @Param("previousToken") String previousToken,
+                                @Param("ownerId") String ownerId,
+                                @Param("leaseToken") String leaseToken,
+                                @Param("acquiredAt") long acquiredAt,
+                                @Param("heartbeatAt") long heartbeatAt,
+                                @Param("expiresAt") long expiresAt);
+
+    @Select("SELECT r.thread_id, r.turn_id, r.run_id, r.started_at, "
+            + "(SELECT message_id FROM ai_messages m WHERE m.run_id = r.run_id "
+            + "AND m.role = 'assistant' LIMIT 1) AS assistant_message_id "
+            + "FROM ai_runs r WHERE r.thread_id = #{threadId} AND r.status = 'running'")
+    List<AiOrphanedRunRecord> listRunningRuns(@Param("threadId") String threadId);
+
+    @Select("SELECT DISTINCT t.thread_id FROM ai_turns t "
+            + "WHERE t.dispatch_status = 'running' "
+            + "AND NOT EXISTS (SELECT 1 FROM ai_thread_leases l "
+            + "WHERE l.thread_id = t.thread_id AND l.expires_at > #{now}) "
+            + "AND EXISTS (SELECT 1 FROM ai_runs r "
+            + "WHERE r.turn_id = t.turn_id AND r.status = 'running')")
+    List<String> listThreadsWithStuckRunningTurns(@Param("now") long now);
+
+    @Update("UPDATE ai_messages SET status = 'discarded' WHERE run_id = #{runId}")
+    int discardRunMessages(@Param("runId") String runId);
+
+    @Update("UPDATE ai_turns SET status = 'discarded', completed_at = #{finishedAt}, "
+            + "protocol_status = 'failed', dispatch_status = 'failed', "
+            + "error_message = '执行实例心跳超时，任务已自动收口' "
+            + "WHERE turn_id = #{turnId} AND status = 'pending'")
+    int discardOrphanedTurn(@Param("turnId") String turnId,
+                            @Param("finishedAt") long finishedAt);
+
+    @Update("UPDATE ai_runs SET status = 'failed', finished_at = #{finishedAt}, "
+            + "duration_ms = MAX(0, #{finishedAt} - started_at), "
+            + "error_category = 'orphaned', error_message = #{message}, "
+            + "raw_error_message = #{message} "
+            + "WHERE run_id = #{runId} AND status = 'running'")
+    int failOrphanedRun(@Param("runId") String runId,
+                        @Param("finishedAt") long finishedAt,
+                        @Param("message") String message);
+
+    @Update("UPDATE ai_threads SET run_status = 'failed', last_active_at = #{finishedAt} "
+            + "WHERE thread_id = #{threadId}")
+    int failOrphanedThread(@Param("threadId") String threadId,
+                           @Param("finishedAt") long finishedAt);
 
     // ── 子 Agent 调用记录 ─────────────────────────────────────────────────────
     @Insert("INSERT INTO ai_subagent_invocations (invocation_id, parent_thread_id, parent_message_id, "

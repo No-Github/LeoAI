@@ -320,6 +320,17 @@ CREATE TABLE IF NOT EXISTS ai_turns (
         CHECK (status IN ('pending', 'committed', 'discarded')),
     created_at INTEGER NOT NULL,
     completed_at INTEGER,
+    protocol_status VARCHAR(16) NOT NULL DEFAULT 'completed'
+        CHECK (protocol_status IN ('inProgress', 'completed', 'interrupted', 'failed')),
+    dispatch_status VARCHAR(16) NOT NULL DEFAULT 'completed',
+    command_scope VARCHAR(16),
+    command_json TEXT,
+    client_user_message_id VARCHAR(128),
+    user_item_id VARCHAR(64),
+    assistant_item_id VARCHAR(64),
+    started_at INTEGER,
+    interrupt_requested INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
     FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
 );
 
@@ -346,6 +357,7 @@ CREATE TABLE IF NOT EXISTS ai_runs (
     runtime_json TEXT,
     trace_id VARCHAR(64) NOT NULL UNIQUE,
     trace_json TEXT,
+    lease_token VARCHAR(64),
     FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
     FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE CASCADE
 );
@@ -395,12 +407,16 @@ CREATE TABLE IF NOT EXISTS ai_events (
     event_id VARCHAR(64) PRIMARY KEY,
     run_id VARCHAR(64),
     thread_id VARCHAR(64) NOT NULL,
+    turn_id VARCHAR(64),
+    item_id VARCHAR(64),
+    subagent_invocation_id VARCHAR(64),
     event_seq INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
     name VARCHAR(64) NOT NULL,
     data_json TEXT,
     FOREIGN KEY (run_id) REFERENCES ai_runs(run_id) ON DELETE CASCADE,
-    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+    UNIQUE (thread_id, event_seq)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
@@ -409,7 +425,21 @@ CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
 CREATE INDEX IF NOT EXISTS idx_ai_events_run_seq
     ON ai_events(run_id, event_seq);
 
--- 20. AI 子 Agent 调用记录（父会话→子会话的派发关系）
+-- 20. AI 线程执行租约：跨实例保证同一线程同一时刻只有一个执行者
+CREATE TABLE IF NOT EXISTS ai_thread_leases (
+    thread_id VARCHAR(64) PRIMARY KEY,
+    owner_id VARCHAR(128) NOT NULL,
+    lease_token VARCHAR(64) NOT NULL UNIQUE,
+    acquired_at INTEGER NOT NULL,
+    heartbeat_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_thread_leases_expiry
+    ON ai_thread_leases(expires_at);
+
+-- 21. AI 子 Agent 调用记录（父会话→子会话的派发关系）
 CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
     invocation_id VARCHAR(64) PRIMARY KEY,
     parent_thread_id VARCHAR(64) NOT NULL,

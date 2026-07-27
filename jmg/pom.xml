@@ -42,16 +42,6 @@
             <artifactId>spring-webmvc</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.caucho</groupId>
-            <artifactId>hessian</artifactId>
-            <version>4.0.65</version>
-        </dependency>
-        <dependency>
-            <groupId>net.bytebuddy</groupId>
-            <artifactId>byte-buddy</artifactId>
-            <version>1.18.5</version> <!-- 建议使用最新稳定版 -->
-        </dependency>
-        <dependency>
             <groupId>org.apache.tomcat</groupId>
             <artifactId>tomcat-catalina</artifactId>
             <version>8.5.100</version> <!-- 或与你的 Tomcat 版本一致 -->
@@ -73,11 +63,6 @@
                 <configuration>
                     <release>8</release>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <version>3.1.0</version>
             </plugin>
         </plugins>
     </build>

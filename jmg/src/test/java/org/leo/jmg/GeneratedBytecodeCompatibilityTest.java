@@ -126,6 +126,56 @@ class GeneratedBytecodeCompatibilityTest {
         assertTrue(constants.contains("jakarta/websocket"));
     }
 
+    /**
+     * 回归测试：ClassFileMinimizer.transform() 必须保留泛型 Signature 属性。
+     * <p>
+     * Tomcat 8.5 的 Util.getGenericType() 通过 Class.getGenericInterfaces() 推断
+     * MessageHandler.Whole&lt;ByteBuffer&gt; 的类型参数。若 Signature 被剥离，
+     * getGenericInterfaces() 返回原始 Class 而非 ParameterizedType，
+     * Tomcat 得到 null 并抛出 NullPointerException，导致 WebSocket 连接 1006 断开。
+     */
+    @Test
+    void webSocketShellPreservesGenericSignatureAfterMinimization() throws Exception {
+        ShellGeneratorConfig base = createConfig(ServletNamespace.AUTO);
+        base.setCoreClassBytes(new byte[]{1, 2, 3});
+        ShellGeneratorConfig websocketConfig = ShellGeneratorConfig
+                .builder(base.getReqDisguise(), base.getRespDisguise())
+                .coreClassName(base.getCoreClassName())
+                .shellClassName("org.example.WebSocketSigShell")
+                .injectorClassName("org.example.WebSocketSigInjector")
+                .serverType("Tomcat")
+                .shellType("WebSocketInjector")
+                .packerType("DefaultBase64")
+                .protocol("websocket")
+                .urlPattern("/sig")
+                .servletNamespace(ServletNamespace.AUTO)
+                .build();
+        websocketConfig.setCoreClassBytes(base.getCoreClassBytes());
+
+        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
+                .makeShell(websocketConfig, "LeoWebSocketTpl");
+
+        Class<?> shellClass = new ByteArrayClassLoader().define(shell);
+        assertTrue(javax.websocket.Endpoint.class.isAssignableFrom(shellClass),
+                "WebSocket Shell 必须继承 javax.websocket.Endpoint");
+
+        boolean foundParameterized = false;
+        for (java.lang.reflect.Type type : shellClass.getGenericInterfaces()) {
+            if (type instanceof java.lang.reflect.ParameterizedType) {
+                java.lang.reflect.ParameterizedType pt =
+                        (java.lang.reflect.ParameterizedType) type;
+                if (pt.getRawType() == javax.websocket.MessageHandler.Whole.class) {
+                    assertEquals(java.nio.ByteBuffer.class,
+                            pt.getActualTypeArguments()[0],
+                            "MessageHandler.Whole 的类型参数必须是 ByteBuffer");
+                    foundParameterized = true;
+                }
+            }
+        }
+        assertTrue(foundParameterized,
+                "WebSocket Shell 必须保留 MessageHandler.Whole<ByteBuffer> 泛型签名");
+    }
+
     private static void assertLegacyClassFile(byte[] classBytes, String label) {
         assertEquals(JAVA_5_CLASS_MAJOR, majorVersion(classBytes),
                 label + " 字节码版本必须兼容 JDK 6/7/8");

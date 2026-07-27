@@ -10,19 +10,25 @@ public final class PlatformAiDtos {
     private PlatformAiDtos() {
     }
 
-    public record ChatRequest(String message,
+    public record ChatRequest(String threadId,
+                              String message,
                               Integer configId,
                               String reasoningEffort,
-                              List<AiFileAttachment> attachments) {
-    }
-
-    public record AgentConfigRequest(Integer configId, String mode) {
-        public AgentConfigRequest(Integer configId) {
-            this(configId, null);
+                              List<AiFileAttachment> attachments,
+                              String clientUserMessageId) {
+        public ChatRequest(String threadId,
+                           String message,
+                           Integer configId,
+                           String reasoningEffort,
+                           List<AiFileAttachment> attachments) {
+            this(threadId, message, configId, reasoningEffort, attachments, null);
         }
     }
 
-    public record SwitchModeRequest(String mode) {
+    public record AgentConfigRequest(String threadId, Integer configId, String mode) {
+    }
+
+    public record SwitchModeRequest(String threadId, String mode) {
     }
 
     public record AgentInfoResponse(int grantedTypesCount) {
@@ -34,10 +40,13 @@ public final class PlatformAiDtos {
     public record GrantRequest(String toolType, Boolean grantAll) {
     }
 
-    public record EventsRequest(Long afterSeq, Integer limit) {
+    public record EventsRequest(String threadId, Long afterSeq, Integer limit) {
     }
 
     public record ThreadIdRequest(String threadId) {
+    }
+
+    public record TurnInterruptRequest(String threadId, String turnId) {
     }
 
     public record CreateThreadRequest(String title, Integer configId) {
@@ -46,7 +55,7 @@ public final class PlatformAiDtos {
     public record ThreadRenameRequest(String threadId, String title) {
     }
 
-    public record MessagesRequest(Integer offset, Integer limit) {
+    public record MessagesRequest(String threadId, Integer offset, Integer limit) {
     }
 
     public record AuditLogsRequest(Integer limit) {

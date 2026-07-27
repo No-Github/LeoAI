@@ -141,20 +141,43 @@ public class ClassNameGenerator {
     }
 
     // 紧凑的业务风格字段名，优先降低成员名常量池开销。
+    // 排除了 JSP 隐式对象名（session, config 等），避免在 JSP scriptlet
+    // 中声明的局部变量与隐式对象冲突导致编译/运行异常。
     private static final String[] FIELD_SINGLE = {
-        "params", "results", "context", "session", "config",
-        "cache", "registry", "handler", "manager", "store",
+        "params", "results", "context", "payload", "cache",
+        "registry", "handler", "manager", "store", "stream",
         "pool", "queue", "holder", "provider", "wrapper",
         "delegate", "loader", "factory", "buffer", "table",
         "service", "router", "resolver", "dispatcher", "tracker"
     };
 
     /**
+     * JSP scriptlet 隐式对象名和 Java 关键字，不得用作随机字段名。
+     * 作为安全网：即使 FIELD_SINGLE 被修改引入这些名称，也不会被选中。
+     */
+    private static final Set<String> RESERVED_FIELD_NAMES = java.util.Collections.unmodifiableSet(
+            new HashSet<>(java.util.Arrays.asList(
+                    "session", "config", "request", "response", "application",
+                    "pageContext", "out", "page", "exception",
+                    "class", "new", "int", "long", "byte", "char", "boolean",
+                    "if", "else", "for", "while", "do", "switch", "case",
+                    "default", "try", "catch", "finally", "throw", "throws",
+                    "return", "break", "continue", "void", "static", "final",
+                    "abstract", "private", "public", "protected", "import",
+                    "package", "interface", "extends", "implements", "this",
+                    "super", "null", "true", "false", "instanceof"
+            )));
+
+    /**
      * 生成紧凑的业务字段名。
      */
     public static String randomFieldName() {
         Random random = GenerationRandom.current();
-        return FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
+        String name;
+        do {
+            name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
+        } while (RESERVED_FIELD_NAMES.contains(name));
+        return name;
     }
 
     /** 生成一个不在 used 集合中的字段名，并将其加入 used */
@@ -162,7 +185,7 @@ public class ClassNameGenerator {
         Random random = GenerationRandom.current();
         for (int i = 0; i < FIELD_SINGLE.length * 2; i++) {
             String name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)];
-            if (used.add(name)) return name;
+            if (!RESERVED_FIELD_NAMES.contains(name) && used.add(name)) return name;
         }
         while (true) {
             String name = FIELD_SINGLE[random.nextInt(FIELD_SINGLE.length)]

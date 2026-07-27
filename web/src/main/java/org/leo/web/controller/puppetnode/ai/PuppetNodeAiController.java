@@ -1,9 +1,7 @@
 package org.leo.web.controller.puppetnode.ai;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.tools.puppetnode.PlanTools;
-import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.session.AiThread;
@@ -11,12 +9,15 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.dto.puppetnode.ai.*;
 import org.leo.web.service.PuppetNodeAiThreadService;
-import org.leo.web.service.PuppetNodeAiTurnService;
+import org.leo.web.service.AiTurnProtocolService;
+import org.leo.web.service.AiTurnQueueService;
+import org.leo.web.service.AiTurnCommandPayload;
+import org.leo.web.exception.ApiException;
 import org.leo.web.util.AiAttachmentPrompt;
-import org.leo.web.util.AiControllerUtil;
-import org.leo.web.util.AiSseExecutor;
+import org.leo.web.util.AiEventSubscriptionService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
 @RestController
@@ -31,137 +33,108 @@ import java.util.concurrent.RejectedExecutionException;
 public class PuppetNodeAiController {
 
     private final PuppetNodeAiThreadService aiThreadService;
-    private final PuppetNodeAiTurnService turnService;
-    private final AiAuditLogStore auditLogStore;
     private final PlanTools planTools;
-    private final AiSseExecutor aiSseExecutor;
+    private final AiEventSubscriptionService eventSubscriptionService;
+    private final AiTurnProtocolService turnProtocolService;
+    private final AiTurnQueueService turnQueueService;
 
     public PuppetNodeAiController(PuppetNodeAiThreadService aiThreadService,
-                                  PuppetNodeAiTurnService turnService,
-                                  AiAuditLogStore auditLogStore,
                                   PlanTools planTools,
-                                  AiSseExecutor aiSseExecutor) {
+                                  AiEventSubscriptionService eventSubscriptionService,
+                                  AiTurnProtocolService turnProtocolService,
+                                  AiTurnQueueService turnQueueService) {
         this.aiThreadService = aiThreadService;
-        this.turnService = turnService;
-        this.auditLogStore = auditLogStore;
         this.planTools = planTools;
-        this.aiSseExecutor = aiSseExecutor;
+        this.eventSubscriptionService = eventSubscriptionService;
+        this.turnProtocolService = turnProtocolService;
+        this.turnQueueService = turnQueueService;
     }
 
     // ─── SSE 流式对话 ─────────────────────────────────────────────────────────
 
-    /**
-     * SSE 流式对话接口。
-     *
-     * <p>事件类型：
-     * <ul>
-     *   <li>{@code thinking} — AI 思考日志（JSON）</li>
-     *   <li>{@code tool}     — 工具调用日志（JSON）</li>
-     *   <li>{@code delta}    — 回复正文增量片段（纯文本）</li>
-     *   <li>{@code reply}    — 最终回复文本（纯文本）</li>
-     *   <li>{@code warn}     — 上下文轮次警告（纯文本）</li>
-     *   <li>{@code error}    — 错误信息（纯文本）</li>
-     * </ul>
-     *
-     * @param  {@code sessionId}, {@code threadId}, {@code message}
-     */
-    @RequestMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chat(@RequestBody PuppetAiChatRequest body, HttpServletRequest request) {
-        SseEmitter emitter = new SseEmitter(0L);
-        long startMs = System.currentTimeMillis();
-
-        String sessionId = body != null ? body.sessionId() : null;
-        String threadId  = body != null ? body.threadId() : null;
-        String message   = body != null ? body.message() : null;
-
-        if (sessionId == null || sessionId.isEmpty()) {
-            AiControllerUtil.safeSendError(emitter, "缺少 sessionId");
-            return emitter;
-        }
-        if (threadId == null || threadId.isEmpty()) {
-            AiControllerUtil.safeSendError(emitter, "缺少 threadId");
-            return emitter;
-        }
-        if (message == null || message.isBlank()) {
-            AiControllerUtil.safeSendError(emitter, "缺少 message");
-            return emitter;
-        }
-
-        PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
+    /** Codex 式 Turn 启动：立即返回 Turn，事件从独立订阅流获取。 */
+    @PostMapping("/turn/start")
+    public HashMap<String, Object> startTurn(
+            @RequestBody PuppetAiChatRequest body,
+            HttpServletRequest request) {
+        String sessionId = requiredText(
+                body != null ? body.sessionId() : null, "缺少 sessionId");
+        String threadId = requiredText(
+                body != null ? body.threadId() : null, "缺少 threadId");
+        String message = requiredText(
+                body != null ? body.message() : null, "缺少 message");
+        PuppetNodeSession session = requiredSession(sessionId);
         session.touchLastActiveTime();
 
-        Integer configId = body.configId();
         PuppetNodeAiThreadService.ThreadResolution resolution =
-                aiThreadService.ensureThreadReady(session, threadId, configId);
+                aiThreadService.ensureThreadReady(session, threadId, null);
         AiThread thread = resolution.thread();
         if (thread == null) {
-            AiControllerUtil.safeSendError(emitter, "线程不存在，threadId: " + threadId);
-            return emitter;
+            throw ApiException.notFound("线程不存在，threadId: " + threadId);
         }
         if (resolution.errorMessage() != null) {
-            AiControllerUtil.safeSendError(emitter, resolution.errorMessage());
-            return emitter;
+            throw ApiException.badRequest(resolution.errorMessage());
         }
-        if (!turnService.tryClaimExecution(thread)) {
-            AiControllerUtil.safeSendError(emitter, "当前对话正在执行中，请等待完成或先停止后再发送新消息");
-            return emitter;
-        }
-
+        AiExecutionPolicy policy = ControllerUtil.buildAiExecutionPolicy(request);
+        String guardedMessage = AiAttachmentPrompt.appendTo(
+                ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
+        AiTurnCommandPayload command = AiTurnCommandPayload.create(
+                AiTurnCommandPayload.SCOPE_PUPPET, sessionId,
+                message, guardedMessage, body.configId(),
+                body.reasoningEffort(),
+                AiAttachmentPrompt.metadata(body.attachments()), policy);
+        AiTurnProtocolService.Reservation reservation;
         try {
-            // 切换活跃线程
-            session.switchActiveThread(threadId);
-            thread.touchLastActiveAt();
-
-            AiExecutionPolicy policy = ControllerUtil.buildAiExecutionPolicy(request);
-            thread.setExecutionPolicy(policy);
-
-            AiChatAuditEntry audit = AiChatAuditEntry.puppet(
-                    sessionId, policy.getUserId(), policy.getUserName(), policy.getPrivilege(),
-                    message, false);
-            auditLogStore.append(audit);
-
-            String guardedMessage = AiAttachmentPrompt.appendTo(
-                    ControllerUtil.buildAiPolicyPrompt(policy, message), body.attachments());
-            final String messageForAgent = guardedMessage;
-
-            aiSseExecutor.submitChat(() -> turnService.executeChat(
-                    session, thread, threadId, messageForAgent, audit, emitter, startMs,
-                    body.reasoningEffort(), message,
-                    AiAttachmentPrompt.metadata(body.attachments())));
-        } catch (RejectedExecutionException e) {
-            turnService.releaseExecutionClaim(thread);
-            AiControllerUtil.safeSendError(emitter, "AI 执行队列繁忙，请稍后重试");
-            return emitter;
-        } catch (RuntimeException e) {
-            turnService.releaseExecutionClaim(thread);
-            AiControllerUtil.safeSendError(emitter, "启动 AI 对话失败: " + e.getMessage());
-            return emitter;
+            reservation = turnProtocolService.begin(
+                    threadId, body.clientUserMessageId(),
+                    command.getScope(), command.toJson());
+        } catch (RuntimeException error) {
+            throw ApiException.badRequest(error.getMessage());
         }
-
-        // SSE 断开只表示当前浏览器订阅结束，不代表用户要求停止后台任务。
-        // 显式停止请通过 /stop 接口触发 thread.stop()。
-
-        return emitter;
+        AiTurnProtocolService.TurnSnapshot turn = reservation.turn();
+        if (reservation.reused()) {
+            if (AiTurnProtocolService.STATUS_QUEUED.equals(turn.status())) {
+                try {
+                    turnQueueService.signal(threadId);
+                } catch (RejectedExecutionException ignored) {
+                    // 周期调度器继续恢复。
+                }
+            }
+            return ApiResponse.success(Map.of("turn", turn.toMap()));
+        }
+        session.switchActiveThread(threadId);
+        thread.touchLastActiveAt();
+        try {
+            turnQueueService.signal(threadId);
+        } catch (RejectedExecutionException ignored) {
+            // 命令已经持久化，周期调度器会继续领取。
+        }
+        return ApiResponse.success(Map.of("turn", turn.toMap()));
     }
 
-    // ─── 停止 ─────────────────────────────────────────────────────────────────
-
-    /**
-     * 干净停止指定线程的 AI 执行：interrupt 后端线程 + 取消所有挂起确认。
-     *
-     * @param params {@code sessionId}, {@code threadId}
-     */
-    @RequestMapping("/stop")
-    public HashMap<String, Object> stop(@RequestBody AiThreadRequest body) {
-        PuppetNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
+    /** 请求中断指定 Turn；客户端继续订阅直到 turn/completed。 */
+    @PostMapping("/turn/interrupt")
+    public HashMap<String, Object> interruptTurn(
+            @RequestBody AiTurnInterruptRequest body) {
+        String sessionId = requiredText(
+                body != null ? body.sessionId() : null, "缺少 sessionId");
+        String threadId = requiredText(
+                body != null ? body.threadId() : null, "缺少 threadId");
+        String turnId = requiredText(
+                body != null ? body.turnId() : null, "缺少 turnId");
+        PuppetNodeSession session = requiredSession(sessionId);
         AiThread thread = aiThreadService.requireThread(session, threadId);
-
-        thread.stop();
-        return ApiResponse.success(true);
+        try {
+            turnProtocolService.requestInterrupt(
+                    threadId, turnId);
+        } catch (RuntimeException error) {
+            throw ApiException.badRequest(error.getMessage());
+        }
+        if (turnId.equals(thread.getActiveTurnId())) {
+            thread.stop();
+        }
+        return ApiResponse.success(Map.of());
     }
-
-    // ─── 工具确认 ─────────────────────────────────────────────────────────────
 
     // ─── 线程管理 ─────────────────────────────────────────────────────────────
 
@@ -243,6 +216,19 @@ public class PuppetNodeAiController {
         Long afterSeq = body != null ? body.afterSeq() : null;
         Integer limit = body != null ? body.limit() : null;
         return ApiResponse.success(aiThreadService.threadEvents(session, threadId, afterSeq, limit));
+    }
+
+    /** 通过显式 sessionId + threadId 重新附着运行中的节点 AI 事件流。 */
+    @PostMapping(value = "/thread/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter threadStream(@RequestBody AiThreadEventsRequest body) {
+        PuppetNodeSession session =
+                requiredSession(body != null ? body.sessionId() : null);
+        String threadId = requiredText(
+                body != null ? body.threadId() : null, "缺少 threadId");
+        AiThread thread = aiThreadService.requireThread(session, threadId);
+        return eventSubscriptionService.subscribe(
+                "Puppet AI subscription", threadId, thread,
+                body != null ? body.afterSeq() : null);
     }
 
     /**

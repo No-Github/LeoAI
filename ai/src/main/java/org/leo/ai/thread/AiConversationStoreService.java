@@ -4,11 +4,16 @@ import com.alibaba.fastjson.JSON;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.core.entity.AiModelConfig;
+import org.leo.core.entity.AiEventRecord;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiEventStreamRuntime;
+import org.leo.core.entity.AiSseEvent;
+import org.leo.core.entity.AiThreadLeaseRecord;
+import org.leo.core.entity.AiOrphanedRunRecord;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Service;
@@ -105,21 +110,35 @@ public class AiConversationStoreService {
     }
 
     public void updateRuntime(String sessionId, AiThread thread) {
-        AiThreadRecord row = new AiThreadRecord();
-        row.setThreadId(thread.getThreadId());
-        row.setSessionId(sessionId);
-        row.setLastActiveAt(thread.getLastActiveAt());
-        row.setRunStatus(thread.getRunStatus());
-        mapper.updateThreadRuntime(row);
+        updateRuntime(sessionId, thread, null);
+    }
+
+    public void updateRuntime(String sessionId, AiThread thread, String leaseToken) {
+        if (thread == null) return;
+        updateRuntime(sessionId, thread.getThreadId(), thread.getLastActiveAt(),
+                thread.getRunStatus(), leaseToken);
     }
 
     public void updateRuntime(String sessionId, String threadId, long lastActiveAt, String runStatus) {
-        AiThreadRecord row = new AiThreadRecord();
-        row.setThreadId(threadId);
-        row.setSessionId(sessionId);
-        row.setLastActiveAt(lastActiveAt > 0 ? lastActiveAt : System.currentTimeMillis());
-        row.setRunStatus(runStatus);
-        mapper.updateThreadRuntime(row);
+        updateRuntime(sessionId, threadId, lastActiveAt, runStatus, null);
+    }
+
+    public void updateRuntime(String sessionId, String threadId, long lastActiveAt,
+                              String runStatus, String leaseToken) {
+        long writeAt = System.currentTimeMillis();
+        long activeAt = lastActiveAt > 0 ? lastActiveAt : writeAt;
+        if (isBlank(leaseToken)) {
+            AiThreadRecord row = new AiThreadRecord();
+            row.setThreadId(threadId);
+            row.setSessionId(sessionId);
+            row.setLastActiveAt(activeAt);
+            row.setRunStatus(runStatus);
+            mapper.updateThreadRuntime(row);
+            return;
+        }
+        requireFencedWrite(mapper.updateThreadRuntimeFenced(
+                threadId, sessionId, activeAt, runStatus, leaseToken, writeAt),
+                "线程运行状态", threadId);
     }
 
     public void updateConfig(String threadId, AiModelConfig config) {
@@ -132,6 +151,247 @@ public class AiConversationStoreService {
 
     public void deleteThread(String threadId) {
         mapper.deleteThread(threadId);
+    }
+
+    // ── 持久化 Turn 控制协议 ────────────────────────────────────────────────
+
+    public AiTurnRecord findProtocolTurnByClientId(
+            String threadId, String clientUserMessageId) {
+        if (isBlank(threadId) || isBlank(clientUserMessageId)) return null;
+        return mapper.findTurnByClientMessage(
+                threadId, clientUserMessageId.trim());
+    }
+
+    public AiTurnRecord findProtocolTurn(String turnId) {
+        return isBlank(turnId) ? null : mapper.findTurnById(turnId);
+    }
+
+    public AiTurnRecord findNextQueuedProtocolTurn(String threadId) {
+        return isBlank(threadId) ? null : mapper.findNextQueuedTurn(threadId);
+    }
+
+    public List<String> listDispatchableProtocolThreadIds() {
+        return mapper.listDispatchableThreadIds();
+    }
+
+    public boolean reserveProtocolTurn(AiTurnRecord turn) {
+        return turn != null && mapper.insertProtocolTurn(turn) == 1;
+    }
+
+    public boolean claimProtocolTurnStart(String turnId, long startedAt) {
+        return !isBlank(turnId)
+                && mapper.markProtocolTurnStarted(turnId, startedAt) == 1;
+    }
+
+    public AiTurnRecord requestProtocolTurnInterrupt(
+            String threadId, String turnId) {
+        mapper.requestProtocolTurnInterrupt(threadId, turnId);
+        AiTurnRecord current = findProtocolTurn(turnId);
+        if (current != null && "queued".equals(current.getDispatchStatus())) {
+            return completeProtocolTurn(
+                    turnId, "interrupted", null, System.currentTimeMillis());
+        }
+        return current;
+    }
+
+    public boolean hasInterruptRequestedTurn(String threadId) {
+        return !isBlank(threadId)
+                && mapper.countInterruptRequestedTurns(threadId) > 0;
+    }
+
+    public AiTurnRecord completeProtocolTurn(
+            String turnId, String protocolStatus, String errorMessage, long completedAt) {
+        return completeProtocolTurn(
+                turnId, protocolStatus, errorMessage, completedAt, null);
+    }
+
+    public AiTurnRecord completeProtocolTurn(
+            String turnId, String protocolStatus, String errorMessage,
+            long completedAt, String leaseToken) {
+        if (isBlank(leaseToken)) {
+            AiTurnRecord row = new AiTurnRecord();
+            row.setTurnId(turnId);
+            row.setProtocolStatus(protocolStatus);
+            row.setErrorMessage(emptyToNull(errorMessage));
+            row.setCompletedAt(completedAt);
+            mapper.completeProtocolTurn(row);
+        } else {
+            requireFencedWrite(mapper.completeProtocolTurnFenced(
+                            turnId, protocolStatus, emptyToNull(errorMessage),
+                            completedAt, leaseToken),
+                    "协议 Turn 终结", turnId);
+        }
+        return findProtocolTurn(turnId);
+    }
+
+    public AiTurnRecord requeueProtocolTurn(String turnId) {
+        if (!isBlank(turnId)) mapper.requeueProtocolTurn(turnId);
+        return findProtocolTurn(turnId);
+    }
+
+    // ── 可重放事件日志 ───────────────────────────────────────────────────────
+
+    /**
+     * 将运行时绑定到数据库事件日志。绑定时先恢复线程级最新序号，保证进程重启后
+     * 新事件仍沿用同一个单调游标。
+     */
+    public void attachEventJournal(String threadId, AiEventStreamRuntime runtime) {
+        if (isBlank(threadId) || runtime == null) return;
+        long lastSeq = mapper.findLastEventSeq(threadId);
+        runtime.configureEventJournal(lastSeq, event ->
+                appendEvent(threadId, event, runtime.getActiveLeaseToken()));
+    }
+
+    public void appendEvent(String threadId, AiSseEvent event) {
+        appendEvent(threadId, event, null);
+    }
+
+    public void appendEvent(String threadId, AiSseEvent event, String leaseToken) {
+        if (isBlank(threadId) || event == null || event.seq() <= 0L) return;
+        String eventId = UUID.randomUUID().toString();
+        int inserted = mapper.insertEvent(
+                eventId,
+                emptyToNull(event.runId()),
+                threadId,
+                emptyToNull(event.turnId()),
+                emptyToNull(event.itemId()),
+                emptyToNull(event.subagentInvocationId()),
+                event.seq(),
+                event.timestamp(),
+                event.name(),
+                JSON.toJSONString(event.data()),
+                emptyToNull(leaseToken),
+                System.currentTimeMillis());
+        if (!isBlank(leaseToken)) {
+            requireFencedWrite(inserted, "事件日志", eventId);
+        }
+    }
+
+    public List<AiSseEvent> listEventsAfter(String threadId, long afterSeq, int limit) {
+        if (isBlank(threadId)) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit > 0 ? limit : 200, 2000));
+        return mapper.listEventsAfter(threadId, Math.max(0L, afterSeq), safeLimit)
+                .stream()
+                .map(this::toSseEvent)
+                .toList();
+    }
+
+    public long findLastEventSeq(String threadId) {
+        return isBlank(threadId) ? 0L : mapper.findLastEventSeq(threadId);
+    }
+
+    public boolean hasTurnCompletedEvent(String threadId, String turnId) {
+        return isBlank(turnId)
+                || mapper.countTurnCompletedEvents(threadId, turnId) > 0;
+    }
+
+    public long findLatestTurnStartSeq(String threadId) {
+        return isBlank(threadId) ? 0L : mapper.findLatestTurnStartSeq(threadId);
+    }
+
+    public boolean hasLatestTurnCompletedEvent(String threadId) {
+        return isBlank(threadId)
+                || mapper.hasLatestTurnCompletedEvent(threadId) > 0;
+    }
+
+    // ── 跨实例执行租约与孤儿 Run 收口 ───────────────────────────────────────
+
+    public boolean acquireThreadLease(AiThreadLeaseRecord lease) {
+        return lease != null && mapper.acquireThreadLease(lease) == 1;
+    }
+
+    public boolean renewThreadLease(AiThreadLeaseRecord lease) {
+        return lease != null && mapper.renewThreadLease(lease) == 1;
+    }
+
+    public boolean releaseThreadLease(AiThreadLeaseRecord lease) {
+        return lease != null && mapper.releaseThreadLease(lease) == 1;
+    }
+
+    public List<AiThreadLeaseRecord> listExpiredThreadLeases(long now) {
+        return mapper.listExpiredThreadLeases(now);
+    }
+
+    public List<String> listThreadsWithStuckRunningTurns(long now) {
+        return mapper.listThreadsWithStuckRunningTurns(now);
+    }
+
+    public boolean claimExpiredThreadLease(AiThreadLeaseRecord expired,
+                                           AiThreadLeaseRecord recovery) {
+        if (expired == null || recovery == null) return false;
+        return mapper.claimExpiredThreadLease(
+                expired.getThreadId(), expired.getLeaseToken(),
+                recovery.getOwnerId(), recovery.getLeaseToken(),
+                recovery.getAcquiredAt(), recovery.getHeartbeatAt(),
+                recovery.getExpiresAt()) == 1;
+    }
+
+    /**
+     * 将失去执行实例的 running Run 原子收口，并写入可重放的 turn/completed。
+     */
+    @Transactional
+    public List<AiSseEvent> recoverOrphanedRuns(String threadId, long finishedAt) {
+        if (isBlank(threadId)) return List.of();
+        String message = "执行实例心跳超时，任务已自动收口";
+        List<AiSseEvent> completedEvents = new ArrayList<>();
+        for (AiOrphanedRunRecord run : mapper.listRunningRuns(threadId)) {
+            if (mapper.failOrphanedRun(run.getRunId(), finishedAt, message) != 1) {
+                continue;
+            }
+            persistOrphanedPartialOutput(run);
+            mapper.discardRunMessages(run.getRunId());
+            mapper.discardOrphanedTurn(run.getTurnId(), finishedAt);
+            mapper.failOrphanedThread(threadId, finishedAt);
+            if (hasTurnCompletedEvent(threadId, run.getTurnId())) continue;
+
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("message", message);
+            error.put("category", "orphaned");
+            Map<String, Object> turn = new LinkedHashMap<>();
+            turn.put("id", run.getTurnId());
+            turn.put("threadId", threadId);
+            turn.put("status", "failed");
+            turn.put("error", error);
+
+            AiSseEvent event = new AiSseEvent(
+                    mapper.findLastEventSeq(threadId) + 1L,
+                    finishedAt,
+                    "turn/completed",
+                    Map.of("turn", turn),
+                    null,
+                    run.getTurnId(),
+                    run.getAssistantMessageId(),
+                    run.getRunId());
+            appendEvent(threadId, event);
+            completedEvents.add(event);
+        }
+        return completedEvents;
+    }
+
+    private void persistOrphanedPartialOutput(AiOrphanedRunRecord run) {
+        if (run == null || isBlank(run.getAssistantMessageId())) return;
+        StringBuilder output = new StringBuilder();
+        for (AiEventRecord row : mapper.listEventsByRun(run.getRunId())) {
+            if (!"delta".equals(row.getName()) || row.getDataJson() == null) continue;
+            Object delta = JSON.parse(row.getDataJson());
+            if (delta != null) output.append(delta);
+        }
+        if (output.isEmpty()) return;
+        AiMessageRecord assistant = new AiMessageRecord();
+        assistant.setMessageId(run.getAssistantMessageId());
+        assistant.setStatus(MESSAGE_DISCARDED);
+        assistant.setContent(output.toString());
+        mapper.updateMessage(assistant);
+    }
+
+    private AiSseEvent toSseEvent(AiEventRecord row) {
+        Object data = row.getDataJson() != null
+                ? JSON.parse(row.getDataJson()) : null;
+        return new AiSseEvent(
+                row.getEventSeq() != null ? row.getEventSeq() : 0L,
+                row.getTimestamp() != null ? row.getTimestamp() : 0L,
+                row.getName(), data, row.getSubagentInvocationId(),
+                row.getTurnId(), row.getItemId(), row.getRunId());
     }
 
     // ── 子 Agent 派发记录 ───────────────────────────────────────────────────
@@ -168,7 +428,8 @@ public class AiConversationStoreService {
         return mapper.listSubagentInvocations(parentThreadId);
     }
 
-    private String appendMessage(String threadId, String turnId, String runId, String status,
+    private String appendMessage(String requestedMessageId,
+                                 String threadId, String turnId, String runId, String status,
                                  String role, String content,
                                  List<Object> nodes,
                                  Map<String, Object> review,
@@ -176,7 +437,8 @@ public class AiConversationStoreService {
                                  Object attachments) {
         long now = System.currentTimeMillis();
         AiMessageRecord row = new AiMessageRecord();
-        row.setMessageId(UUID.randomUUID().toString());
+        row.setMessageId(!isBlank(requestedMessageId)
+                ? requestedMessageId.trim() : UUID.randomUUID().toString());
         row.setThreadId(threadId);
         row.setTurnId(turnId);
         row.setRunId(runId);
@@ -202,10 +464,68 @@ public class AiConversationStoreService {
                                    String input, String userContent, Object attachments,
                                    long startedAt, String runtimeJson,
                                    AiTurnTrace trace) {
+        return beginTurn(null, threadId, configId, input, userContent, attachments,
+                startedAt, runtimeJson, trace);
+    }
+
+    /**
+     * 使用接入层已经分配的 Turn ID 创建持久化 Turn。这样 turn/start 可以在模型线程
+     * 真正启动前把稳定 ID 返回给客户端；旧调用点传 null 时仍由存储层生成。
+     */
+    @Transactional
+    public PersistedTurn beginTurn(String requestedTurnId,
+                                   String threadId,
+                                   Integer configId,
+                                   String input,
+                                   String userContent,
+                                   Object attachments,
+                                   long startedAt,
+                                   String runtimeJson,
+                                   AiTurnTrace trace) {
+        return beginTurn(
+                requestedTurnId, null, null, threadId, configId, input,
+                userContent, attachments, startedAt, runtimeJson, trace, null);
+    }
+
+    /**
+     * 使用协议层预分配的稳定 user/assistant Item ID 创建 Turn。
+     */
+    @Transactional
+    public PersistedTurn beginTurn(String requestedTurnId,
+                                   String requestedUserItemId,
+                                   String requestedAssistantItemId,
+                                   String threadId,
+                                   Integer configId,
+                                   String input,
+                                   String userContent,
+                                   Object attachments,
+                                   long startedAt,
+                                   String runtimeJson,
+                                   AiTurnTrace trace) {
+        return beginTurn(
+                requestedTurnId, requestedUserItemId, requestedAssistantItemId,
+                threadId, configId, input, userContent, attachments,
+                startedAt, runtimeJson, trace, null);
+    }
+
+    @Transactional
+    public PersistedTurn beginTurn(String requestedTurnId,
+                                   String requestedUserItemId,
+                                   String requestedAssistantItemId,
+                                   String threadId,
+                                   Integer configId,
+                                   String input,
+                                   String userContent,
+                                   Object attachments,
+                                   long startedAt,
+                                   String runtimeJson,
+                                   AiTurnTrace trace,
+                                   String leaseToken) {
         if (trace == null) {
             throw new IllegalArgumentException("trace 不能为空");
         }
-        String turnId = UUID.randomUUID().toString();
+        String turnId = requestedTurnId != null && !requestedTurnId.isBlank()
+                ? requestedTurnId.trim() : UUID.randomUUID().toString();
         String runId = UUID.randomUUID().toString();
         trace.bind(turnId, runId);
 
@@ -227,21 +547,44 @@ public class AiConversationStoreService {
         run.setRuntimeJson(runtimeJson);
         run.setTraceId(trace.traceId());
         run.setTraceJson(trace.toJson());
-        mapper.insertRun(run);
+        run.setLeaseToken(emptyToNull(leaseToken));
+        if (isBlank(leaseToken)) {
+            if (mapper.insertRun(run) != 1) {
+                throw new IllegalStateException("Run 创建失败: " + runId);
+            }
+        } else {
+            requireFencedWrite(mapper.insertRunFenced(
+                            run, System.currentTimeMillis()),
+                    "Run 创建", runId);
+        }
 
         String userMessageId = appendMessage(
+                requestedUserItemId,
                 threadId, turnId, runId, MESSAGE_PENDING,
                 "user", userContent, null, null, null, attachments);
-        return new PersistedTurn(turnId, runId, threadId, userMessageId, startedAt);
+        String assistantMessageId = appendMessage(
+                requestedAssistantItemId,
+                threadId, turnId, runId, MESSAGE_PENDING,
+                "assistant", "", null, null, null, null);
+        return new PersistedTurn(
+                turnId, runId, threadId, userMessageId, assistantMessageId,
+                startedAt, emptyToNull(leaseToken));
     }
 
     /** 持久化 Presenter 完成后的最终阶段轨迹；失败不应改变已经确定的 Turn 终态。 */
     public void updateRunTrace(PersistedTurn turn, AiTurnTrace trace) {
         if (turn == null || trace == null) return;
-        AiRunRecord row = new AiRunRecord();
-        row.setRunId(turn.runId());
-        row.setTraceJson(trace.toJson());
-        mapper.updateRunTrace(row);
+        if (isBlank(turn.leaseToken())) {
+            AiRunRecord row = new AiRunRecord();
+            row.setRunId(turn.runId());
+            row.setTraceJson(trace.toJson());
+            mapper.updateRunTrace(row);
+            return;
+        }
+        requireFencedWrite(mapper.updateRunTraceFenced(
+                        turn.runId(), trace.toJson(), turn.leaseToken(),
+                        System.currentTimeMillis()),
+                "Run Trace", turn.runId());
     }
 
     /**
@@ -252,12 +595,12 @@ public class AiConversationStoreService {
                              List<Object> nodes, Map<String, Object> review,
                              Object planSnapshot, int toolCallCount) {
         if (turn == null) return;
-        appendMessage(turn.threadId(), turn.turnId(), turn.runId(), MESSAGE_COMMITTED,
-                "assistant", output, nodes, review, planSnapshot, null);
-        mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), MESSAGE_COMMITTED);
+        updateAssistantMessage(
+                turn, MESSAGE_COMMITTED, output, nodes, review, planSnapshot);
+        updateTurnMessageStatus(turn, MESSAGE_COMMITTED);
         finishTurn(turn, MESSAGE_COMMITTED);
         finishRun(turn.runId(), AiThread.STATUS_COMPLETED, turn.startedAt(),
-                output, null, null, null, toolCallCount);
+                output, null, null, null, toolCallCount, turn.leaseToken());
     }
 
     /**
@@ -266,19 +609,76 @@ public class AiConversationStoreService {
     @Transactional
     public void discardTurn(PersistedTurn turn, String runStatus, String errorCategory,
                             String errorMessage, String rawErrorMessage, int toolCallCount) {
+        discardTurn(turn, runStatus, errorCategory, errorMessage,
+                rawErrorMessage, toolCallCount, "", List.of(), null);
+    }
+
+    /**
+     * 中断/失败时保存已经产生的 assistant Item，状态仍为 discarded，
+     * 因而不会进入后续模型的 committed memory。
+     */
+    @Transactional
+    public void discardTurn(PersistedTurn turn,
+                            String runStatus,
+                            String errorCategory,
+                            String errorMessage,
+                            String rawErrorMessage,
+                            int toolCallCount,
+                            String partialOutput,
+                            List<Object> partialNodes,
+                            Object planSnapshot) {
         if (turn == null) return;
-        mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), MESSAGE_DISCARDED);
+        updateAssistantMessage(
+                turn, MESSAGE_DISCARDED, partialOutput,
+                partialNodes, null, planSnapshot);
+        updateTurnMessageStatus(turn, MESSAGE_DISCARDED);
         finishTurn(turn, MESSAGE_DISCARDED);
         finishRun(turn.runId(), runStatus, turn.startedAt(), null,
-                errorCategory, errorMessage, rawErrorMessage, toolCallCount);
+                errorCategory, errorMessage, rawErrorMessage, toolCallCount,
+                turn.leaseToken());
+    }
+
+    private void updateAssistantMessage(PersistedTurn turn,
+                                        String status,
+                                        String content,
+                                        List<Object> nodes,
+                                        Map<String, Object> review,
+                                        Object planSnapshot) {
+        AiMessageRecord assistant = new AiMessageRecord();
+        assistant.setMessageId(turn.assistantMessageId());
+        assistant.setStatus(status);
+        assistant.setContent(content != null ? content : "");
+        assistant.setNodesJson(toJsonOrNull(nodes));
+        assistant.setReviewJson(toJsonOrNull(review));
+        assistant.setPlanJson(toJsonOrNull(planSnapshot));
+        if (isBlank(turn.leaseToken())) {
+            mapper.updateMessage(assistant);
+            return;
+        }
+        requireFencedWrite(mapper.updateMessageFenced(
+                        assistant.getMessageId(), assistant.getStatus(),
+                        assistant.getContent(), assistant.getNodesJson(),
+                        assistant.getReviewJson(), assistant.getPlanJson(),
+                        turn.leaseToken(), System.currentTimeMillis()),
+                "Assistant 消息", assistant.getMessageId());
+    }
+
+    private void updateTurnMessageStatus(PersistedTurn turn, String status) {
+        if (isBlank(turn.leaseToken())) {
+            mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), status);
+            return;
+        }
+        requireFencedRows(mapper.updateTurnMessageStatusFenced(
+                        turn.threadId(), turn.turnId(), status,
+                        turn.leaseToken(), System.currentTimeMillis()),
+                "Turn 消息状态", turn.turnId());
     }
 
     private void finishTurn(PersistedTurn turn, String status) {
-        AiTurnRecord row = new AiTurnRecord();
-        row.setTurnId(turn.turnId());
-        row.setStatus(status);
-        row.setCompletedAt(System.currentTimeMillis());
-        mapper.finishTurn(row);
+        int updated = mapper.finishTurn(
+                turn.turnId(), status, System.currentTimeMillis(),
+                emptyToNull(turn.leaseToken()));
+        requireTerminalWrite(updated, turn.leaseToken(), "Turn", turn.turnId());
     }
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
@@ -318,7 +718,8 @@ public class AiConversationStoreService {
 
     private void finishRun(String runId, String status, long startedAt, String output,
                            String errorCategory, String errorMessage,
-                           String rawErrorMessage, int toolCallCount) {
+                           String rawErrorMessage, int toolCallCount,
+                           String leaseToken) {
         AiRunRecord row = new AiRunRecord();
         row.setRunId(runId);
         row.setStatus(status);
@@ -330,7 +731,32 @@ public class AiConversationStoreService {
         row.setErrorMessage(errorMessage);
         row.setRawErrorMessage(rawErrorMessage);
         row.setToolCallCount(toolCallCount);
-        mapper.finishRun(row);
+        row.setLeaseToken(emptyToNull(leaseToken));
+        int updated = mapper.finishRun(row);
+        requireTerminalWrite(updated, leaseToken, "Run", runId);
+    }
+
+    private static void requireFencedWrite(int updated, String target, String id) {
+        if (updated != 1) {
+            throw new IllegalStateException(
+                    "执行租约已失效，拒绝写入过期" + target + ": " + id);
+        }
+    }
+
+    private static void requireFencedRows(int updated, String target, String id) {
+        if (updated < 1) {
+            throw new IllegalStateException(
+                    "执行租约已失效，拒绝写入过期" + target + ": " + id);
+        }
+    }
+
+    private static void requireTerminalWrite(
+            int updated, String leaseToken, String target, String id) {
+        if (updated == 1) return;
+        String reason = isBlank(leaseToken)
+                ? "终态已由其他执行者确定"
+                : "执行租约已失效或终态已由其他执行者确定";
+        throw new IllegalStateException(reason + "，拒绝重复终结" + target + ": " + id);
     }
 
     private static void applyConfig(AiThreadRecord row, AiModelConfig config) {
@@ -353,6 +779,7 @@ public class AiConversationStoreService {
             item.put("messageId", record.getMessageId());
             item.put("turnId", record.getTurnId());
             item.put("runId", record.getRunId());
+            item.put("runStatus", record.getRunStatus());
             item.put("sequence", record.getMessageSeq());
             item.put("status", record.getStatus());
             item.put("role", record.getRole());
@@ -402,8 +829,26 @@ public class AiConversationStoreService {
         return value == null || value.isBlank();
     }
 
+    private static String emptyToNull(String value) {
+        return isBlank(value) ? null : value;
+    }
+
     public record PersistedTurn(String turnId, String runId, String threadId,
-                                String userMessageId, long startedAt) {
+                                String userMessageId, String assistantMessageId,
+                                long startedAt, String leaseToken) {
+        public PersistedTurn(String turnId, String runId, String threadId,
+                             String userMessageId, String assistantMessageId,
+                             long startedAt) {
+            this(turnId, runId, threadId, userMessageId,
+                    assistantMessageId, startedAt, null);
+        }
+
+        /** 兼容旧测试和内部调用点。 */
+        public PersistedTurn(String turnId, String runId, String threadId,
+                             String userMessageId, long startedAt) {
+            this(turnId, runId, threadId, userMessageId,
+                    "item-" + UUID.randomUUID(), startedAt, null);
+        }
     }
 
     public record ConversationMessage(String role, String content) {

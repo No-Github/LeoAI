@@ -6,14 +6,14 @@ import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.Collections;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * 单条 AI 对话线程，归属于某个 {@link PuppetNodeSession}。
@@ -32,8 +32,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AiThread implements AiEventStreamRuntime {
 
     private static final int MAX_TURNS_WARN = 25;
-    /** 为页面刷新和较长时间网络中断保留足够的可重放事件。 */
-    private static final int MAX_RECENT_EVENTS = 2000;
 
     public static final String STATUS_IDLE = "idle";
     public static final String STATUS_RUNNING = "running";
@@ -63,6 +61,10 @@ public class AiThread implements AiEventStreamRuntime {
     private final AtomicBoolean executionClaimed = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private volatile String runStatus = STATUS_IDLE;
+    private volatile String activeTurnId;
+    private volatile String activeItemId;
+    private volatile String activeRunId;
+    private volatile String activeLeaseToken;
     private volatile String stopReason;
     private volatile long taskTimeoutAt;
     /** 外部注册的停止回调（如 StreamingHandle.cancel()），stop() 时触发。 */
@@ -71,7 +73,8 @@ public class AiThread implements AiEventStreamRuntime {
     // ── SSE 事件队列 ──────────────────────────────────────────────────────────
     private final LinkedBlockingQueue<AiSseEvent> sseEventQueue = new LinkedBlockingQueue<>();
     private final AtomicLong sseEventSeq = new AtomicLong(0);
-    private final List<AiSseEvent> recentSseEvents = Collections.synchronizedList(new ArrayList<>());
+    private volatile long currentRunStartSeq;
+    private volatile Consumer<AiSseEvent> eventJournalSink = event -> {};
 
     // ── 轮次计数 ──────────────────────────────────────────────────────────────
     private final AtomicInteger turnCount = new AtomicInteger(0);
@@ -120,6 +123,7 @@ public class AiThread implements AiEventStreamRuntime {
     public boolean claimExecution() {
         boolean claimed = executionClaimed.compareAndSet(false, true);
         if (claimed) {
+            currentRunStartSeq = sseEventSeq.get();
             stopRequested.set(false);
             runStatus = STATUS_RUNNING;
             stopReason = null;
@@ -146,6 +150,14 @@ public class AiThread implements AiEventStreamRuntime {
 
     public boolean isStopRequested() { return stopRequested.get(); }
     public String getRunStatus() { return runStatus; }
+    @Override public String getActiveTurnId() { return activeTurnId; }
+    @Override public void bindActiveTurnId(String turnId) { this.activeTurnId = turnId; }
+    @Override public String getActiveItemId() { return activeItemId; }
+    @Override public void bindActiveItemId(String itemId) { this.activeItemId = itemId; }
+    @Override public String getActiveRunId() { return activeRunId; }
+    @Override public void bindActiveRunId(String runId) { this.activeRunId = runId; }
+    @Override public String getActiveLeaseToken() { return activeLeaseToken; }
+    @Override public void bindActiveLeaseToken(String leaseToken) { this.activeLeaseToken = leaseToken; }
     public boolean isExecuting() { return executionClaimed.get() || executingThread != null; }
     public String getStopReason() { return stopReason; }
     public long getTaskTimeoutAt() { return taskTimeoutAt; }
@@ -209,41 +221,35 @@ public class AiThread implements AiEventStreamRuntime {
 
     public AiSseEvent recordSseEvent(String name, Object data, String subagentInvocationId) {
         AiSseEvent event = new AiSseEvent(sseEventSeq.incrementAndGet(),
-                System.currentTimeMillis(), name, data, subagentInvocationId);
-        synchronized (recentSseEvents) {
-            recentSseEvents.add(event);
-            int overflow = recentSseEvents.size() - MAX_RECENT_EVENTS;
-            if (overflow > 0) {
-                recentSseEvents.subList(0, overflow).clear();
-            }
-        }
+                System.currentTimeMillis(), name, data, subagentInvocationId,
+                activeTurnId, activeItemId, activeRunId);
+        eventJournalSink.accept(event);
         return event;
     }
 
-    public List<AiSseEvent> recentSseEventsAfter(long afterSeq, int limit) {
-        int safeLimit = limit > 0 ? Math.min(limit, MAX_RECENT_EVENTS) : MAX_RECENT_EVENTS;
-        List<AiSseEvent> result = new ArrayList<>();
-        synchronized (recentSseEvents) {
-            for (AiSseEvent event : recentSseEvents) {
-                if (event.seq() > afterSeq) {
-                    result.add(event);
-                    if (result.size() >= safeLimit) break;
-                }
-            }
-        }
-        return result;
+    @Override
+    public void configureEventJournal(long persistedLastSeq,
+                                      Consumer<AiSseEvent> eventSink) {
+        sseEventSeq.accumulateAndGet(Math.max(0L, persistedLastSeq), Math::max);
+        eventJournalSink = eventSink != null ? eventSink : event -> {};
     }
 
     public long getLastSseEventSeq() {
         return sseEventSeq.get();
     }
 
+    @Override
+    public long getCurrentRunStartSeq() {
+        return currentRunStartSeq;
+    }
+
     public void clearSseEvents() {
         sseEventQueue.clear();
-        synchronized (recentSseEvents) {
-            recentSseEvents.clear();
-        }
-        sseEventSeq.set(0L);
+        currentRunStartSeq = sseEventSeq.get();
+        activeTurnId = null;
+        activeItemId = null;
+        activeRunId = null;
+        activeLeaseToken = null;
     }
 
     public void offerSystemWarn(String message) {

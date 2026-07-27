@@ -7,7 +7,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -19,9 +18,12 @@ public final class AiSseTransport {
 
     private static final Logger logger = LoggerFactory.getLogger(AiSseTransport.class);
     private final AiSseEventPump eventPump;
+    private final AiSseEmitterWriter writer;
 
-    public AiSseTransport(AiSseEventPump eventPump) {
+    public AiSseTransport(AiSseEventPump eventPump,
+                          AiSseEmitterWriter writer) {
         this.eventPump = eventPump;
+        this.writer = writer;
     }
 
     public Session open(String source,
@@ -93,27 +95,11 @@ public final class AiSseTransport {
         }
 
         private void sendExisting(AiSseEvent event) throws Exception {
-            SseEmitter.SseEventBuilder builder = SseEmitter.event().name(event.name());
-            if (event.data() instanceof String text) {
-                builder.data(text, org.springframework.http.MediaType.TEXT_PLAIN);
-            } else {
-                builder.data(event.data() != null ? event.data() : "");
-            }
-            if (event.seq() > 0) {
-                builder.id(String.valueOf(event.seq()));
-            }
-            synchronized (emitter) {
-                emitter.send(builder);
-            }
+            writer.sendEvent(emitter, event);
         }
 
         private void sendHeartbeat(Map<String, Object> payload) throws Exception {
-            SseEmitter.SseEventBuilder builder = SseEmitter.event()
-                    .name("heartbeat")
-                    .data(payload != null ? payload : new LinkedHashMap<>());
-            synchronized (emitter) {
-                emitter.send(builder);
-            }
+            writer.sendHeartbeat(emitter, payload);
         }
     }
 

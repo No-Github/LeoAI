@@ -8,8 +8,10 @@ import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiRuntimeStats;
+import org.leo.core.entity.AiSseEvent;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -109,6 +111,28 @@ class AiTurnTransactionTest {
                 eq("用户停止"), eq("用户停止"), eq(0));
         verify(fixture.failover, never()).recordFailure(any(), any());
         verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+    }
+
+    @Test
+    void persistsInterruptedAssistantItemWithPartialOutput() {
+        Fixture fixture = fixture();
+        List<AiSseEvent> events = List.of(
+                new AiSseEvent("delta", "停止前内容"),
+                new AiSseEvent("node", Map.of(
+                        "kind", "text", "content", "停止前内容")));
+
+        fixture.session().discard(
+                new AiTurnFailure(
+                        new InterruptedException("stopped"),
+                        AiTurnOutcome.CANCELLED,
+                        "用户停止"),
+                events,
+                null);
+
+        verify(fixture.store).discardTurn(
+                eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
+                eq("用户停止"), eq("用户停止"), eq(0),
+                eq("停止前内容"), any(), eq(null));
     }
 
     @Test

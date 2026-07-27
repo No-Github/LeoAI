@@ -36,7 +36,7 @@ class ShellGeneratorConfigTest {
     void exposesProtocolCapabilityMatrix() {
         assertEquals(Arrays.asList("http", "httpchunk"),
                 ShellGeneratorConfig.getSupportedWebShellProtocols());
-        assertEquals(Arrays.asList("http", "websocket"),
+        assertEquals(Arrays.asList("http", "httpchunk", "websocket"),
                 ShellGeneratorConfig.getSupportedMemoryShellProtocols());
     }
 
@@ -47,12 +47,12 @@ class ShellGeneratorConfigTest {
                 () -> websocketWebShell.validateForWebShell("JSP"));
         assertTrue(webShellError.getMessage().contains("内存构建"));
 
+        // httpchunk 现已支持内存马：使用 chunked 传输编码的 HTTP 变体，
+        // Shell 模板通过 Servlet API 透明处理 chunked 编码。
         ShellGeneratorConfig chunkedMemory = injectorBuilder()
                 .protocol("httpchunk")
                 .build();
-        IllegalArgumentException chunkedError = assertThrows(IllegalArgumentException.class,
-                chunkedMemory::validateForInjector);
-        assertTrue(chunkedError.getMessage().contains("仅支持 JSP/JSPX"));
+        assertDoesNotThrow(() -> chunkedMemory.validateForInjector());
 
         ShellGeneratorConfig wrongWebSocketInjector = injectorBuilder()
                 .protocol("websocket")
@@ -65,6 +65,38 @@ class ShellGeneratorConfigTest {
                 .urlPattern("/socket")
                 .build();
         assertDoesNotThrow(websocket::validateForInjector);
+    }
+
+    @Test
+    void chunkInjectorAutoUpgradesProtocolAndValidatesRespCode() {
+        // 未显式传 protocol 时，FilterInjector-HTTPCHUNK 自动升级到 httpchunk
+        ShellGeneratorConfig chunk = injectorBuilder()
+                .shellType("FilterInjector-HTTPCHUNK")
+                .build();
+        chunk.validateForInjector();
+        assertEquals("httpchunk", chunk.getProtocol());
+
+        // 显式 httpchunk 也通过
+        ShellGeneratorConfig explicit = injectorBuilder()
+                .protocol("httpchunk")
+                .shellType("FilterInjector-HTTPCHUNK")
+                .build();
+        assertDoesNotThrow(explicit::validateForInjector);
+
+        // websocket 与 chunk 不兼容
+        ShellGeneratorConfig ws = injectorBuilder()
+                .protocol("websocket")
+                .shellType("FilterInjector-HTTPCHUNK")
+                .build();
+        assertThrows(IllegalArgumentException.class, ws::validateForInjector);
+
+        // respCode 204 不允许持续响应体
+        ShellGeneratorConfig badResp = injectorBuilder()
+                .protocol("httpchunk")
+                .shellType("FilterInjector-HTTPCHUNK")
+                .respCode(204)
+                .build();
+        assertThrows(IllegalArgumentException.class, badResp::validateForInjector);
     }
 
     @Test

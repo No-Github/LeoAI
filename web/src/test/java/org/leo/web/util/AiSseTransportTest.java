@@ -32,7 +32,7 @@ class AiSseTransportTest {
         fixture.session.emit("delta", "hello");
         fixture.session.emitStatus("completed");
 
-        assertEquals(2, fixture.runtime.recentSseEventsAfter(0, 10).size());
+        assertEquals(2, fixture.persistedEvents.size());
         verify(fixture.emitter, times(2)).send(any(SseEmitter.SseEventBuilder.class));
     }
 
@@ -44,7 +44,7 @@ class AiSseTransportTest {
 
         fixture.session.emitSafely("warn", "still recorded");
 
-        assertEquals(1, fixture.runtime.recentSseEventsAfter(0, 10).size());
+        assertEquals(1, fixture.persistedEvents.size());
     }
 
     @Test
@@ -72,6 +72,8 @@ class AiSseTransportTest {
         AiSseEventPump eventPump = mock(AiSseEventPump.class);
         SseEmitter emitter = mock(SseEmitter.class);
         AiThread runtime = new AiThread("thread-1", "test");
+        List<AiSseEvent> persistedEvents = new ArrayList<>();
+        runtime.configureEventJournal(0L, persistedEvents::add);
         List<AiSseEvent> eventLog = new ArrayList<>();
         AiSseEventPump.Handle handle = new AiSseEventPump.Handle(
                 new AtomicBoolean(false), mock(Future.class));
@@ -79,16 +81,20 @@ class AiSseTransportTest {
                 anyString(), same(runtime.getAiSseEventQueue()), same(eventLog),
                 any(), any(), any())).thenReturn(handle);
 
-        AiSseTransport transport = new AiSseTransport(eventPump);
+        AiSseTransport transport =
+                new AiSseTransport(eventPump, new AiSseEmitterWriter());
         AiSseTransport.Session session =
                 transport.open("test", runtime, emitter, eventLog);
-        return new Fixture(eventPump, emitter, runtime, eventLog, handle, session);
+        return new Fixture(
+                eventPump, emitter, runtime, eventLog,
+                persistedEvents, handle, session);
     }
 
     private record Fixture(AiSseEventPump eventPump,
                            SseEmitter emitter,
                            AiThread runtime,
                            List<AiSseEvent> eventLog,
+                           List<AiSseEvent> persistedEvents,
                            AiSseEventPump.Handle handle,
                            AiSseTransport.Session session) {
     }

@@ -51,6 +51,31 @@ class SchemaIntegrityTest {
                         VALUES ('turn-1', 'thread-1', 'pending', 1)
                         """);
                 statement.executeUpdate("""
+                        INSERT INTO ai_thread_leases
+                          (thread_id, owner_id, lease_token, acquired_at, heartbeat_at, expires_at)
+                        VALUES ('thread-1', 'owner-1', 'lease-1', 1, 1, 10)
+                        """);
+                assertEquals(0, statement.executeUpdate("""
+                        INSERT INTO ai_thread_leases
+                          (thread_id, owner_id, lease_token, acquired_at, heartbeat_at, expires_at)
+                        VALUES ('thread-1', 'owner-2', 'lease-2', 2, 2, 12)
+                        ON CONFLICT(thread_id) DO UPDATE SET
+                          owner_id=excluded.owner_id, lease_token=excluded.lease_token,
+                          acquired_at=excluded.acquired_at, heartbeat_at=excluded.heartbeat_at,
+                          expires_at=excluded.expires_at
+                        WHERE ai_thread_leases.expires_at <= excluded.acquired_at
+                        """));
+                assertEquals(0, statement.executeUpdate("""
+                        UPDATE ai_thread_leases SET heartbeat_at=11, expires_at=20
+                        WHERE thread_id='thread-1' AND owner_id='owner-1'
+                          AND lease_token='lease-1' AND expires_at > 11
+                        """));
+                assertEquals(1, statement.executeUpdate("""
+                        UPDATE ai_thread_leases SET heartbeat_at=2, expires_at=20
+                        WHERE thread_id='thread-1' AND owner_id='owner-1'
+                          AND lease_token='lease-1' AND expires_at > 2
+                        """));
+                statement.executeUpdate("""
                         INSERT INTO ai_runs
                           (run_id, thread_id, turn_id, status, started_at, trace_id)
                         VALUES ('run-1', 'thread-1', 'turn-1', 'running', 1, 'trace-1')
@@ -62,6 +87,43 @@ class SchemaIntegrityTest {
                         VALUES ('message-1', 'thread-1', 'turn-1', 'run-1', 1, 'pending',
                                 'user', 'hello', 1)
                         """);
+                statement.executeUpdate("""
+                        INSERT INTO ai_events
+                          (event_id, run_id, thread_id, turn_id, item_id, event_seq,
+                           timestamp, name, data_json)
+                        VALUES ('event-1', 'run-1', 'thread-1', 'turn-1',
+                                'message-1', 1, 1, 'delta', '"hello"')
+                        """);
+                assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                        INSERT INTO ai_events
+                          (event_id, thread_id, event_seq, timestamp, name)
+                        VALUES ('event-duplicate', 'thread-1', 1, 2, 'delta')
+                        """));
+                assertEquals(0, statement.executeUpdate("""
+                        UPDATE ai_runs SET status='completed', finished_at=2
+                        WHERE run_id='run-1' AND EXISTS (
+                          SELECT 1 FROM ai_thread_leases l
+                          WHERE l.thread_id=ai_runs.thread_id
+                            AND l.lease_token='wrong-token' AND l.expires_at > 2
+                        )
+                        """));
+                assertEquals(0, statement.executeUpdate("""
+                        UPDATE ai_runs SET status='completed', finished_at=21
+                        WHERE run_id='run-1' AND status='running'
+                          AND lease_token='lease-1' AND EXISTS (
+                          SELECT 1 FROM ai_thread_leases l
+                          WHERE l.thread_id=ai_runs.thread_id
+                            AND l.lease_token='lease-1' AND l.expires_at > 21
+                        )
+                        """));
+                assertEquals(1, statement.executeUpdate("""
+                        UPDATE ai_runs SET status='completed', finished_at=3
+                        WHERE run_id='run-1' AND status='running' AND EXISTS (
+                          SELECT 1 FROM ai_thread_leases l
+                          WHERE l.thread_id=ai_runs.thread_id
+                            AND l.lease_token='lease-1' AND l.expires_at > 3
+                        )
+                        """));
                 statement.executeUpdate("DELETE FROM ai_threads WHERE thread_id = 'thread-1'");
             }
 
@@ -73,6 +135,8 @@ class SchemaIntegrityTest {
             try (Statement statement = connection.createStatement()) {
                 assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_turns"));
                 assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_runs"));
+                assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_events"));
+                assertEquals(0, scalar(statement, "SELECT COUNT(*) FROM ai_thread_leases"));
             }
         }
     }

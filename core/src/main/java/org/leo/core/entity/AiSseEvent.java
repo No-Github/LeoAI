@@ -21,16 +21,37 @@ package org.leo.core.entity;
  * @param name 事件类型名称
  * @param data 事件数据（JSON 序列化由 SseEmitter 处理）
  * @param subagentInvocationId 关联的子 Agent 派发 ID，null 表示父 Agent 直接产出
+ * @param turnId 事件所属 Turn；旧事件或线程级事件可为 null
+ * @param itemId 事件所属 Item；尚未迁移为 Item 生命周期的兼容事件可为 null
+ * @param runId 事件所属持久化 Run；Turn 建立前的控制事件可为 null
  */
-public record AiSseEvent(long seq, long timestamp, String name, Object data, String subagentInvocationId) {
+public record AiSseEvent(long seq,
+                         long timestamp,
+                         String name,
+                         Object data,
+                         String subagentInvocationId,
+                         String turnId,
+                         String itemId,
+                         String runId) {
+
+    public AiSseEvent(long seq, long timestamp, String name, Object data,
+                      String subagentInvocationId, String turnId, String itemId) {
+        this(seq, timestamp, name, data, subagentInvocationId, turnId, itemId, null);
+    }
+
+    /** 兼容旧调用点的构造器；新运行时会显式写入 turnId。 */
+    public AiSseEvent(long seq, long timestamp, String name, Object data,
+                      String subagentInvocationId) {
+        this(seq, timestamp, name, data, subagentInvocationId, null, null, null);
+    }
 
     /** 便捷构造：seq=0、当前时间戳，主要给单元测试或即时事件使用。 */
     public AiSseEvent(String name, Object data) {
-        this(0L, System.currentTimeMillis(), name, data, null);
+        this(0L, System.currentTimeMillis(), name, data, null, null, null, null);
     }
 
     public AiSseEvent(String name, Object data, String subagentInvocationId) {
-        this(0L, System.currentTimeMillis(), name, data, subagentInvocationId);
+        this(0L, System.currentTimeMillis(), name, data, subagentInvocationId, null, null, null);
     }
 
     /**
@@ -39,6 +60,6 @@ public record AiSseEvent(long seq, long timestamp, String name, Object data, Str
      */
     public AiSseEvent withSubagent(String invocationId) {
         if (invocationId == null || invocationId.isBlank()) return this;
-        return new AiSseEvent(seq, timestamp, name, data, invocationId);
+        return new AiSseEvent(seq, timestamp, name, data, invocationId, turnId, itemId, runId);
     }
 }

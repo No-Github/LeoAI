@@ -287,7 +287,8 @@ class ModuleBoundaryTest {
             assertTrue(source.contains("AiTurnTrace.Checkpoint.AGENT_RESOLVED"),
                     service + " 未记录 Agent 解析阶段");
             assertTrue(source.contains("agentRuntime.runtimeJson(),")
-                            && source.contains("trace);"),
+                            && (source.contains("trace);")
+                                    || source.contains("trace,")),
                     service + " 未把同一 trace 绑定到持久化 Run");
             assertFalse(source.contains(".updateRunTrace("),
                     service + " 不应直接完成 trace 持久化");

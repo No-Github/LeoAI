@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ServerInjectorMapper {
 
     private static final String SHELL_FILTER = "LeoFilterTpl";
+    private static final String SHELL_FILTER_CHUNK = "LeoFilterChunkTpl";
     private static final String SHELL_VALVE = "LeoValveTpl";
     private static final String SHELL_LISTENER = "LeoListenerTpl";
     private static final String SHELL_SERVLET = "LeoServletTpl";
@@ -79,6 +80,7 @@ public class ServerInjectorMapper {
     private static void registerTomcat() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"));
         list.add(pair("ValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.tomcat.TomcatValveInjector"));
         list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.tomcat.TomcatServletInjector"));
@@ -90,10 +92,14 @@ public class ServerInjectorMapper {
     private static void registerJBoss() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.tomcat.TomcatListenerInjector"));
         list.add(pair("ValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.glassfish.GlassFishValveInjector"));
         list.add(pair("ProxyValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.tomcat.TomcatProxyValveInjector"));
+        list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketInjector"));
         // JBoss AS / EAP 6/7 / WildFly 共用同一套注入器
+        // EAP 6 使用 Tomcat 内核 (JBossWeb)，WebSocket Injector 与 Tomcat 一致
+        // EAP 7+ / WildFly 使用 Undertow，建议使用 serverType=Undertow
         serverInjectorTypeMap.put("JBoss", list);
         serverInjectorTypeMap.put("JBossAS", list);
         serverInjectorTypeMap.put("JBossEAP6", list);
@@ -103,31 +109,38 @@ public class ServerInjectorMapper {
     private static void registerJetty() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.jetty.JettyFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.jetty.JettyFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.jetty.JettyListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.jetty.JettyServletInjector"));
         list.add(pair("CustomizerInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.jetty.JettyCustomizerInjector"));
+        list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.jetty.JettyWebSocketInjector"));
         serverInjectorTypeMap.put("Jetty", list);
     }
 
     private static void registerUndertowFamily() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.undertow.UndertowFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.undertow.UndertowFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.undertow.UndertowListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.undertow.UndertowServletInjector"));
+        list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.undertow.UndertowWebSocketInjector"));
         serverInjectorTypeMap.put("Undertow", list);
     }
 
     private static void registerWebLogic() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.weblogic.WebLogicFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.weblogic.WebLogicFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.weblogic.WebLogicListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.weblogic.WebLogicServletInjector"));
+        list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.weblogic.WebLogicWebSocketInjector"));
         serverInjectorTypeMap.put("WebLogic", list);
     }
 
     private static void registerWebSphere() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.websphere.WebSphereFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.websphere.WebSphereFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.websphere.WebSphereListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.websphere.WebSphereServletInjector"));
         serverInjectorTypeMap.put("WebSphere", list);
@@ -136,6 +149,7 @@ public class ServerInjectorMapper {
     private static void registerResin() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.resin.ResinFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.resin.ResinFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.resin.ResinListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.resin.ResinServletInjector"));
         serverInjectorTypeMap.put("Resin", list);
@@ -144,7 +158,9 @@ public class ServerInjectorMapper {
     private static void registerGlassfishFamily() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.glassfish.GlassFishFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.glassfish.GlassFishFilterInjector"));
         list.add(pair("ValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.glassfish.GlassFishValveInjector"));
+        list.add(pair("WebSocketInjector", SHELL_WEBSOCKET, "org.leo.jmg.mem.injectortpl.glassfish.GlassFishWebSocketInjector"));
         // Payara 是 GlassFish 的社区分支，共用同一套注入器
         serverInjectorTypeMap.put("Glassfish", list);
         serverInjectorTypeMap.put("Payara", list);
@@ -163,6 +179,7 @@ public class ServerInjectorMapper {
         list.add(pair("FilterInjector_V9", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"));
         list.add(pair("FilterInjector_V10", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"));
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.apusic.ApusicListenerInjector"));
         list.add(pair("ServletInjector", SHELL_SERVLET, "org.leo.jmg.mem.injectortpl.apusic.ApusicServletInjector"));
         serverInjectorTypeMap.put("Apusic", list);
@@ -171,6 +188,7 @@ public class ServerInjectorMapper {
     private static void registerBes() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.bes.BesFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.bes.BesFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.bes.BesListenerInjector"));
         list.add(pair("ValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.bes.BesValveInjector"));
         serverInjectorTypeMap.put("BES", list);
@@ -179,6 +197,7 @@ public class ServerInjectorMapper {
     private static void registerInforSuite() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.inforsuite.InforSuiteFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.inforsuite.InforSuiteFilterInjector"));
         serverInjectorTypeMap.put("InforSuite", list);
     }
 
@@ -186,6 +205,7 @@ public class ServerInjectorMapper {
     private static void registerTongWeb() {
         List<InjectorTemplatePair> list = new ArrayList<>();
         list.add(pair("FilterInjector", SHELL_FILTER, "org.leo.jmg.mem.injectortpl.tongweb.TongWebFilterInjector"));
+        list.add(pair("FilterInjector-HTTPCHUNK", SHELL_FILTER_CHUNK, "org.leo.jmg.mem.injectortpl.tongweb.TongWebFilterInjector"));
         list.add(pair("ListenerInjector", SHELL_LISTENER, "org.leo.jmg.mem.injectortpl.tongweb.TongWebListenerInjector"));
         list.add(pair("ValveInjector", SHELL_VALVE, "org.leo.jmg.mem.injectortpl.tongweb.TongWebValveInjector"));
         serverInjectorTypeMap.put("TongWeb", list);

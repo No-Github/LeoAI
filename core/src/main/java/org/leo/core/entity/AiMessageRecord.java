@@ -6,6 +6,9 @@ public class AiMessageRecord {
     private String threadId;
     private String turnId;
     private String runId;
+    private String runStatus;
+    private String protocolStatus;
+    private String protocolErrorMessage;
     private Long messageSeq;
     private String status;
     private String role;
@@ -27,6 +30,17 @@ public class AiMessageRecord {
 
     public String getRunId() { return runId; }
     public void setRunId(String runId) { this.runId = runId; }
+
+    public String getRunStatus() { return runStatus; }
+    public void setRunStatus(String runStatus) { this.runStatus = runStatus; }
+
+    public String getProtocolStatus() { return protocolStatus; }
+    public void setProtocolStatus(String protocolStatus) { this.protocolStatus = protocolStatus; }
+
+    public String getProtocolErrorMessage() { return protocolErrorMessage; }
+    public void setProtocolErrorMessage(String protocolErrorMessage) {
+        this.protocolErrorMessage = protocolErrorMessage;
+    }
 
     public Long getMessageSeq() { return messageSeq; }
     public void setMessageSeq(Long messageSeq) { this.messageSeq = messageSeq; }

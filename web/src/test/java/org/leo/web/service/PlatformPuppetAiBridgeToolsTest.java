@@ -82,9 +82,6 @@ class PlatformPuppetAiBridgeToolsTest {
         assertEquals("child-1", result.get("childThreadId"));
         assertEquals("当前用户为 root", result.get("summary"));
         assertNotNull(result.get("invocationId"));
-        assertEquals(1, fixture.state.recentSseEventsAfter(0, 20).stream()
-                .filter(event -> "subagent_event".equals(event.name()))
-                .count());
         verify(fixture.conversationStore).insertSubagentInvocation(any());
         verify(fixture.conversationStore, times(2)).updateSubagentInvocation(any());
         verify(fixture.permissionService).requireSessionAccess(session, fixture.user, "session-1");

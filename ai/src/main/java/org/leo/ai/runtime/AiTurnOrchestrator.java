@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 /**
@@ -33,9 +34,11 @@ public class AiTurnOrchestrator {
         this.telemetryRegistry = telemetryRegistry;
     }
 
-    public void execute(Request request, Lifecycle lifecycle) {
+    public CompletableFuture<TerminalResult> execute(
+            Request request, Lifecycle lifecycle) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(lifecycle, "lifecycle");
+        CompletableFuture<TerminalResult> completion = new CompletableFuture<>();
 
         AiTurnTransaction.Session transaction =
                 turnTransaction.open(request.transactionContext());
@@ -45,12 +48,14 @@ public class AiTurnOrchestrator {
             lifecycle.onStarted();
             trace.checkpoint(AiTurnTrace.Checkpoint.PRESENTATION_STARTED);
         } catch (Throwable error) {
-            finishPreparationFailure(request, lifecycle, transaction, error);
-            return;
+            finishPreparationFailure(
+                    request, lifecycle, transaction, error, completion);
+            return completion;
         }
 
         trace.checkpoint(AiTurnTrace.Checkpoint.MODEL_STARTED);
-        executionEngine.execute(request.command(), new AiTurnExecutionListener() {
+        try {
+            executionEngine.execute(request.command(), new AiTurnExecutionListener() {
             @Override
             public void onEvent(AiTurnEvent event) {
                 trace.checkpoint(AiTurnTrace.Checkpoint.FIRST_EVENT);
@@ -72,6 +77,7 @@ public class AiTurnOrchestrator {
                         AiTurnOutcome.COMPLETED,
                         transaction,
                         lifecycle,
+                        completion,
                         () -> {
                             lifecycle.onCommitted(completed);
                             trace.checkpoint(
@@ -79,28 +85,39 @@ public class AiTurnOrchestrator {
                             finishTrace(
                                     transaction, AiTurnOutcome.COMPLETED,
                                     null, null);
+                            completeResult(completion, transaction);
                         });
             }
 
             @Override
             public void onFailed(AiTurnFailure failure) throws Exception {
                 trace.checkpoint(AiTurnTrace.Checkpoint.MODEL_FAILED);
-                finalizeFailure(transaction, lifecycle, failure, true);
+                finalizeFailure(
+                        transaction, lifecycle, failure, true,
+                        request.eventLog(), request.planSnapshot().get(),
+                        completion);
             }
 
             @Override
             public void onTerminalFailure(
                     AiTurnOutcome attemptedOutcome, Exception error) {
                 recoverTerminalFailure(
-                        transaction, lifecycle, attemptedOutcome, error);
+                        transaction, lifecycle, attemptedOutcome, error,
+                        completion);
             }
-        });
+            });
+        } catch (Throwable error) {
+            finishPreparationFailure(
+                    request, lifecycle, transaction, error, completion);
+        }
+        return completion;
     }
 
     private void finishPreparationFailure(Request request,
                                           Lifecycle lifecycle,
                                           AiTurnTransaction.Session transaction,
-                                          Throwable error) {
+                                          Throwable error,
+                                          CompletableFuture<TerminalResult> completion) {
         AiTurnCoordinator.Execution execution = request.command().execution();
         transaction.trace().checkpoint(
                 AiTurnTrace.Checkpoint.PREPARATION_FAILED);
@@ -113,22 +130,30 @@ public class AiTurnOrchestrator {
                         ? execution.cancellationReason() : null);
         try {
             execution.finish(outcome, () ->
-                    finalizeFailure(transaction, lifecycle, failure, false));
+                    finalizeFailure(
+                            transaction, lifecycle, failure, false,
+                            request.eventLog(), request.planSnapshot().get(),
+                            completion));
         } catch (Throwable terminalError) {
             recoverTerminalFailure(
-                    transaction, lifecycle, outcome, asException(terminalError));
+                    transaction, lifecycle, outcome, asException(terminalError),
+                    completion);
         }
     }
 
     private void finalizeFailure(AiTurnTransaction.Session transaction,
                                  Lifecycle lifecycle,
                                  AiTurnFailure failure,
-                                 boolean modelStarted) throws Exception {
+                                 boolean modelStarted,
+                                 List<AiSseEvent> eventLog,
+                                 Object planSnapshot,
+                                 CompletableFuture<TerminalResult> completion)
+            throws Exception {
         lifecycle.beforeDiscard(failure);
         transaction.trace().checkpoint(
                 AiTurnTrace.Checkpoint.PERSISTENCE_STARTED);
         AiTurnTransaction.FailedTurn failed = modelStarted
-                ? transaction.discard(failure)
+                ? transaction.discard(failure, eventLog, planSnapshot)
                 : transaction.discardBeforeModel(failure);
         transaction.trace().checkpoint(
                 AiTurnTrace.Checkpoint.PERSISTENCE_COMPLETED);
@@ -136,6 +161,7 @@ public class AiTurnOrchestrator {
                 failure.outcome(),
                 transaction,
                 lifecycle,
+                completion,
                 () -> {
                     lifecycle.onDiscarded(failed, failure);
                     transaction.trace().checkpoint(
@@ -147,6 +173,7 @@ public class AiTurnOrchestrator {
                                     ? AiConversationStoreService.ERROR_CANCELLED
                                     : failed.classification().category(),
                             failed.message());
+                    completeResult(completion, transaction);
                 });
     }
 
@@ -156,19 +183,22 @@ public class AiTurnOrchestrator {
     private void runAfterPersistence(AiTurnOutcome outcome,
                                      AiTurnTransaction.Session transaction,
                                      Lifecycle lifecycle,
+                                     CompletableFuture<TerminalResult> completion,
                                      TerminalAction action) {
         try {
             action.run();
         } catch (Throwable error) {
             recoverTerminalFailure(
-                    transaction, lifecycle, outcome, asException(error));
+                    transaction, lifecycle, outcome, asException(error),
+                    completion);
         }
     }
 
     private void recoverTerminalFailure(AiTurnTransaction.Session transaction,
                                         Lifecycle lifecycle,
                                         AiTurnOutcome attemptedOutcome,
-                                        Exception error) {
+                                        Exception error,
+                                        CompletableFuture<TerminalResult> completion) {
         boolean recovered = false;
         Exception recoveryError = null;
         transaction.trace().checkpoint(AiTurnTrace.Checkpoint.RECOVERY_STARTED);
@@ -216,9 +246,26 @@ public class AiTurnOrchestrator {
                 category = AiConversationStoreService.ERROR_PERSISTENCE;
                 message = error.getMessage();
             }
-            finishTrace(
-                    transaction, finalOutcome, category, message);
+            try {
+                finishTrace(
+                        transaction, finalOutcome, category, message);
+            } catch (Throwable traceError) {
+                logger.warn("AI Turn 终态追踪写入失败: {}",
+                        traceError.getMessage(), traceError);
+            } finally {
+                completeResult(completion, transaction);
+            }
         }
+    }
+
+    private void completeResult(CompletableFuture<TerminalResult> completion,
+                                AiTurnTransaction.Session transaction) {
+        AiTurnTransaction.FailedTurn failed = transaction.failedTurn();
+        AiTurnOutcome outcome = transaction.completedTurn() != null
+                ? AiTurnOutcome.COMPLETED
+                : failed != null ? failed.outcome() : AiTurnOutcome.FAILED;
+        String errorMessage = failed != null ? failed.message() : null;
+        completion.complete(new TerminalResult(outcome, errorMessage));
     }
 
     private void finishTrace(AiTurnTransaction.Session transaction,
@@ -279,6 +326,17 @@ public class AiTurnOrchestrator {
             Objects.requireNonNull(transactionContext, "transactionContext");
             eventLog = eventLog != null ? eventLog : List.of();
             planSnapshot = planSnapshot != null ? planSnapshot : () -> null;
+        }
+    }
+
+    public record TerminalResult(AiTurnOutcome outcome, String errorMessage) {
+
+        public String runtimeStatus() {
+            return switch (outcome) {
+                case COMPLETED -> "completed";
+                case CANCELLED -> "cancelled";
+                case FAILED -> "failed";
+            };
         }
     }
 

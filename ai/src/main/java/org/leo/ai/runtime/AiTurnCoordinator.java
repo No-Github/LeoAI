@@ -4,6 +4,7 @@ import org.leo.core.ai.AiTurnRuntime;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -24,6 +25,33 @@ public class AiTurnCoordinator {
         if (runtime != null) {
             runtime.clearExecuting();
         }
+    }
+
+    /**
+     * 取消后的下一条命令等待上一执行线程完成 finally 收口，再原子抢占执行权。
+     */
+    public boolean tryClaimAfterRelease(AiTurnRuntime runtime,
+                                        BooleanSupplier stillExecuting,
+                                        long waitMillis) {
+        Objects.requireNonNull(runtime, "runtime");
+        Objects.requireNonNull(stillExecuting, "stillExecuting");
+        long deadline = System.currentTimeMillis() + Math.max(0L, waitMillis);
+        while (stillExecuting.getAsBoolean() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(25L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return !stillExecuting.getAsBoolean() && tryClaim(runtime);
+    }
+
+    /** 后台入口发生未被 Turn Presenter 收口的异常时统一标记失败并释放执行权。 */
+    public void failAndRelease(AiTurnRuntime runtime) {
+        if (runtime == null) return;
+        runtime.markFailed();
+        runtime.clearExecuting();
     }
 
     public Execution attach(AiTurnRuntime runtime) {

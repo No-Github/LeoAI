@@ -17,22 +17,11 @@ public final class AiControllerUtil {
     // ── SSE 工具 ────────────────────────────────────────────────────────────────
 
     /**
-     * 安全地向 SseEmitter 发送状态事件。状态发送失败通常表示客户端已经断开，
-     * 后台任务生命周期不应该因此被打断。
-     */
-    public static void safeSendStatus(SseEmitter emitter, String status) {
-        try {
-            emitter.send(SseEmitter.event().name("status").data(status));
-        } catch (Exception ignored) {
-            // ignore disconnected clients
-        }
-    }
-
-    /**
      * 安全地向 SseEmitter 发送 error 事件并关闭连接。
      * 如果发送本身也失败，则直接 completeWithError。
      */
     public static void safeSendError(SseEmitter emitter, String message) {
+        if (emitter == null) return;
         try {
             emitter.send(SseEmitter.event().name("error")
                     .data(message != null ? message : "未知错误"));
@@ -46,6 +35,7 @@ public final class AiControllerUtil {
      * 发送结构化错误元数据和兼容旧前端的纯文本 error 事件。
      */
     public static void safeSendError(SseEmitter emitter, AiErrorClassifier.Classification classification) {
+        if (emitter == null) return;
         String message = classification != null ? classification.message() : "未知错误";
         try {
             if (classification != null) {
@@ -60,6 +50,7 @@ public final class AiControllerUtil {
     }
 
     public static void safeComplete(SseEmitter emitter) {
+        if (emitter == null) return;
         try {
             emitter.complete();
         } catch (Exception ignored) {

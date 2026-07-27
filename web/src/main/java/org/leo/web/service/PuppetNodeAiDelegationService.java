@@ -28,19 +28,22 @@ public class PuppetNodeAiDelegationService {
     private final PuppetNodeAiDelegationPresenter delegationPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
+    private final AiExecutionLeaseService executionLeaseService;
 
     public PuppetNodeAiDelegationService(AiModelConfigService modelConfigService,
                                          AiConversationStoreService conversationStore,
                                          PuppetNodeAiAgentRegistry agentRegistry,
                                          PuppetNodeAiDelegationPresenter delegationPresenter,
                                          AiTurnCoordinator turnCoordinator,
-                                         AiTurnOrchestrator turnOrchestrator) {
+                                         AiTurnOrchestrator turnOrchestrator,
+                                         AiExecutionLeaseService executionLeaseService) {
         this.modelConfigService = modelConfigService;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.delegationPresenter = delegationPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
+        this.executionLeaseService = executionLeaseService;
     }
 
     public Map<String, Object> execute(PuppetNodeSession session,
@@ -56,28 +59,42 @@ public class PuppetNodeAiDelegationService {
         if (!turnCoordinator.tryClaim(thread)) {
             throw ApiException.badRequest("目标 Puppet AI 线程正在执行中");
         }
+        String leaseToken;
+        try {
+            leaseToken = executionLeaseService.tryAcquireToken(
+                    thread.getThreadId(), () -> thread.stop("执行租约已转移"));
+        } catch (RuntimeException error) {
+            turnCoordinator.releaseClaim(thread);
+            throw error;
+        }
+        if (leaseToken == null) {
+            turnCoordinator.releaseClaim(thread);
+            throw ApiException.badRequest("目标 Puppet AI 线程正在其他实例执行中");
+        }
+        thread.bindActiveLeaseToken(leaseToken);
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(thread);
         long startMs = System.currentTimeMillis();
         String threadId = thread.getThreadId();
         String memoryId = session.getSessionId() + ":" + threadId;
         AiTurnTrace trace = AiTurnTrace.start(
                 "delegation", threadId, startMs);
-        PuppetNodeAiDelegationPresenter.Session presentation =
-                delegationPresenter.open(
+        PuppetNodeAiDelegationPresenter.Session presentation = null;
+        try {
+            presentation = delegationPresenter.open(
                         new PuppetNodeAiDelegationPresenter.Context(
                                 session, thread, audit, startMs,
                                 trace,
                                 subagentInvocationId, eventSink));
-        try {
             thread.touchLastActiveAt();
             PuppetNodeAiAgentRegistry.Runtime agentRuntime = resolveAgent(session, thread);
             trace.checkpoint(AiTurnTrace.Checkpoint.AGENT_RESOLVED);
             presentation.emitWarning(agentRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
-                    threadId, agentRuntime.effectiveConfigId(), messageForAgent,
+                    null, null, null, threadId,
+                    agentRuntime.effectiveConfigId(), messageForAgent,
                     userMessage, null, startMs, agentRuntime.runtimeJson(),
-                    trace);
+                    trace, thread.getActiveLeaseToken());
 
             turnOrchestrator.execute(
                     new AiTurnOrchestrator.Request(
@@ -95,7 +112,15 @@ public class PuppetNodeAiDelegationService {
                     presentation);
             return presentation.await();
         } catch (Throwable error) {
-            throw presentation.executionFailure(turn, error);
+            if (presentation != null) {
+                throw presentation.executionFailure(turn, error);
+            }
+            turnCoordinator.failAndRelease(thread);
+            throw error instanceof RuntimeException runtime
+                    ? runtime : new IllegalStateException(error);
+        } finally {
+            executionLeaseService.release(threadId);
+            thread.bindActiveLeaseToken(null);
         }
     }
 

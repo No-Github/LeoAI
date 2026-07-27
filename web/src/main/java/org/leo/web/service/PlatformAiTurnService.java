@@ -5,6 +5,7 @@ import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnCommand;
+import org.leo.ai.runtime.AiTurnOutcome;
 import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
@@ -18,6 +19,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.CompletableFuture;
+
 @Service
 public class PlatformAiTurnService {
 
@@ -29,6 +32,7 @@ public class PlatformAiTurnService {
     private final AiSseTurnPresenter sseTurnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
+    private final AiExecutionLeaseService executionLeaseService;
 
     public PlatformAiTurnService(AiModelConfigService modelConfigService,
                                  AiAuditLogStore auditLogStore,
@@ -36,7 +40,8 @@ public class PlatformAiTurnService {
                                  PlatformAiAgentRegistry agentRegistry,
                                  AiSseTurnPresenter sseTurnPresenter,
                                  AiTurnCoordinator turnCoordinator,
-                                 AiTurnOrchestrator turnOrchestrator) {
+                                 AiTurnOrchestrator turnOrchestrator,
+                                 AiExecutionLeaseService executionLeaseService) {
         this.modelConfigService = modelConfigService;
         this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
@@ -44,6 +49,7 @@ public class PlatformAiTurnService {
         this.sseTurnPresenter = sseTurnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
+        this.executionLeaseService = executionLeaseService;
     }
 
     public AiChatAuditEntry appendChatAudit(AiExecutionPolicy policy, String message) {
@@ -58,36 +64,44 @@ public class PlatformAiTurnService {
     }
 
     public boolean tryClaimExecution(PlatformAiState state) {
-        return turnCoordinator.tryClaim(state);
-    }
-
-    public void releaseExecutionClaim(PlatformAiState state) {
+        boolean localClaimed = turnCoordinator.tryClaim(state);
+        if (!localClaimed
+                && PlatformAiState.STATUS_CANCELLED.equals(state.getRunStatus())) {
+            localClaimed = turnCoordinator.tryClaimAfterRelease(
+                    state, state::isExecuting, 5_000L);
+        }
+        if (!localClaimed) return false;
+        try {
+            String leaseToken = executionLeaseService.tryAcquireToken(
+                    state.getStateId(),
+                    () -> state.stopGeneration("执行租约已转移"));
+            if (leaseToken != null) {
+                state.bindActiveLeaseToken(leaseToken);
+                return true;
+            }
+        } catch (RuntimeException error) {
+            turnCoordinator.releaseClaim(state);
+            logger.warn("获取平台 AI 执行租约失败, threadId={}: {}",
+                    state.getStateId(), error.getMessage());
+            return false;
+        }
         turnCoordinator.releaseClaim(state);
+        return false;
     }
 
-    public void executeChat(PlatformAiState state,
-                            String sessionId,
-                            String userMessage,
-                            String guardedMessage,
-                            AiChatAuditEntry audit,
-                            SseEmitter emitter,
-                            long startMs) {
-        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs, null, null);
+    public void failDetachedExecution(PlatformAiState state) {
+        turnCoordinator.failAndRelease(state);
     }
 
-    public void executeChat(PlatformAiState state,
-                            String sessionId,
-                            String userMessage,
-                            String guardedMessage,
-                            AiChatAuditEntry audit,
-                            SseEmitter emitter,
-                            long startMs,
-                            String reasoningEffort) {
-        executeChat(state, sessionId, userMessage, guardedMessage, audit, emitter, startMs,
-                reasoningEffort, null);
+    public void releaseExecutionLease(PlatformAiState state) {
+        if (state != null) {
+            executionLeaseService.release(state.getStateId());
+            state.bindActiveLeaseToken(null);
+        }
     }
 
-    public void executeChat(PlatformAiState state,
+    public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(
+                            PlatformAiState state,
                             String sessionId,
                             String userMessage,
                             String guardedMessage,
@@ -95,7 +109,10 @@ public class PlatformAiTurnService {
                             SseEmitter emitter,
                             long startMs,
                             String reasoningEffort,
-                            Object attachments) {
+                            Object attachments,
+                            String protocolTurnId,
+                            String userItemId,
+                            String assistantItemId) {
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(state);
         String memoryId = state.getStateId();
         AiTurnTrace trace = AiTurnTrace.start(
@@ -106,13 +123,19 @@ public class PlatformAiTurnService {
                         trace,
                         () -> conversationStore.updateRuntime(
                                 sessionId, state.getStateId(),
-                                state.getLastActiveAt(), state.getRunStatus()),
+                                state.getLastActiveAt(), state.getRunStatus(),
+                                state.getActiveLeaseToken()),
                         null,
                         state::touchLastActiveAt,
                         () -> logger.info(
                                 "[Thinking] 开始接收思考内容, stateId={}",
                                 state.getStateId())));
-        if (presentation == null) return;
+        if (presentation == null) {
+            return CompletableFuture.completedFuture(
+                    new AiTurnOrchestrator.TerminalResult(
+                            AiTurnOutcome.FAILED,
+                            "SSE 启动失败"));
+        }
 
         try {
             if (turn.isCancellationRequested()) {
@@ -125,10 +148,13 @@ public class PlatformAiTurnService {
             presentation.emitWarning(agentRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
-                    state.getStateId(), agentRuntime.effectiveConfigId(), messageForAgent,
+                    protocolTurnId, userItemId, assistantItemId, state.getStateId(),
+                    agentRuntime.effectiveConfigId(), messageForAgent,
                     userMessage, attachments, startMs, agentRuntime.runtimeJson(),
-                    trace);
-            turnOrchestrator.execute(
+                    trace, state.getActiveLeaseToken());
+            state.bindActiveItemId(persistedTurn.assistantMessageId());
+            state.bindActiveRunId(persistedTurn.runId());
+            return turnOrchestrator.execute(
                     new AiTurnOrchestrator.Request(
                             new AiTurnCommand(
                                     state.getStateId(), memoryId, turn,
@@ -143,8 +169,14 @@ public class PlatformAiTurnService {
                             state.getRuntimeStats()),
                     presentation);
 
-        } catch (Exception e) {
-            presentation.finishPreparationFailure(e);
+        } catch (Throwable error) {
+            presentation.finishPreparationFailure(error);
+            return CompletableFuture.completedFuture(
+                    new AiTurnOrchestrator.TerminalResult(
+                            turn.isCancellation(error)
+                                    ? AiTurnOutcome.CANCELLED
+                                    : AiTurnOutcome.FAILED,
+                            error.getMessage()));
         }
     }
 

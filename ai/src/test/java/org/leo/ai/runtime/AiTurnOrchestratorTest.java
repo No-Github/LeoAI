@@ -12,6 +12,7 @@ import org.leo.core.entity.AiChatAuditEntry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,6 +51,30 @@ class AiTurnOrchestratorTest {
                 any(), any(), any(), eq(0));
         verify(fixture.store, never()).discardTurn(
                 any(), any(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void asynchronousExecutionCompletesFutureOnlyAfterTerminalCallback() {
+        Fixture fixture = fixture(TestExecutionEngine.Mode.DEFER);
+
+        CompletableFuture<AiTurnOrchestrator.TerminalResult> completion =
+                fixture.orchestrator.execute(
+                        fixture.request(), fixture.lifecycle);
+
+        assertFalse(completion.isDone());
+        assertEquals(List.of("started", "event"), fixture.lifecycle.callbacks);
+        verify(fixture.store, never()).completeTurn(
+                any(), any(), any(), any(), any(), anyInt());
+
+        fixture.engine.completeDeferred();
+
+        assertTrue(completion.isDone());
+        assertEquals(AiTurnOutcome.COMPLETED, completion.join().outcome());
+        assertEquals(List.of("started", "event", "beforeCommit", "committed"),
+                fixture.lifecycle.callbacks);
+        verify(fixture.store, times(1)).completeTurn(
+                eq(fixture.persistedTurn), eq("answer"),
+                any(), any(), any(), eq(0));
     }
 
     @Test
@@ -110,6 +135,23 @@ class AiTurnOrchestratorTest {
                 any(), any(), any(), eq(0));
         verify(fixture.store, never()).discardTurn(
                 any(), any(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void tracePersistenceFailureCannotLeaveTerminalFutureIncomplete() {
+        Fixture fixture = fixture(TestExecutionEngine.Mode.COMPLETE);
+        doThrow(new IllegalStateException("trace unavailable"))
+                .when(fixture.store).updateRunTrace(
+                        any(), any(AiTurnTrace.class));
+
+        CompletableFuture<AiTurnOrchestrator.TerminalResult> completion =
+                fixture.orchestrator.execute(fixture.request(), fixture.lifecycle);
+
+        assertTrue(completion.isDone());
+        assertEquals(AiTurnOutcome.COMPLETED, completion.join().outcome());
+        verify(fixture.store, times(1)).completeTurn(
+                eq(fixture.persistedTurn), eq("answer"),
+                any(), any(), any(), eq(0));
     }
 
     @Test
@@ -256,6 +298,8 @@ class AiTurnOrchestratorTest {
     private static final class TestExecutionEngine extends AiTurnExecutionEngine {
         private final Mode mode;
         private boolean executed;
+        private AiTurnCommand deferredCommand;
+        private AiTurnExecutionListener deferredListener;
 
         private TestExecutionEngine(Mode mode) {
             this.mode = mode;
@@ -265,6 +309,11 @@ class AiTurnOrchestratorTest {
         void execute(AiTurnCommand command, AiTurnExecutionListener listener) {
             executed = true;
             listener.onEvent(AiTurnEvent.textDelta("delta"));
+            if (mode == Mode.DEFER) {
+                deferredCommand = command;
+                deferredListener = listener;
+                return;
+            }
             if (mode == Mode.COMPLETE) {
                 try {
                     command.execution().finish(
@@ -289,9 +338,22 @@ class AiTurnOrchestratorTest {
             }
         }
 
+        private void completeDeferred() {
+            try {
+                deferredCommand.execution().finish(
+                        AiTurnOutcome.COMPLETED,
+                        () -> deferredListener.onCompleted(
+                                new AiTurnResult("answer", null, 1L)));
+            } catch (Exception error) {
+                deferredListener.onTerminalFailure(
+                        AiTurnOutcome.COMPLETED, error);
+            }
+        }
+
         private enum Mode {
             COMPLETE,
-            CANCEL
+            CANCEL,
+            DEFER
         }
     }
 

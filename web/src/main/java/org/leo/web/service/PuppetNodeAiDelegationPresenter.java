@@ -207,7 +207,8 @@ public class PuppetNodeAiDelegationPresenter {
 
         private void refreshRuntime() {
             conversationStore.updateRuntime(
-                    context.session().getSessionId(), context.thread());
+                    context.session().getSessionId(), context.thread(),
+                    context.thread().getActiveLeaseToken());
         }
 
         private void refreshRuntimeSafely() {

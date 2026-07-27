@@ -56,6 +56,24 @@ class AiSseExecutorTest {
         }
     }
 
+    @Test
+    void reconnectSubscriptionsDoNotConsumeInitialStreamDrainCapacity()
+            throws Exception {
+        try (AiSseExecutor executor = new AiSseExecutor(1, 1, 1)) {
+            CountDownLatch drainStarted = new CountDownLatch(1);
+            CountDownLatch subscriptionStarted = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            executor.submitDrain(() -> await(drainStarted, release));
+            assertTrue(drainStarted.await(1, TimeUnit.SECONDS));
+
+            executor.submitSubscription(() ->
+                    await(subscriptionStarted, release));
+
+            assertTrue(subscriptionStarted.await(1, TimeUnit.SECONDS));
+            release.countDown();
+        }
+    }
+
     private static void await(CountDownLatch started, CountDownLatch release) {
         started.countDown();
         try {

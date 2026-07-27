@@ -54,11 +54,11 @@ public class PlatformAiThreadService {
                     user.getUserId(), httpSession.getId(), state.getStateId(),
                     "平台 AI", state.getCreatedAt(), config);
         }
+        conversationStore.attachEventJournal(state.getStateId(), state);
         return new AgentInfoResponse(0);
     }
 
-    public void switchChannel(HttpSession httpSession, Integer configId) {
-        PlatformAiState state = requireState(httpSession, "AI 会话不存在，请先调用 createAgent");
+    public void switchChannel(PlatformAiState state, Integer configId) {
         if (state.isExecuting()) {
             throw ApiException.badRequest("平台 AI 正在执行中，请等待完成或先停止后再切换通道");
         }
@@ -68,8 +68,7 @@ public class PlatformAiThreadService {
         conversationStore.updateConfig(state.getStateId(), config);
     }
 
-    public Map<String, Object> switchMode(HttpSession httpSession, String mode) {
-        PlatformAiState state = requireState(httpSession, "AI 会话不存在，请先调用 createAgent");
+    public Map<String, Object> switchMode(PlatformAiState state, String mode) {
         if (mode != null) state.setMode(mode);
         conversationStore.updateMode(state.getStateId(), state.getMode());
 
@@ -127,6 +126,7 @@ public class PlatformAiThreadService {
         conversationStore.createPlatformThread(
                 user.getUserId(), httpSession.getId(), threadId,
                 safeTitle, state.getCreatedAt(), config);
+        conversationStore.attachEventJournal(threadId, state);
 
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("threadId", threadId);
@@ -167,17 +167,26 @@ public class PlatformAiThreadService {
         if (state == null) state = PlatformAiStateStore.create(threadId);
         state.setAiConfigId(record.getConfigId());
         state.setMode(record.getMode());
+        conversationStore.attachEventJournal(threadId, state);
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
         return state;
     }
 
-    public Map<String, Object> events(HttpSession httpSession,
+    public Map<String, Object> events(User user, String threadId,
                                       Long requestedAfterSeq, Integer requestedLimit) {
-        PlatformAiState state = requireState(httpSession, "AI 会话不存在");
-        long afterSeq = requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
+        AiThreadRecord persisted = requireOwnedThread(user, threadId);
+        PlatformAiState state = PlatformAiStateStore.get(threadId);
+        long requestedCursor =
+                requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
+        long afterSeq = requestedCursor > 0L
+                ? requestedCursor
+                : Math.max(
+                        state != null ? state.getCurrentRunStartSeq() : 0L,
+                        conversationStore.findLatestTurnStartSeq(threadId));
         int limit = requestedLimit != null ? requestedLimit : 200;
         List<Map<String, Object>> events = new ArrayList<>();
-        for (AiSseEvent event : state.recentSseEventsAfter(afterSeq, limit)) {
+        for (AiSseEvent event :
+                conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("seq", event.seq());
             item.put("timestamp", event.timestamp());
@@ -186,14 +195,31 @@ public class PlatformAiThreadService {
             if (event.subagentInvocationId() != null) {
                 item.put("subagentInvocationId", event.subagentInvocationId());
             }
+            if (event.turnId() != null) item.put("turnId", event.turnId());
+            if (event.itemId() != null) item.put("itemId", event.itemId());
+            if (event.runId() != null) item.put("runId", event.runId());
             events.add(item);
         }
 
         Map<String, Object> data = new HashMap<>();
         data.put("events", events);
-        data.put("lastSeq", state.getLastSseEventSeq());
-        data.put("runStatus", state.getRunStatus());
-        data.putAll(runtimeSnapshot(state));
+        long lastSeq = Math.max(
+                state != null ? state.getLastSseEventSeq() : 0L,
+                conversationStore.findLastEventSeq(threadId));
+        String runStatus = state != null && state.isExecuting()
+                ? state.getRunStatus() : persisted.getRunStatus();
+        data.put("lastSeq", lastSeq);
+        data.put("runStatus", runStatus);
+        if (state != null) {
+            data.putAll(runtimeSnapshot(state));
+            data.put("lastSeq", lastSeq);
+            data.put("runStatus", runStatus);
+        } else {
+            data.put("status", runStatus);
+            data.put("executing", false);
+            data.put("elapsedMs", 0L);
+            data.put("stopReason", null);
+        }
         return data;
     }
 
@@ -203,23 +229,23 @@ public class PlatformAiThreadService {
         return stateId != null ? PlatformAiStateStore.get(String.valueOf(stateId)) : null;
     }
 
-    public Map<String, Object> messages(HttpSession httpSession,
+    public Map<String, Object> messages(User user, String threadId,
                                         Integer requestedOffset, Integer requestedLimit) {
-        PlatformAiState state = requireState(httpSession, "AI 会话不存在");
+        AiThreadRecord thread = requireOwnedThread(user, threadId);
         int offset = requestedOffset != null ? Math.max(0, requestedOffset) : 0;
         int limit = requestedLimit != null ? requestedLimit : 50;
         Map<String, Object> data = new HashMap<>();
-        data.put("messages", conversationStore.listMessages(state.getStateId(), offset, limit));
-        data.put("total", conversationStore.countMessages(state.getStateId()));
+        data.put("messages", conversationStore.listMessages(thread.getThreadId(), offset, limit));
+        data.put("total", conversationStore.countMessages(thread.getThreadId()));
         data.put("offset", offset);
         data.put("limit", limit);
         return data;
     }
 
     public List<org.leo.core.entity.AiSubagentInvocation> subagentInvocations(
-            HttpSession httpSession) {
-        PlatformAiState state = requireState(httpSession, "AI 会话不存在");
-        return conversationStore.listSubagentInvocations(state.getStateId());
+            User user, String threadId) {
+        return conversationStore.listSubagentInvocations(
+                requireOwnedThread(user, threadId).getThreadId());
     }
 
     public PlatformAiState getState(HttpSession httpSession) {
@@ -274,6 +300,18 @@ public class PlatformAiThreadService {
             throw ApiException.notFound("线程不存在");
         }
         return record;
+    }
+
+    public PlatformAiState requireOwnedRuntime(User user, String threadId) {
+        AiThreadRecord record = requireOwnedThread(user, threadId);
+        PlatformAiState state = PlatformAiStateStore.get(record.getThreadId());
+        if (state == null) {
+            state = PlatformAiStateStore.create(record.getThreadId());
+            state.setAiConfigId(record.getConfigId());
+            state.setMode(record.getMode());
+        }
+        conversationStore.attachEventJournal(record.getThreadId(), state);
+        return state;
     }
 
     private PlatformAiState recreateState(HttpSession httpSession) {

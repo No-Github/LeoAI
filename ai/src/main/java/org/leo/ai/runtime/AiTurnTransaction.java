@@ -95,25 +95,35 @@ public class AiTurnTransaction {
         }
 
         public synchronized FailedTurn discard(AiTurnFailure failure) {
-            return discard(failure, true);
+            return discard(failure, List.of(), null, true);
+        }
+
+        public synchronized FailedTurn discard(AiTurnFailure failure,
+                                               List<AiSseEvent> eventLog,
+                                               Object planSnapshot) {
+            return discard(failure, eventLog, planSnapshot, true);
         }
 
         /**
          * 模型流创建前的场景准备失败，不应降低模型通道健康度。
          */
         public synchronized FailedTurn discardBeforeModel(AiTurnFailure failure) {
-            return discard(failure, false);
+            return discard(failure, List.of(), null, false);
         }
 
-        private FailedTurn discard(AiTurnFailure failure, boolean recordModelFailure) {
+        private FailedTurn discard(AiTurnFailure failure,
+                                   List<AiSseEvent> eventLog,
+                                   Object planSnapshot,
+                                   boolean recordModelFailure) {
             if (failure == null) {
                 return discard(
-                        new IllegalStateException("AI 调用失败"),
-                        false, null, recordModelFailure);
+                        new IllegalStateException("AI 调用失败"), false, null,
+                        eventLog, planSnapshot, recordModelFailure);
             }
             return discard(
                     failure.cause(), failure.cancelled(),
-                    failure.cancellationReason(), recordModelFailure);
+                    failure.cancellationReason(), eventLog,
+                    planSnapshot, recordModelFailure);
         }
 
         public synchronized FailedTurn discard(Throwable cause,
@@ -126,6 +136,16 @@ public class AiTurnTransaction {
                                    boolean cancelled,
                                    String cancellationReason,
                                    boolean recordModelFailure) {
+            return discard(cause, cancelled, cancellationReason,
+                    List.of(), null, recordModelFailure);
+        }
+
+        private FailedTurn discard(Throwable cause,
+                                   boolean cancelled,
+                                   String cancellationReason,
+                                   List<AiSseEvent> eventLog,
+                                   Object planSnapshot,
+                                   boolean recordModelFailure) {
             if (state == PersistenceState.DISCARDED) return failedTurn;
             requirePending("丢弃");
 
@@ -135,14 +155,25 @@ public class AiTurnTransaction {
                     ? normalizeCancellationReason(cancellationReason)
                     : classification.message();
             String status = cancelled ? AiThread.STATUS_CANCELLED : AiThread.STATUS_FAILED;
+            List<Object> assistantNodes = artifacts.assistantNodes(eventLog);
+            String partialOutput = artifacts.partialOutput(eventLog);
+            int toolCallCount = artifacts.toolCallCount(eventLog);
             try {
-                conversationStore.discardTurn(
-                        context.persistedTurn(), status,
-                        cancelled ? AiConversationStoreService.ERROR_CANCELLED
-                                : classification.category(),
-                        message,
-                        cancelled ? message : classification.rawMessage(),
-                        0);
+                String category = cancelled
+                        ? AiConversationStoreService.ERROR_CANCELLED
+                        : classification.category();
+                String rawMessage = cancelled ? message : classification.rawMessage();
+                if (partialOutput.isBlank() && assistantNodes.isEmpty()
+                        && planSnapshot == null) {
+                    conversationStore.discardTurn(
+                            context.persistedTurn(), status, category,
+                            message, rawMessage, toolCallCount);
+                } else {
+                    conversationStore.discardTurn(
+                            context.persistedTurn(), status, category,
+                            message, rawMessage, toolCallCount,
+                            partialOutput, assistantNodes, planSnapshot);
+                }
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(
                         cancelled ? AiTurnOutcome.CANCELLED : AiTurnOutcome.FAILED,

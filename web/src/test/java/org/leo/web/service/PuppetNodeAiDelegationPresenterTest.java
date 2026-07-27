@@ -48,7 +48,7 @@ class PuppetNodeAiDelegationPresenterTest {
                 event -> "invocation-1".equals(
                         event.subagentInvocationId())));
         verify(fixture.store, times(2))
-                .updateRuntime("session-1", fixture.thread);
+                .updateRuntime("session-1", fixture.thread, null);
     }
 
     @Test
@@ -65,7 +65,8 @@ class PuppetNodeAiDelegationPresenterTest {
         assertEquals("failed", fixture.thread.getRunStatus());
         assertEquals("failed",
                 fixture.events.get(fixture.events.size() - 1).data());
-        verify(fixture.store).updateRuntime("session-1", fixture.thread);
+        verify(fixture.store).updateRuntime(
+                "session-1", fixture.thread, null);
     }
 
     @Test

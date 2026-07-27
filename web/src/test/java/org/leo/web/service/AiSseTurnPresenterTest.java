@@ -50,7 +50,7 @@ class AiSseTurnPresenterTest {
         assertEquals(List.of("node"),
                 fixture.presentation.eventLog().stream()
                         .map(AiSseEvent::name).toList());
-        List<String> names = fixture.thread.recentSseEventsAfter(0, 20)
+        List<String> names = fixture.persistedEvents
                 .stream().map(AiSseEvent::name).toList();
         assertTrue(names.containsAll(
                 List.of("status", "delta", "node", "turn")));
@@ -71,8 +71,7 @@ class AiSseTurnPresenterTest {
                 null,
                 null));
 
-        List<AiSseEvent> events =
-                fixture.thread.recentSseEventsAfter(0, 20);
+        List<AiSseEvent> events = fixture.persistedEvents;
         assertEquals(List.of("trace", "status", "turn"),
                 events.stream().map(AiSseEvent::name).toList());
         assertEquals("saved",
@@ -98,7 +97,7 @@ class AiSseTurnPresenterTest {
                         "用户停止"));
 
         assertEquals("cancelled",
-                fixture.thread.recentSseEventsAfter(0, 10).stream()
+                fixture.persistedEvents.stream()
                         .filter(event -> "status".equals(event.name()))
                         .findFirst()
                         .orElseThrow()
@@ -136,6 +135,9 @@ class AiSseTurnPresenterTest {
         AiSseEventPump eventPump = mock(AiSseEventPump.class);
         SseEmitter emitter = mock(SseEmitter.class);
         AiThread thread = new AiThread("thread-1", "test");
+        List<AiSseEvent> persistedEvents =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        thread.configureEventJournal(0L, persistedEvents::add);
         assertTrue(thread.claimExecution());
         AiTurnCoordinator.Execution execution =
                 new AiTurnCoordinator().attach(thread);
@@ -144,7 +146,8 @@ class AiSseTurnPresenterTest {
         when(eventPump.start(
                 anyString(), same(thread.getAiSseEventQueue()), any(),
                 any(), any(), any())).thenReturn(handle);
-        AiSseTransport transport = new AiSseTransport(eventPump);
+        AiSseTransport transport = new AiSseTransport(
+                eventPump, new org.leo.web.util.AiSseEmitterWriter());
         AtomicInteger refreshes = new AtomicInteger();
         AtomicInteger beforeCompleted = new AtomicInteger();
         AiSseTurnPresenter presenter = new AiSseTurnPresenter(
@@ -155,7 +158,7 @@ class AiSseTurnPresenterTest {
         assertNotNull(presentation);
         return new Fixture(
                 eventPump, emitter, thread, handle,
-                refreshes, beforeCompleted, presentation);
+                refreshes, beforeCompleted, persistedEvents, presentation);
     }
 
     private AiSseTurnPresenter.Context context(
@@ -190,6 +193,7 @@ class AiSseTurnPresenterTest {
                            AiSseEventPump.Handle handle,
                            AtomicInteger runtimeRefreshes,
                            AtomicInteger beforeCompleted,
+                           List<AiSseEvent> persistedEvents,
                            AiSseTurnPresenter.Session presentation) {
     }
 }

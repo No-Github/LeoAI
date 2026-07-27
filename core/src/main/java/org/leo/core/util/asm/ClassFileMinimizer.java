@@ -38,8 +38,12 @@ public class ClassFileMinimizer {
             @Override
             public void visit(int version, int access, String name, String signature,
                               String superName, String[] interfaces) {
-                // 泛型信息不参与 JVM 链接，统一丢弃，避免残留源码类型画像。
-                super.visit(version, access, name, null, superName, interfaces);
+                // 保留泛型 Signature 属性：JVM 链接不依赖它，但运行时反射
+                // (如 Class.getGenericInterfaces / Method.getGenericParameterTypes)
+                // 依赖它解析参数化类型。Tomcat WebSocket 的 Util.getGenericType()
+                // 会通过它推断 MessageHandler.Whole<ByteBuffer> 的类型参数，
+                // 剥离后会导致 NullPointerException 并断开连接。
+                super.visit(version, access, name, signature, superName, interfaces);
             }
 
             @Override
@@ -71,7 +75,7 @@ public class ClassFileMinimizer {
 
             @Override
             public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-                return new FieldVisitor(ASM_VERSION, super.visitField(access, name, descriptor, null, value)) {
+                return new FieldVisitor(ASM_VERSION, super.visitField(access, name, descriptor, signature, value)) {
                     @Override
                     public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
                         // 移除所有字段注解
@@ -88,8 +92,9 @@ public class ClassFileMinimizer {
 
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                // Signature 与 Exceptions 均为反射/编译器元数据，不影响方法描述符和执行。
-                return new MethodVisitor(ASM_VERSION, super.visitMethod(access, name, descriptor, null, null)) {
+                // 保留 Signature：运行时反射依赖它解析方法泛型类型。
+                // Exceptions (throws) 不影响执行，保留也不增加体积，一并不剥离。
+                return new MethodVisitor(ASM_VERSION, super.visitMethod(access, name, descriptor, signature, exceptions)) {
                     @Override
                     public void visitParameter(String name, int access) {
                         // 移除 MethodParameters。

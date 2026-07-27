@@ -3,6 +3,7 @@ package org.leo.web.service;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnCoordinator;
+import org.leo.ai.runtime.AiTurnOutcome;
 import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnTrace;
 import org.leo.ai.runtime.AiTurnTransaction;
@@ -21,6 +22,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /** 执行 Puppet 节点 AI 的一个主对话 Turn。 */
 @Service
@@ -33,30 +35,62 @@ public class PuppetNodeAiTurnService {
     private final AiSseTurnPresenter sseTurnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
+    private final AiExecutionLeaseService executionLeaseService;
 
     public PuppetNodeAiTurnService(AiModelConfigService modelConfigService,
                                    AiConversationStoreService conversationStore,
                                    PuppetNodeAiAgentRegistry agentRegistry,
                                    AiSseTurnPresenter sseTurnPresenter,
                                    AiTurnCoordinator turnCoordinator,
-                                   AiTurnOrchestrator turnOrchestrator) {
+                                   AiTurnOrchestrator turnOrchestrator,
+                                   AiExecutionLeaseService executionLeaseService) {
         this.modelConfigService = modelConfigService;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.sseTurnPresenter = sseTurnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
+        this.executionLeaseService = executionLeaseService;
     }
 
     public boolean tryClaimExecution(AiThread thread) {
-        return turnCoordinator.tryClaim(thread);
-    }
-
-    public void releaseExecutionClaim(AiThread thread) {
+        boolean localClaimed = turnCoordinator.tryClaim(thread);
+        if (!localClaimed && AiThread.STATUS_CANCELLED.equals(thread.getRunStatus())) {
+            localClaimed = turnCoordinator.tryClaimAfterRelease(
+                    thread, thread::isExecuting, 5_000L);
+        }
+        if (!localClaimed) return false;
+        try {
+            String leaseToken = executionLeaseService.tryAcquireToken(
+                    thread.getThreadId(),
+                    () -> thread.stop("执行租约已转移"));
+            if (leaseToken != null) {
+                thread.bindActiveLeaseToken(leaseToken);
+                return true;
+            }
+        } catch (RuntimeException error) {
+            turnCoordinator.releaseClaim(thread);
+            logger.warn("获取 Puppet AI 执行租约失败, threadId={}: {}",
+                    thread.getThreadId(), error.getMessage());
+            return false;
+        }
         turnCoordinator.releaseClaim(thread);
+        return false;
     }
 
-    public void executeChat(PuppetNodeSession session,
+    public void failDetachedExecution(AiThread thread) {
+        turnCoordinator.failAndRelease(thread);
+    }
+
+    public void releaseExecutionLease(AiThread thread) {
+        if (thread != null) {
+            executionLeaseService.release(thread.getThreadId());
+            thread.bindActiveLeaseToken(null);
+        }
+    }
+
+    public CompletableFuture<AiTurnOrchestrator.TerminalResult> executeChat(
+                            PuppetNodeSession session,
                             AiThread thread,
                             String threadId,
                             String messageForAgent,
@@ -65,7 +99,10 @@ public class PuppetNodeAiTurnService {
                             long startMs,
                             String reasoningEffort,
                             String userContent,
-                            Object attachments) {
+                            Object attachments,
+                            String protocolTurnId,
+                            String userItemId,
+                            String assistantItemId) {
         AiTurnCoordinator.Execution turn = turnCoordinator.attach(thread);
         String memoryId = session.getSessionId() + ":" + threadId;
         AiTurnTrace trace = AiTurnTrace.start(
@@ -75,13 +112,19 @@ public class PuppetNodeAiTurnService {
                         "Puppet AI", thread, turn, emitter, audit, startMs,
                         trace,
                         () -> conversationStore.updateRuntime(
-                                session.getSessionId(), thread),
+                                session.getSessionId(), thread,
+                                thread.getActiveLeaseToken()),
                         () -> emitCurrentPlanAtTurnStart(thread),
                         null,
                         () -> logger.info(
                                 "[Thinking] 开始接收思考内容, memoryId={}",
                                 memoryId)));
-        if (presentation == null) return;
+        if (presentation == null) {
+            return CompletableFuture.completedFuture(
+                    new AiTurnOrchestrator.TerminalResult(
+                            AiTurnOutcome.FAILED,
+                            "SSE 启动失败"));
+        }
 
         try {
             if (turn.isCancellationRequested()) throw new InterruptedException("已停止");
@@ -91,10 +134,13 @@ public class PuppetNodeAiTurnService {
             presentation.emitWarning(agentRuntime.failoverMessage());
             AiConversationStoreService.PersistedTurn persistedTurn =
                     conversationStore.beginTurn(
-                    threadId, agentRuntime.effectiveConfigId(), messageForAgent,
+                    protocolTurnId, userItemId, assistantItemId, threadId,
+                    agentRuntime.effectiveConfigId(), messageForAgent,
                     userContent, attachments, startMs, agentRuntime.runtimeJson(),
-                    trace);
-            turnOrchestrator.execute(
+                    trace, thread.getActiveLeaseToken());
+            thread.bindActiveItemId(persistedTurn.assistantMessageId());
+            thread.bindActiveRunId(persistedTurn.runId());
+            return turnOrchestrator.execute(
                     new AiTurnOrchestrator.Request(
                             new AiTurnCommand(
                                     threadId, memoryId, turn,
@@ -108,8 +154,14 @@ public class PuppetNodeAiTurnService {
                             thread::getCurrentPlan,
                             thread.getRuntimeStats()),
                     presentation);
-        } catch (Exception error) {
+        } catch (Throwable error) {
             presentation.finishPreparationFailure(error);
+            return CompletableFuture.completedFuture(
+                    new AiTurnOrchestrator.TerminalResult(
+                            turn.isCancellation(error)
+                                    ? AiTurnOutcome.CANCELLED
+                                    : AiTurnOutcome.FAILED,
+                            error.getMessage()));
         }
     }
 

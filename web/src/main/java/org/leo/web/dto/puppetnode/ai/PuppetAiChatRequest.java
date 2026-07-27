@@ -9,5 +9,14 @@ public record PuppetAiChatRequest(String sessionId,
                                   String message,
                                   Integer configId,
                                   String reasoningEffort,
-                                  List<AiFileAttachment> attachments) {
+                                  List<AiFileAttachment> attachments,
+                                  String clientUserMessageId) {
+    public PuppetAiChatRequest(String sessionId,
+                               String threadId,
+                               String message,
+                               Integer configId,
+                               String reasoningEffort,
+                               List<AiFileAttachment> attachments) {
+        this(sessionId, threadId, message, configId, reasoningEffort, attachments, null);
+    }
 }

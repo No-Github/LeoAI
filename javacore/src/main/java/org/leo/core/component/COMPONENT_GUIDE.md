@@ -65,7 +65,7 @@ puppet 端 JVM 版本不可控（最低 Java 6），且只加载单个 `.class` 
 - [ ] **编译命令**：`javac -source 1.6 -target 1.6 -Xlint:-options -d out *.java`
 - [ ] **确认字节码版本**：`javap -v XxxComponent.class | grep "major version"` → 应为 50（Java 6）
 - [ ] **确认无额外 class**：编译输出目录中只有 `XxxComponent.class`，无 `XxxComponent$1.class` 等
-- [ ] **放入 resources**：将 `.class` 重命名为 `.payload` 拷贝到 `core/src/main/resources/component/`
+- [ ] **放入 resources**：将 `.class` 重命名为 `.payload` 拷贝到 `javacore/src/main/resources/component/`
 - [ ] **只读审计**：`cd javacore && bash compile-components.sh --check`（不更新 `.payload`）
 - [ ] **审计并更新 payload**：`cd javacore && bash compile-components.sh`
 

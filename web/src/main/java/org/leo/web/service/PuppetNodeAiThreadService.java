@@ -84,6 +84,9 @@ public class PuppetNodeAiThreadService {
             thread.setAiConfigId(resolvedConfigId);
             updateThreadConfig(session, thread, resolvedChannel);
         }
+        if (thread != null) {
+            conversationStore.attachEventJournal(thread.getThreadId(), thread);
+        }
         sessionWarmupService.warmupAsync(session.getSessionId());
         return new ThreadResolution(thread, restored, checkpoint, null);
     }
@@ -91,8 +94,13 @@ public class PuppetNodeAiThreadService {
     public AiThread requireThread(PuppetNodeSession session, String threadId) {
         AiThread thread = session.getAiThread(threadId);
         if (thread == null) {
+            thread = restorePersistedThread(
+                    session, threadId, findPersistedThread(session, threadId));
+        }
+        if (thread == null) {
             throw ApiException.notFound("线程不存在，threadId: " + threadId);
         }
+        conversationStore.attachEventJournal(threadId, thread);
         return thread;
     }
 
@@ -186,6 +194,7 @@ public class PuppetNodeAiThreadService {
             conversationStore.createPuppetThread(
                     session.getCreateByUser(), puppetId,
                     session.getSessionId(), thread, config);
+            conversationStore.attachEventJournal(threadId, thread);
         }
         Map<String, Object> info = new HashMap<>();
         info.put("threadId", threadId);
@@ -232,10 +241,16 @@ public class PuppetNodeAiThreadService {
             PuppetNodeSession session, String threadId,
             Long requestedAfterSeq, Integer requestedLimit) {
         AiThread thread = requireThread(session, threadId);
-        long afterSeq = requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
+        long requestedCursor =
+                requestedAfterSeq != null ? Math.max(0L, requestedAfterSeq) : 0L;
+        long afterSeq = requestedCursor > 0L
+                ? requestedCursor
+                : Math.max(thread.getCurrentRunStartSeq(),
+                        conversationStore.findLatestTurnStartSeq(threadId));
         int limit = requestedLimit != null ? requestedLimit : 200;
         List<Map<String, Object>> events = new ArrayList<>();
-        for (AiSseEvent event : thread.recentSseEventsAfter(afterSeq, limit)) {
+        for (AiSseEvent event :
+                conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("seq", event.seq());
             item.put("timestamp", event.timestamp());
@@ -244,11 +259,16 @@ public class PuppetNodeAiThreadService {
             if (event.subagentInvocationId() != null) {
                 item.put("subagentInvocationId", event.subagentInvocationId());
             }
+            if (event.turnId() != null) item.put("turnId", event.turnId());
+            if (event.itemId() != null) item.put("itemId", event.itemId());
+            if (event.runId() != null) item.put("runId", event.runId());
             events.add(item);
         }
         Map<String, Object> data = new HashMap<>();
         data.put("events", events);
-        data.put("lastSeq", thread.getLastSseEventSeq());
+        data.put("lastSeq", Math.max(
+                thread.getLastSseEventSeq(),
+                conversationStore.findLastEventSeq(threadId)));
         data.put("runStatus", thread.getRunStatus());
         data.putAll(runtimeSnapshot(thread));
         return data;
@@ -339,6 +359,7 @@ public class PuppetNodeAiThreadService {
         thread.setMode(record.getMode());
         thread.setParentThreadId(record.getParentThreadId());
         restoreLatestPlan(thread, threadId);
+        conversationStore.attachEventJournal(threadId, thread);
         return thread;
     }
 
