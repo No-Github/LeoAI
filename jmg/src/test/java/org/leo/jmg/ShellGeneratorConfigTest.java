@@ -2,6 +2,9 @@ package org.leo.jmg;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
+import org.leo.jmg.catalog.GeneratorCatalog;
+import org.leo.jmg.generation.GenerationPlan;
+import org.leo.jmg.generation.GenerationRequest;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 
 import java.util.ArrayList;
@@ -10,6 +13,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,10 +29,12 @@ class ShellGeneratorConfigTest {
     }
 
     @Test
-    void normalizesAllSupportedTransportProtocolNames() {
-        assertEquals("httpchunk", builder().protocol("httpChunked").build().getProtocol());
-        assertEquals("httpchunk", builder().protocol("HTTP-CHUNK").build().getProtocol());
+    void acceptsCanonicalProtocolNamesAndRejectsRemovedAliases() {
         assertEquals("websocket", builder().protocol(" WebSocket ").build().getProtocol());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().protocol("httpChunked"));
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().protocol("HTTP-CHUNK"));
         assertThrows(IllegalArgumentException.class, () -> builder().protocol("ftp"));
     }
 
@@ -44,77 +50,95 @@ class ShellGeneratorConfigTest {
     void enforcesProtocolBoundariesForWebAndMemoryArtifacts() {
         ShellGeneratorConfig websocketWebShell = builder().protocol("websocket").build();
         IllegalArgumentException webShellError = assertThrows(IllegalArgumentException.class,
-                () -> websocketWebShell.validateForWebShell("JSP"));
+                () -> validateWebShell(websocketWebShell));
         assertTrue(webShellError.getMessage().contains("内存构建"));
 
-        // httpchunk 现已支持内存马：使用 chunked 传输编码的 HTTP 变体，
-        // Shell 模板通过 Servlet API 透明处理 chunked 编码。
+        // httpchunk 对外使用普通注入器形态名，生成器在内部选择 Chunk 模板。
         ShellGeneratorConfig chunkedMemory = injectorBuilder()
                 .protocol("httpchunk")
-                .shellType("FilterInjector-HTTPCHUNK")
+                .shellType("FilterInjector")
                 .build();
-        assertDoesNotThrow(() -> chunkedMemory.validateForInjector());
+        assertDoesNotThrow(() -> validateInjector(chunkedMemory));
 
         ShellGeneratorConfig wrongWebSocketInjector = injectorBuilder()
                 .protocol("websocket")
                 .build();
-        assertThrows(IllegalArgumentException.class, wrongWebSocketInjector::validateForInjector);
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(wrongWebSocketInjector));
 
         ShellGeneratorConfig websocket = injectorBuilder()
                 .protocol("websocket")
                 .shellType("WebSocketInjector")
                 .urlPattern("/socket")
                 .build();
-        assertDoesNotThrow(websocket::validateForInjector);
+        assertDoesNotThrow(() -> validateInjector(websocket));
     }
 
     @Test
-    void chunkInjectorAutoUpgradesProtocolAndValidatesRespCode() {
-        // 未显式传 protocol 时，FilterInjector-HTTPCHUNK 自动升级到 httpchunk
-        ShellGeneratorConfig chunk = injectorBuilder()
+    void rejectsRemovedChunkAliasesAndValidatesRespCode() {
+        ShellGeneratorConfig legacyAlias = injectorBuilder()
                 .shellType("FilterInjector-HTTPCHUNK")
                 .build();
-        chunk.validateForInjector();
-        assertEquals("httpchunk", chunk.getProtocol());
+        assertEquals("http", legacyAlias.getProtocol());
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(legacyAlias));
 
-        // 显式 httpchunk 也通过
-        ShellGeneratorConfig explicit = injectorBuilder()
+        ShellGeneratorConfig explicitAlias = injectorBuilder()
                 .protocol("httpchunk")
                 .shellType("FilterInjector-HTTPCHUNK")
                 .build();
-        assertDoesNotThrow(explicit::validateForInjector);
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(explicitAlias));
 
-        // websocket 与 chunk 不兼容
-        ShellGeneratorConfig ws = injectorBuilder()
-                .protocol("websocket")
-                .shellType("FilterInjector-HTTPCHUNK")
-                .build();
-        assertThrows(IllegalArgumentException.class, ws::validateForInjector);
-
-        // respCode 204 不允许持续响应体
         ShellGeneratorConfig badResp = injectorBuilder()
                 .protocol("httpchunk")
-                .shellType("FilterInjector-HTTPCHUNK")
+                .shellType("FilterInjector")
                 .respCode(204)
                 .build();
-        assertThrows(IllegalArgumentException.class, badResp::validateForInjector);
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(badResp));
     }
 
     @Test
-    void infersWebSocketForLegacyInjectorRequestsAndValidatesEndpointPath() {
-        ShellGeneratorConfig legacy = injectorBuilder()
+    void resolvesPublicHttpChunkInjectorNamesToStrictChunkTemplates() {
+        ShellGeneratorConfig filter = injectorBuilder()
+                .protocol("httpchunk")
+                .shellType("FilterInjector")
+                .build();
+        ShellGeneratorConfig valve = injectorBuilder()
+                .protocol("httpchunk")
+                .shellType("ValveInjector")
+                .build();
+
+        assertDoesNotThrow(() -> validateInjector(filter));
+        assertDoesNotThrow(() -> validateInjector(valve));
+        assertEquals("LeoFilterChunkTpl",
+                GeneratorCatalog.resolve(
+                        "Tomcat", "FilterInjector", "httpchunk").getShellTemplateName());
+        assertEquals("LeoValveChunkTpl",
+                GeneratorCatalog.resolve(
+                        "Tomcat", "ValveInjector", "httpchunk").getShellTemplateName());
+        assertNull(GeneratorCatalog.resolve(
+                "InforSuite", "ListenerInjector", "httpchunk"));
+    }
+
+    @Test
+    void requiresExplicitWebSocketProtocolAndValidatesEndpointPath() {
+        ShellGeneratorConfig implicitHttp = injectorBuilder()
                 .shellType("WebSocketInjector")
                 .urlPattern("/socket")
                 .build();
-        legacy.validateForInjector();
-        assertEquals("websocket", legacy.getProtocol());
+        assertEquals("http", implicitHttp.getProtocol());
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(implicitHttp));
 
         ShellGeneratorConfig invalidPath = injectorBuilder()
                 .protocol("websocket")
                 .shellType("WebSocketInjector")
                 .urlPattern("/*")
                 .build();
-        assertThrows(IllegalArgumentException.class, invalidPath::validateForInjector);
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(invalidPath));
     }
 
     @Test
@@ -126,7 +150,7 @@ class ShellGeneratorConfigTest {
                 .build();
 
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-                missingHeader::validateForInjector);
+                () -> validateInjector(missingHeader));
         assertTrue(error.getMessage().contains("headerName"));
     }
 
@@ -186,9 +210,10 @@ class ShellGeneratorConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> builder().servletNamespace("unsupported"));
         assertThrows(IllegalArgumentException.class,
-                () -> builder().servletNamespace("jakarta").targetJavaVersion("7").build().validate());
-        assertEquals(1, builder().servletNamespace("jakarta").build()
-                .getCompatibilityWarnings().size());
+                () -> validateWebShell(builder()
+                        .servletNamespace("jakarta")
+                        .targetJavaVersion("7")
+                        .build()));
     }
 
     @Test
@@ -213,5 +238,15 @@ class ShellGeneratorConfigTest {
                 .shellType("FilterInjector")
                 .packerType("DefaultBase64")
                 .urlPattern("/*");
+    }
+
+    private static void validateInjector(ShellGeneratorConfig config) {
+        GenerationPlan.forInjector(GenerationRequest.from(config));
+    }
+
+    private static void validateWebShell(ShellGeneratorConfig config) {
+        GenerationPlan.forWebShell(
+                GenerationRequest.from(config),
+                GenerationPlan.ArtifactKind.JSP);
     }
 }

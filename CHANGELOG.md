@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布
+
+### JMG 与脚本生成
+
+- 将 JMG 生成流程拆分为类型化命令、不可变请求/结果、生成计划、工作区和协议感知 Pipeline，移除生成过程向配置对象回写状态的隐式行为
+- 以 `GeneratorCatalog` 和 `serverProtocolInjectorTypes` 统一发布服务端、协议与注入器能力矩阵；HTTP Chunk 对外使用普通注入器形态名，由生成器选择对应 Chunk 模板
+- 传输协议参数统一为 `http`、`httpchunk`、`websocket`，不再接受 `FilterInjector-HTTPCHUNK` 等旧注入器别名；Puppet 持久化值 `httpChunked` 在 AI 工具边界转换为生成器协议 `httpchunk`
+- 拆分 Packer 资源加载、源码混淆与 JSP 混淆计划，删除 `ServerInjectorMapper`、`Util` 以及旧 Pipeline 兼容入口
+- 前端脚本构建器直接消费后端协议能力矩阵，开放 HTTP Chunk 选择并移除基于注入器名称猜测协议的兼容逻辑；生产静态资源已同步更新
+- WebSocket 门禁 Header 转换为查询参数时对名称和值进行 URL 编码，避免空格、中文及 `&`、`=` 等字符破坏连接地址
+
+### 验证
+
+- JDK 17 完整 Maven Reactor 测试共 538 项，0 失败、0 错误、21 项因本机环境条件跳过
+- 前端 Vitest 共 207 项全部通过，ESLint 和 Vite 生产构建通过，构建产物与后端静态资源目录一致
+
 ## v1.0.0 (2026-07-22)
 
 LeoAI 首个正式开源版本。v1.0.0 将 Java 与 PHP Puppet、平台 AI、节点 AI、Web 控制台和部署制品统一到一套可扩展的运行时与能力模型中，并以全新安装作为正式发布基线。

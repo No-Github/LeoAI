@@ -5,8 +5,8 @@ import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
+import org.leo.jmg.mem.packer.PackerResources;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
 
 @PackerMeta(
     name = "JSPX", group = "Jsp", order = 5,
@@ -20,7 +20,7 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class JspxPacker implements Packer {
 
-    private final String jspxTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jspx.txt");
+    private final String jspxTemplate = PackerResources.loadTemplate("/memshell-template/shell.jspx.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
@@ -28,12 +28,12 @@ public class JspxPacker implements Packer {
             // TemplateRenderer 在渲染阶段完成变量名/类名随机化，无需 RANDOMIZE_VAR_NAMES 步骤
             String code = TemplateRenderer.render(jspxTemplate, config);
             JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
-                    ? JspObfuscationPipeline.fromStepIds(
+                    ? JspObfuscationPlanner.compile(
                             config.getJspObfuscationSteps(),
-                            JspObfuscationPipeline.PlanContext.packer(
-                                    JspObfuscationPipeline.ArtifactFormat.JSPX,
+                            JspObfuscationPlanContext.packer(
+                                    JspObfuscationPlanContext.Format.JSPX,
                                     PackerRegistry.getSupportedObfuscationSteps("JSPX"),
-                                    config.getObfuscationSeed()))
+                                    config.getObfuscationSeed())).getPipeline()
                     : JspObfuscationPipeline.jspxDefault(config.getObfuscationSeed());
             return pipeline.apply(code);
         }

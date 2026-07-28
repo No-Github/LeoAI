@@ -5,8 +5,8 @@ import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
+import org.leo.jmg.mem.packer.PackerResources;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
 
 @PackerMeta(
     name = "ClassLoaderJSP", group = "Jsp", order = 1,
@@ -22,7 +22,7 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class ClassLoaderJspPacker implements Packer {
 
-    private final String jspTemplate = Util.loadTemplateFromResource("/memshell-template/shell.jsp.txt");
+    private final String jspTemplate = PackerResources.loadTemplate("/memshell-template/shell.jsp.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
@@ -33,12 +33,12 @@ public class ClassLoaderJspPacker implements Packer {
                     : jspTemplate;
             String code = TemplateRenderer.render(tpl, config);
             JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
-                    ? JspObfuscationPipeline.fromStepIds(
+                    ? JspObfuscationPlanner.compile(
                             config.getJspObfuscationSteps(),
-                            JspObfuscationPipeline.PlanContext.packer(
-                                    JspObfuscationPipeline.ArtifactFormat.JSP,
+                            JspObfuscationPlanContext.packer(
+                                    JspObfuscationPlanContext.Format.JSP,
                                     PackerRegistry.getSupportedObfuscationSteps("ClassLoaderJSP"),
-                                    config.getObfuscationSeed()))
+                                    config.getObfuscationSeed())).getPipeline()
                     : JspObfuscationPipeline.jspDefault(config.getObfuscationSeed());
             return pipeline.apply(code);
         }

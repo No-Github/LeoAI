@@ -1,16 +1,15 @@
 package org.leo.jmg.mem;
 
-import org.leo.jmg.ServerInjectorMapper;
-
 import java.util.Locale;
 
 /**
- * 应用服务器 / 运行环境类型（与 {@link ServerInjectorMapper} 注册表中的 server 段一致）
+ * 应用服务器 / 运行环境类型（与生成器能力目录中的 server 段一致）
  */
 public enum ServerType {
 
     TOMCAT("Tomcat"),
     JETTY("Jetty"),
+    JBOSS("JBoss"),
     JBOSS_AS("JBossAS"),
     JBOSS_EAP6("JBossEAP6"),
     UNDERTOW("Undertow"),

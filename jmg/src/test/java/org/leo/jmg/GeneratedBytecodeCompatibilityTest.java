@@ -10,7 +10,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.jmg.core.LeoCore;
-import org.leo.jmg.mem.injectortpl.InjectorGenerator;
+import org.leo.jmg.generation.GenerationRequest;
+import org.leo.jmg.generation.GenerationResult;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -26,24 +27,13 @@ class GeneratedBytecodeCompatibilityTest {
 
     @Test
     void coreShellAndInjectorStayLoadableByLegacyJvms() throws Exception {
-        ShellGeneratorConfig config = createConfig();
+        GenerationResult result = new ShellGenerator(
+                GenerationRequest.from(createConfig()))
+                .generateFormattedInjector();
 
-        byte[] core = new LeoCore(config.getReqDisguise(), config.getRespDisguise())
-                .genLeoCoreByClassName(config.getCoreClassName(), config);
-        core = ClassFileMinimizer.transform(core);
-        assertLegacyClassFile(core, "LeoCore");
-        config.setCoreClassBytes(core);
-
-        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
-                .makeShell(config, "LeoFilterTpl");
-        assertLegacyClassFile(shell, "Shell");
-        config.setShellClassBytes(shell);
-
-        byte[] injector = new InjectorGenerator().makeInjector(
-                config,
-                "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"
-        );
-        assertLegacyClassFile(injector, "Injector");
+        assertLegacyClassFile(result.getCoreClassBytes(), "LeoCore");
+        assertLegacyClassFile(result.getShellClassBytes(), "Shell");
+        assertLegacyClassFile(result.getInjectorClassBytes(), "Injector");
     }
 
     @Test
@@ -78,24 +68,17 @@ class GeneratedBytecodeCompatibilityTest {
 
     @Test
     void jakartaNamespaceRemapsShellAndInjectorTypeReferences() throws Exception {
-        ShellGeneratorConfig config = createConfig(ServletNamespace.JAKARTA);
-        byte[] core = new LeoCore(config.getReqDisguise(), config.getRespDisguise())
-                .genLeoCoreByClassName(config.getCoreClassName(), config);
-        config.setCoreClassBytes(ClassFileMinimizer.transform(core));
-
-        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
-                .makeShell(config, "LeoFilterTpl");
+        GenerationResult result = new ShellGenerator(GenerationRequest.from(
+                createConfig(ServletNamespace.JAKARTA, "Undertow")))
+                .generateFormattedInjector();
+        byte[] shell = result.getShellClassBytes();
         String shellConstants = new String(shell, StandardCharsets.ISO_8859_1);
         assertFalse(shellConstants.contains("javax/servlet"));
         assertTrue(shellConstants.contains("jakarta/servlet"));
         Class<?> shellClass = new ByteArrayClassLoader().define(shell);
         assertTrue(Filter.class.isAssignableFrom(shellClass));
 
-        config.setShellClassBytes(shell);
-        byte[] injector = new InjectorGenerator().makeInjector(
-                config,
-                "org.leo.jmg.mem.injectortpl.undertow.UndertowFilterInjector"
-        );
+        byte[] injector = result.getInjectorClassBytes();
         String injectorConstants = new String(injector, StandardCharsets.ISO_8859_1);
         assertFalse(injectorConstants.contains("javax/servlet/DispatcherType"));
         assertTrue(injectorConstants.contains("jakarta/servlet/DispatcherType"));
@@ -104,7 +87,6 @@ class GeneratedBytecodeCompatibilityTest {
     @Test
     void jakartaNamespaceRemapsWebSocketEndpointReferences() throws Exception {
         ShellGeneratorConfig config = createConfig(ServletNamespace.JAKARTA);
-        config.setCoreClassBytes(new byte[]{1, 2, 3});
         ShellGeneratorConfig websocketConfig = ShellGeneratorConfig
                 .builder(config.getReqDisguise(), config.getRespDisguise())
                 .coreClassName(config.getCoreClassName())
@@ -117,10 +99,10 @@ class GeneratedBytecodeCompatibilityTest {
                 .urlPattern("/socket")
                 .servletNamespace(ServletNamespace.JAKARTA)
                 .build();
-        websocketConfig.setCoreClassBytes(config.getCoreClassBytes());
 
-        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
-                .makeShell(websocketConfig, "LeoWebSocketTpl");
+        byte[] shell = new ShellGenerator(GenerationRequest.from(websocketConfig))
+                .generateFormattedInjector()
+                .getShellClassBytes();
         String constants = new String(shell, StandardCharsets.ISO_8859_1);
         assertFalse(constants.contains("javax/websocket"));
         assertTrue(constants.contains("jakarta/websocket"));
@@ -137,7 +119,6 @@ class GeneratedBytecodeCompatibilityTest {
     @Test
     void webSocketShellPreservesGenericSignatureAfterMinimization() throws Exception {
         ShellGeneratorConfig base = createConfig(ServletNamespace.AUTO);
-        base.setCoreClassBytes(new byte[]{1, 2, 3});
         ShellGeneratorConfig websocketConfig = ShellGeneratorConfig
                 .builder(base.getReqDisguise(), base.getRespDisguise())
                 .coreClassName(base.getCoreClassName())
@@ -150,10 +131,10 @@ class GeneratedBytecodeCompatibilityTest {
                 .urlPattern("/sig")
                 .servletNamespace(ServletNamespace.AUTO)
                 .build();
-        websocketConfig.setCoreClassBytes(base.getCoreClassBytes());
 
-        byte[] shell = new org.leo.jmg.mem.shell.ShellGenerator()
-                .makeShell(websocketConfig, "LeoWebSocketTpl");
+        byte[] shell = new ShellGenerator(GenerationRequest.from(websocketConfig))
+                .generateFormattedInjector()
+                .getShellClassBytes();
 
         Class<?> shellClass = new ByteArrayClassLoader().define(shell);
         assertTrue(javax.websocket.Endpoint.class.isAssignableFrom(shellClass),
@@ -226,6 +207,11 @@ class GeneratedBytecodeCompatibilityTest {
     }
 
     private static ShellGeneratorConfig createConfig(ServletNamespace servletNamespace) {
+        return createConfig(servletNamespace, "Tomcat");
+    }
+
+    private static ShellGeneratorConfig createConfig(ServletNamespace servletNamespace,
+                                                     String serverType) {
         Disguise request = new Disguise();
         request.setDecodeBody(
                 "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}"
@@ -241,7 +227,7 @@ class GeneratedBytecodeCompatibilityTest {
                 .shellClassName("org.example.LegacyFilter")
                 .injectorClassName("org.example.LegacyInjector")
                 .header("X-Test", "legacy")
-                .serverType("Tomcat")
+                .serverType(serverType)
                 .shellType("FilterInjector")
                 .packerType("DefaultBase64")
                 .servletNamespace(servletNamespace)

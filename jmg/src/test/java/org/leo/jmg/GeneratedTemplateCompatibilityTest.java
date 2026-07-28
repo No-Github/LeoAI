@@ -2,8 +2,9 @@ package org.leo.jmg;
 
 import org.junit.jupiter.api.Test;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
-import org.leo.jmg.mem.packer.Util;
+import org.leo.jmg.mem.packer.PackerResources;
 import org.leo.jmg.mem.packer.h2.H2JavacPacker;
+import org.leo.jmg.mem.packer.obfuscation.PayloadObfuscator;
 import org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker;
 
 import java.util.Base64;
@@ -47,7 +48,8 @@ class GeneratedTemplateCompatibilityTest {
     @Test
     void xorRuntimeHelperAvoidsDirectJava8Base64Linkage() {
         String payload = repeat('A', 120);
-        String output = Util.xorPayloadEncode("<%! %><% String payload=\"" + payload + "\"; %>");
+        String output = PayloadObfuscator.xor(
+                "<%! %><% String payload=\"" + payload + "\"; %>");
 
         assertFalse(output.contains("java.util.Base64.getDecoder("));
         assertFalse(output.contains("java.util.Base64.getEncoder("));
@@ -55,7 +57,7 @@ class GeneratedTemplateCompatibilityTest {
     }
 
     private static void assertNotContains(String resource, String forbidden) {
-        String content = Util.loadTemplateFromResource(resource);
+        String content = PackerResources.loadTemplate(resource);
         assertFalse(content.contains(forbidden), resource + " 不应包含 " + forbidden);
     }
 

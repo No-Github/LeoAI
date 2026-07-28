@@ -655,8 +655,8 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 
 1. 进入「**主工作台 → 脚本构建**」
 2. 选择「**内存马**」或「**WebShell**」
-3. 选择通信协议：JSP/JSPX WebShell 支持 HTTP、HTTP Chunked；内存构建支持 HTTP、WebSocket
-4. 内存构建选择目标中间件类型和注入方式；WebSocket 会使用 Tomcat WebSocket 注入器和端点路径
+3. 选择通信协议：JSP/JSPX WebShell 支持 HTTP、HTTP Chunked；内存构建支持 HTTP、HTTP Chunked、WebSocket
+4. 内存构建按后端能力矩阵选择目标中间件和注入器；HTTP Chunk 使用普通注入器形态名，WebSocket 使用端点路径
 5. 配置连接密钥，点击「**生成**」
 
 ### 流量伪装

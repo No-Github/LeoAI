@@ -4,12 +4,10 @@ package org.leo.jmg;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.ClassNameGenerator;
 import org.leo.core.util.request.GenerationRandom;
-import org.leo.jmg.mem.packer.PackerRegistry;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -26,12 +24,9 @@ public class ShellGeneratorConfig {
     
     // 可选参数
     private String coreClassName;
-    private byte[] coreClassBytes;
     private int respCode = 200;
     // 传输协议。WebShell 支持 http/httpchunk；内存构建支持 http/httpchunk/websocket。
     private String protocol = "http";
-    // 区分旧客户端未传 protocol 与调用方显式选择 http，用于兼容旧版 WebSocketInjector 请求。
-    private boolean protocolExplicitlyConfigured;
     // 中间件类型（用于注入器，需要用户明确指定宿主机中间件类型）
     private String serverType;
     private String shellType;
@@ -43,13 +38,9 @@ public class ShellGeneratorConfig {
     private String headerName;
     private String headerValue;
 
-    //
-    private String shellClassName;
-    private byte[] shellClassBytes;
-
-    // 注入器相关配置
-    private String injectorClassName;
-    private byte[] injectorClassBytes;
+    // 可选的固定类名；为空时由执行工作区生成，不承载生成结果
+    private String requestedShellClassName;
+    private String requestedInjectorClassName;
     private String urlPattern = "/*";
     private boolean isAbstractTranslet = false;
     /** 部分 Packer（如 ScriptEngine）是否绕过 Java 模块封装 */
@@ -82,38 +73,6 @@ public class ShellGeneratorConfig {
     private String fieldResults;
     private String fieldHostId;
     private String fieldComponents;
-
-    public byte[] getCoreClassBytes() {
-        return coreClassBytes;
-    }
-
-    public void setCoreClassBytes(byte[] coreClassBytes) {
-        this.coreClassBytes = coreClassBytes;
-    }
-
-    public void setInjectorClassName(String injectorClassName) {
-        this.injectorClassName = injectorClassName;
-    }
-
-    public byte[] getInjectorClassBytes() {
-        return injectorClassBytes;
-    }
-
-    public void setInjectorClassBytes(byte[] injectorClassBytes) {
-        this.injectorClassBytes = injectorClassBytes;
-    }
-
-    public void setShellClassName(String shellClassName) {
-        this.shellClassName = shellClassName;
-    }
-
-    public byte[] getShellClassBytes() {
-        return shellClassBytes;
-    }
-
-    public void setShellClassBytes(byte[] shellClassBytes) {
-        this.shellClassBytes = shellClassBytes;
-    }
 
     /**
      * 私有构造函数，使用Builder模式
@@ -149,12 +108,6 @@ public class ShellGeneratorConfig {
         return new Builder(reqDisguise, respDisguise);
     }
 
-    public void setByPassJavaModule(boolean byPassJavaModule) {
-        this.byPassJavaModule = byPassJavaModule;
-    }
-
-
-
     /**
      * 配置构建器
      */
@@ -189,13 +142,12 @@ public class ShellGeneratorConfig {
         /**
          * 设置传输协议。
          * 
-         * @param protocol 传输协议类型（http、httpchunk/httpChunked、websocket），默认为 http
+         * @param protocol 传输协议类型（http、httpchunk、websocket），默认为 http
          * @return Builder实例
          */
         public Builder protocol(String protocol) {
             if (protocol != null && !protocol.trim().isEmpty()) {
-                config.protocol = normalizeProtocol(protocol);
-                config.protocolExplicitlyConfigured = true;
+                config.protocol = TransportProtocol.parse(protocol).getValue();
             }
             return this;
         }
@@ -230,7 +182,7 @@ public class ShellGeneratorConfig {
          * 设置注入器类名
          */
         public Builder injectorClassName(String injectorClassName) {
-            config.injectorClassName = injectorClassName;
+            config.requestedInjectorClassName = injectorClassName;
             return this;
         }
         
@@ -238,7 +190,7 @@ public class ShellGeneratorConfig {
          * 设置Shell类名（用于注入器）
          */
         public Builder shellClassName(String shellClassName) {
-            config.shellClassName = shellClassName;
+            config.requestedShellClassName = shellClassName;
             return this;
         }
         
@@ -259,7 +211,7 @@ public class ShellGeneratorConfig {
         }
 
         /**
-         * 目标应用服务器类型，如 Tomcat，须与 {@link ServerInjectorMapper} 注册表中的 key 一致
+         * 目标应用服务器类型，如 Tomcat，须与生成器目录中的 key 一致
          */
         public Builder serverType(String serverType) {
             if (serverType == null || serverType.trim().isEmpty()) {
@@ -383,12 +335,12 @@ public class ShellGeneratorConfig {
         return headerValue;
     }
     
-    public String getInjectorClassName() {
-        return injectorClassName;
+    public String getRequestedInjectorClassName() {
+        return requestedInjectorClassName;
     }
     
-    public String getShellClassName() {
-        return shellClassName;
+    public String getRequestedShellClassName() {
+        return requestedShellClassName;
     }
     
     public String getUrlPattern() {
@@ -397,10 +349,6 @@ public class ShellGeneratorConfig {
     
     public boolean isAbstractTranslet() {
         return isAbstractTranslet;
-    }
-
-    public void setAbstractTranslet(boolean abstractTranslet) {
-        isAbstractTranslet = abstractTranslet;
     }
 
     public String getServerType() {
@@ -443,44 +391,17 @@ public class ShellGeneratorConfig {
         return customJspTemplate;
     }
 
-    public void setCustomJspTemplate(String customJspTemplate) {
-        this.customJspTemplate = customJspTemplate;
-    }
-
     public String getProtocol() {
         return protocol;
     }
 
-    public boolean isWebSocketProtocol() {
-        return "websocket".equals(protocol);
-    }
-
-    public static String normalizeProtocol(String protocol) {
-        if (protocol == null || protocol.trim().isEmpty()) {
-            return "http";
-        }
-        String normalized = protocol.trim().toLowerCase(Locale.ROOT)
-                .replace("-", "")
-                .replace("_", "");
-        if ("http".equals(normalized)) {
-            return "http";
-        }
-        if ("httpchunk".equals(normalized) || "httpchunked".equals(normalized)) {
-            return "httpchunk";
-        }
-        if ("websocket".equals(normalized)) {
-            return "websocket";
-        }
-        throw new IllegalArgumentException(
-                "传输协议必须是 http、httpchunk 或 websocket，当前值: " + protocol);
-    }
-
     public static List<String> getSupportedWebShellProtocols() {
-        return Collections.unmodifiableList(java.util.Arrays.asList("http", "httpchunk"));
+        return TransportProtocol.valuesAsStrings(
+                TransportProtocol.HTTP, TransportProtocol.HTTP_CHUNK);
     }
 
     public static List<String> getSupportedMemoryShellProtocols() {
-        return Collections.unmodifiableList(java.util.Arrays.asList("http", "httpchunk", "websocket"));
+        return TransportProtocol.valuesAsStrings(TransportProtocol.values());
     }
 
     public String getMethodAction() {
@@ -517,118 +438,6 @@ public class ShellGeneratorConfig {
 
     public String getFieldComponents() {
         return fieldComponents;
-    }
-
-    /** 返回不阻断生成、但需要调用方展示的目标环境警告。 */
-    public List<String> getCompatibilityWarnings() {
-        if (getEffectiveServletNamespace() == ServletNamespace.JAKARTA
-                && targetJavaVersion.isAuto()) {
-            return Collections.singletonList(
-                    "Jakarta Servlet 需要 JDK 8+，auto 模式无法确认目标 JDK");
-        }
-        return Collections.emptyList();
-    }
-
-    /**
-     * 验证配置是否有效
-     *
-     * @throws IllegalArgumentException 如果配置无效
-     */
-    public void validate() {
-        if (reqDisguise == null) {
-            throw new IllegalArgumentException("reqDisguise不能为空");
-        }
-        if (respDisguise == null) {
-            throw new IllegalArgumentException("respDisguise不能为空");
-        }
-        if (getEffectiveServletNamespace() == ServletNamespace.JAKARTA
-                && !targetJavaVersion.isAuto()
-                && targetJavaVersion.getMajor() < 8) {
-            throw new IllegalArgumentException("jakarta.servlet 最低要求 JDK 8，当前目标为 JDK "
-                    + targetJavaVersion.getValue());
-        }
-    }
-
-    /**
-     * 生成 JSP/JSPX WebShell 前的协议边界校验。
-     */
-    public void validateForWebShell(String artifactType) {
-        validate();
-        String normalizedType = artifactType == null
-                ? ""
-                : artifactType.trim().toUpperCase(Locale.ROOT);
-        if (!"JSP".equals(normalizedType) && !"JSPX".equals(normalizedType)) {
-            throw new IllegalArgumentException("WebShell 类型必须是 JSP 或 JSPX");
-        }
-        if (!getSupportedWebShellProtocols().contains(protocol)) {
-            throw new IllegalArgumentException(
-                    "JSP/JSPX WebShell 仅支持 http 或 httpchunk；websocket 请使用内存构建");
-        }
-    }
-
-    /**
-     * 生成内存马注入器前的校验
-     */
-    public void validateForInjector() {
-        validate();
-        if (serverType == null || serverType.trim().isEmpty()) {
-            throw new IllegalArgumentException("生成注入器需要指定 serverType（目标应用服务器类型，如 Tomcat）");
-        }
-        if (shellType == null || shellType.trim().isEmpty()) {
-            throw new IllegalArgumentException("生成注入器需要指定 shellType（注入器形态，如 FilterInjector）");
-        }
-        if (packerType == null || packerType.trim().isEmpty()) {
-            throw new IllegalArgumentException("配置类中 packerType 不能为空");
-        }
-        boolean webSocketInjector = "WebSocketInjector".equals(shellType);
-        boolean chunkInjector = shellType != null && shellType.contains("HTTPCHUNK");
-        if (webSocketInjector && !protocolExplicitlyConfigured && "http".equals(protocol)) {
-            // 旧版调用方只通过 shellType 表达 WebSocket；保持生成结果可用并返回准确协议。
-            protocol = "websocket";
-        }
-        if (chunkInjector && !protocolExplicitlyConfigured && "http".equals(protocol)) {
-            // chunk 注入器需要 httpchunk 协议的帧通信，旧版调用方只传了 shellType。
-            protocol = "httpchunk";
-        }
-        if ("websocket".equals(protocol) && !webSocketInjector) {
-            throw new IllegalArgumentException(
-                    "websocket 协议必须使用 WebSocketInjector 注入器");
-        }
-        if ("httpchunk".equals(protocol) && !chunkInjector) {
-            throw new IllegalArgumentException(
-                    "httpchunk 协议必须使用 FilterInjector-HTTPCHUNK 注入器");
-        }
-        if ("http".equals(protocol) && (webSocketInjector || chunkInjector)) {
-            throw new IllegalArgumentException(
-                    "http 协议不能使用 WebSocketInjector 或 HTTPCHUNK 注入器");
-        }
-        if ("websocket".equals(protocol) && chunkInjector) {
-            throw new IllegalArgumentException(
-                    "HTTPCHUNK 注入器不支持 websocket 协议，请使用 httpchunk");
-        }
-        PackerRegistry.validateProtocolCompatibility(packerType, protocol);
-        // http 和 httpchunk 都是 HTTP 协议变体，使用相同的 Header 门禁。
-        // httpchunk 使用 chunked 传输编码，但 Shell 模板通过 Servlet API
-        // (request.getInputStream / response.getOutputStream) 透明处理，
-        // 不设 Content-Length 时容器自动使用 chunked 编码响应。
-        if (("http".equals(protocol) || "httpchunk".equals(protocol))
-                && (headerName == null || headerName.trim().isEmpty()
-                || headerValue == null || headerValue.trim().isEmpty())) {
-            throw new IllegalArgumentException(
-                    protocol + " 内存构建的 headerName 和 headerValue 不能为空");
-        }
-        if ("websocket".equals(protocol)
-                && (urlPattern == null || !urlPattern.startsWith("/") || urlPattern.contains("*"))) {
-            throw new IllegalArgumentException(
-                    "websocket 的 urlPattern 必须是以 / 开头且不含通配符 * 的端点路径");
-        }
-        // HTTPCHUNK 帧协议要求响应状态码允许携带响应体（不能是 204/205/304）。
-        if (chunkInjector) {
-            if (respCode < 200 || respCode == 204 || respCode == 205 || respCode == 304) {
-                throw new IllegalArgumentException(
-                        "httpchunk 响应状态必须允许持续响应体: " + respCode);
-            }
-        }
     }
 
 }

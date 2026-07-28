@@ -39,7 +39,7 @@ class ShellGeneratorControllerProtocolTest {
         Map<?, ?> protocols = (Map<?, ?>) data.get("transportProtocols");
 
         assertEquals(List.of("http", "httpchunk"), protocols.get("webshell"));
-        assertEquals(List.of("http", "websocket"), protocols.get("memoryshell"));
+        assertEquals(List.of("http", "httpchunk", "websocket"), protocols.get("memoryshell"));
     }
 
     @Test
@@ -60,17 +60,19 @@ class ShellGeneratorControllerProtocolTest {
     }
 
     @Test
-    void rejectsHttpChunkForMemoryAndWebSocketForJsp() {
+    void generatesHttpChunkMemoryAndRejectsWebSocketForJsp() {
         HashMap<String, Object> chunked = controller.generateMemoryShell(params(
-                "protocol", "httpChunked",
+                "protocol", "httpchunk",
                 "serverType", "Tomcat",
                 "shellType", "FilterInjector",
                 "packerType", "DefaultBase64",
                 "headerName", "X-Test",
                 "headerValue", "secret"
         ));
-        assertEquals(400, chunked.get("code"));
-        assertTrue(String.valueOf(chunked.get("msg")).contains("仅支持 JSP/JSPX"));
+        assertEquals(200, chunked.get("code"));
+        Map<?, ?> chunkedData = (Map<?, ?>) chunked.get("data");
+        assertEquals("httpchunk", chunkedData.get("protocol"));
+        assertFalse(String.valueOf(chunkedData.get("code")).isBlank());
 
         HashMap<String, Object> websocketJsp = controller.generateWebShell(params(
                 "protocol", "websocket",

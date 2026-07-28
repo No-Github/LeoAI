@@ -1,5 +1,8 @@
 package org.leo.jmg;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -37,5 +40,13 @@ public enum ServletNamespace {
         }
         throw new IllegalArgumentException(
                 "servletNamespace 必须是 auto、javax 或 jakarta，当前值: " + value);
+    }
+
+    public static List<String> valuesAsStrings() {
+        List<String> result = new ArrayList<String>();
+        for (ServletNamespace namespace : values()) {
+            result.add(namespace.getValue());
+        }
+        return Collections.unmodifiableList(result);
     }
 }

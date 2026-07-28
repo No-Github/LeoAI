@@ -13,7 +13,7 @@ public class LeoCore {
         this.respDisguise = respDisguise;
     }
 
-    public CtClass dump(String classname, ShellGeneratorConfig config) throws CannotCompileException, NotFoundException {
+    public CtClass dump(String classname, CoreGenerationNames config) throws CannotCompileException, NotFoundException {
         // 生成代码只引用 JDK 类型，使用完全独立的类池，避免默认池被其他模板重映射后污染类型解析。
         ClassPool pool = new ClassPool(null);
         pool.appendSystemPath();
@@ -261,6 +261,16 @@ public class LeoCore {
     }
 
     public byte[] genLeoCoreByClassName(String classname, ShellGeneratorConfig config) throws Exception {
+        return genLeoCoreByClassName(classname, CoreGenerationNames.from(config));
+    }
+
+    public CtClass dump(String classname,
+                        ShellGeneratorConfig config) throws CannotCompileException, NotFoundException {
+        return dump(classname, CoreGenerationNames.from(config));
+    }
+
+    public byte[] genLeoCoreByClassName(String classname,
+                                        CoreGenerationNames config) throws Exception {
         CtClass ctClass = dump(classname, config);
         try {
             return ctClass.toBytecode();

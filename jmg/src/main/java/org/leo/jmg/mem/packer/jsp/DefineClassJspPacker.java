@@ -5,8 +5,8 @@ import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
 import org.leo.jmg.mem.packer.PackerRegistry;
+import org.leo.jmg.mem.packer.PackerResources;
 import org.leo.jmg.mem.packer.TemplateRenderer;
-import org.leo.jmg.mem.packer.Util;
 
 @PackerMeta(
     name = "DefineClassJSP", group = "Jsp", order = 3,
@@ -22,8 +22,8 @@ import org.leo.jmg.mem.packer.Util;
 )
 public class DefineClassJspPacker implements Packer {
 
-    private final String template = Util.loadTemplateFromResource("/memshell-template/shell1.jsp.txt");
-    private final String bypassTemplate = Util.loadTemplateFromResource("/memshell-template/shell2.jsp.txt");
+    private final String template = PackerResources.loadTemplate("/memshell-template/shell1.jsp.txt");
+    private final String bypassTemplate = PackerResources.loadTemplate("/memshell-template/shell2.jsp.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
@@ -37,12 +37,12 @@ public class DefineClassJspPacker implements Packer {
             }
             String code = TemplateRenderer.render(tpl, config);
             JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
-                    ? JspObfuscationPipeline.fromStepIds(
+                    ? JspObfuscationPlanner.compile(
                             config.getJspObfuscationSteps(),
-                            JspObfuscationPipeline.PlanContext.packer(
-                                    JspObfuscationPipeline.ArtifactFormat.JSP,
+                            JspObfuscationPlanContext.packer(
+                                    JspObfuscationPlanContext.Format.JSP,
                                     PackerRegistry.getSupportedObfuscationSteps("DefineClassJSP"),
-                                    config.getObfuscationSeed()))
+                                    config.getObfuscationSeed())).getPipeline()
                     : JspObfuscationPipeline.jspDefault(config.getObfuscationSeed());
             return pipeline.apply(code);
         }

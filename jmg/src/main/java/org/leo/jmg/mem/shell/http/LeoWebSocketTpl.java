@@ -41,6 +41,16 @@ public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.w
 
     @Override
     public void onOpen(javax.websocket.Session session, javax.websocket.EndpointConfig endpointConfig) {
+        // 门禁：配置了 headerName/headerValue 时，校验查询参数（ws://host/path?name=value）
+        // 与 HTTP 协议的 Header 门禁对应；未配置时向后兼容（任意可连）
+        if (headerName != null && headerName.length() > 0
+                && headerValue != null && headerValue.length() > 0) {
+            String qs = session.getQueryString();
+            if (qs == null || !qs.contains(headerName + "=" + headerValue)) {
+                try { session.close(); } catch (Exception ignored) {}
+                return;
+            }
+        }
         this.session = session;
         session.addMessageHandler(this);
         session.setMaxBinaryMessageBufferSize(128 * 1024);

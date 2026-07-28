@@ -47,6 +47,23 @@ class ShellGeneratorToolsTest {
     }
 
     @Test
+    void convertsPersistedChunkedProtocolToGeneratorProtocol() throws Exception {
+        Puppet puppet = new Puppet();
+        puppet.setPuppetId("chunk-node");
+        puppet.setType("java");
+        puppet.setProtocol("httpChunked");
+        PuppetService puppetService = mock(PuppetService.class);
+        when(puppetService.findPuppetById("chunk-node")).thenReturn(puppet);
+        ShellGeneratorTools tools = new ShellGeneratorTools(mock(DisguiseService.class),
+                mock(DelegatingChatModel.class), new ShellResultStore(), puppetService,
+                new ScriptGeneratorService(List.of()));
+
+        Map<String, Object> config = tools.getPuppetShellConfig("chunk-node");
+
+        assertEquals("httpchunk", config.get("protocol"));
+    }
+
+    @Test
     void exposesRuntimeMetadataAndGeneratesCachedPhpResult() throws Exception {
         AtomicReference<GenerationRequest> captured = new AtomicReference<>();
         ScriptGeneratorService generators = new ScriptGeneratorService(List.of(

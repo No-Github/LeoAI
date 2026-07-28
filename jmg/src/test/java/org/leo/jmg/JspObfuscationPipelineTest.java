@@ -4,11 +4,19 @@ import org.junit.jupiter.api.Test;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.jmg.mem.packer.jsp.JspDocument;
 import org.leo.jmg.mem.packer.jsp.JspUnicoder;
-import org.leo.jmg.mem.packer.Util;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.jsp.ClassLoaderJspPacker;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationPlan;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationPlanContext;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationPlanner;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
+import org.leo.jmg.mem.packer.jsp.JspObfuscationStepDescriptor;
+import org.leo.jmg.mem.packer.obfuscation.NoiseObfuscator;
+import org.leo.jmg.mem.packer.obfuscation.PresentationObfuscator;
 
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -17,30 +25,53 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class JspObfuscationPipelineTest {
 
     @Test
+    void catalogDescriptorsHaveUniqueExecutableDefinitions() {
+        Set<String> ids = new HashSet<String>();
+        for (JspObfuscationStepDescriptor descriptor
+                : JspObfuscationStepCatalog.getDescriptors()) {
+            assertTrue(ids.add(descriptor.getId()), "重复步骤: " + descriptor.getId());
+            JspObfuscationPlanContext.Format format = descriptor.isJspCompatible()
+                    ? JspObfuscationPlanContext.Format.JSP
+                    : JspObfuscationPlanContext.Format.JSPX;
+            JspObfuscationPipeline pipeline = JspObfuscationPlanner.compile(
+                    Arrays.asList(descriptor.getId()),
+                    JspObfuscationPlanContext.packer(
+                            format, Arrays.asList(descriptor.getId()), 123L))
+                    .getPipeline();
+            assertTrue(pipeline.apply("plain text") != null);
+        }
+        assertTrue(!ids.isEmpty());
+    }
+
+    @Test
     void rejectsUnknownNullAndBlankStepIds() {
         IllegalArgumentException unknown = assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(Arrays.asList("NOT_A_STEP")));
+                () -> JspObfuscationPlanner.compile(
+                        Arrays.asList("NOT_A_STEP"), webShellContext()));
         assertTrue(unknown.getMessage().contains("NOT_A_STEP"));
 
         assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(Arrays.asList("CHUNK_PAYLOAD", null)));
+                () -> JspObfuscationPlanner.compile(
+                        Arrays.asList("CHUNK_PAYLOAD", null), webShellContext()));
         assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(Arrays.asList(" ")));
+                () -> JspObfuscationPlanner.compile(
+                        Arrays.asList(" "), webShellContext()));
     }
 
     @Test
     void trimsKnownStepIdsBeforeBuildingPipeline() {
-        JspObfuscationPipeline pipeline = JspObfuscationPipeline.fromStepIds(
-                Arrays.asList("  NORMALIZE_WHITESPACE  "));
+        JspObfuscationPipeline pipeline = JspObfuscationPlanner.compile(
+                Arrays.asList("  NORMALIZE_WHITESPACE  "), webShellContext())
+                .getPipeline();
 
         assertEquals("plain text", pipeline.apply("plain text"));
     }
 
     @Test
     void descriptorConstraintSetsAreImmutable() {
-        JspObfuscationPipeline.StepDescriptor descriptor = null;
-        for (JspObfuscationPipeline.StepDescriptor candidate
-                : JspObfuscationPipeline.getStepDescriptors()) {
+        JspObfuscationStepDescriptor descriptor = null;
+        for (JspObfuscationStepDescriptor candidate
+                : JspObfuscationStepCatalog.getDescriptors()) {
             if (!candidate.getIncompatibleWith().isEmpty()) {
                 descriptor = candidate;
                 break;
@@ -48,7 +79,7 @@ class JspObfuscationPipelineTest {
         }
 
         assertTrue(descriptor != null, "缺少带互斥约束的步骤描述");
-        JspObfuscationPipeline.StepDescriptor selected = descriptor;
+        JspObfuscationStepDescriptor selected = descriptor;
         assertThrows(UnsupportedOperationException.class,
                 () -> selected.getIncompatibleWith().clear());
     }
@@ -56,44 +87,44 @@ class JspObfuscationPipelineTest {
     @Test
     void rejectsStepsThatDoNotMatchArtifactContext() {
         IllegalArgumentException jspx = assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(
+                () -> JspObfuscationPlanner.compile(
                         Arrays.asList("INSERT_SCRIPT_NOISE"),
-                        JspObfuscationPipeline.PlanContext.webShell(
-                                JspObfuscationPipeline.ArtifactFormat.JSPX)));
+                        JspObfuscationPlanContext.webShell(
+                                JspObfuscationPlanContext.Format.JSPX)));
         assertTrue(jspx.getMessage().contains("不支持 JSPX"));
 
         IllegalArgumentException webShell = assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(
+                () -> JspObfuscationPlanner.compile(
                         Arrays.asList("WRAP_HTML_JS"),
-                        JspObfuscationPipeline.PlanContext.webShell(
-                                JspObfuscationPipeline.ArtifactFormat.JSP)));
+                        JspObfuscationPlanContext.webShell(
+                                JspObfuscationPlanContext.Format.JSP)));
         assertTrue(webShell.getMessage().contains("不适用于 WebShell"));
     }
 
     @Test
     void rejectsUnsupportedPackerStepsAndMutualExclusions() {
         IllegalArgumentException unsupported = assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.fromStepIds(
+                () -> JspObfuscationPlanner.compile(
                         Arrays.asList("NORMALIZE_WHITESPACE"),
-                        JspObfuscationPipeline.PlanContext.packer(
-                                JspObfuscationPipeline.ArtifactFormat.JSP,
+                        JspObfuscationPlanContext.packer(
+                                JspObfuscationPlanContext.Format.JSP,
                                 Arrays.asList("CHUNK_PAYLOAD"))));
         assertTrue(unsupported.getMessage().contains("当前 Packer 不支持"));
 
         IllegalArgumentException conflict = assertThrows(IllegalArgumentException.class,
-                () -> JspObfuscationPipeline.compile(
+                () -> JspObfuscationPlanner.compile(
                         Arrays.asList("XOR_PAYLOAD_ENCODE", "PACK_PAYLOAD"),
-                        JspObfuscationPipeline.PlanContext.webShell(
-                                JspObfuscationPipeline.ArtifactFormat.JSP)));
+                        JspObfuscationPlanContext.webShell(
+                                JspObfuscationPlanContext.Format.JSP)));
         assertTrue(conflict.getMessage().contains("步骤互斥"));
     }
 
     @Test
     void automaticallyOrdersDependenciesAndReportsDiagnostics() {
-        JspObfuscationPipeline.CompiledPlan plan = JspObfuscationPipeline.compile(
+        JspObfuscationPlan plan = JspObfuscationPlanner.compile(
                 Arrays.asList("CHUNK_PAYLOAD", "XOR_PAYLOAD_ENCODE", "CHUNK_PAYLOAD"),
-                JspObfuscationPipeline.PlanContext.webShell(
-                        JspObfuscationPipeline.ArtifactFormat.JSP));
+                JspObfuscationPlanContext.webShell(
+                        JspObfuscationPlanContext.Format.JSP));
 
         assertEquals(Arrays.asList("XOR_PAYLOAD_ENCODE", "CHUNK_PAYLOAD"),
                 plan.getEffectiveStepIds());
@@ -105,7 +136,7 @@ class JspObfuscationPipelineTest {
         String source = "<% String classBytes=\"classBytes\"; "
                 + "// classBytes\nObject value=loader.loadClass(\"loadClass\"); %>";
 
-        String transformed = Util.renameIdentifiers(source);
+        String transformed = PresentationObfuscator.renameIdentifiers(source);
 
         assertTrue(!transformed.contains("String classBytes="));
         assertTrue(transformed.contains("\"classBytes\""));
@@ -117,12 +148,12 @@ class JspObfuscationPipelineTest {
     void injectedNoiseDoesNotReadRuntimeState() {
         String source = "<% int original=1; %>";
 
-        String noise = Util.injectScriptletNoise(source);
+        String noise = NoiseObfuscator.injectScriptletStatements(source);
         assertTrue(!noise.contains("Runtime.getRuntime"));
         assertTrue(!noise.contains("System."));
         assertTrue(!noise.contains("Thread."));
 
-        String deadBlock = Util.injectDeadBlocks(source);
+        String deadBlock = NoiseObfuscator.injectDeadBlocks(source);
         assertTrue(deadBlock.contains("if(false)"));
     }
 
@@ -134,15 +165,15 @@ class JspObfuscationPipelineTest {
         java.util.List<String> steps = Arrays.asList(
                 "IDENTIFIER_RENAME", "INJECT_SCRIPTLET_NOISE", "NORMALIZE_WHITESPACE");
 
-        JspObfuscationPipeline first = JspObfuscationPipeline.fromStepIds(
-                steps, JspObfuscationPipeline.PlanContext.webShell(
-                        JspObfuscationPipeline.ArtifactFormat.JSP, 123456L));
-        JspObfuscationPipeline second = JspObfuscationPipeline.fromStepIds(
-                steps, JspObfuscationPipeline.PlanContext.webShell(
-                        JspObfuscationPipeline.ArtifactFormat.JSP, 123456L));
-        JspObfuscationPipeline different = JspObfuscationPipeline.fromStepIds(
-                steps, JspObfuscationPipeline.PlanContext.webShell(
-                        JspObfuscationPipeline.ArtifactFormat.JSP, 654321L));
+        JspObfuscationPipeline first = JspObfuscationPlanner.compile(
+                steps, JspObfuscationPlanContext.webShell(
+                        JspObfuscationPlanContext.Format.JSP, 123456L)).getPipeline();
+        JspObfuscationPipeline second = JspObfuscationPlanner.compile(
+                steps, JspObfuscationPlanContext.webShell(
+                        JspObfuscationPlanContext.Format.JSP, 123456L)).getPipeline();
+        JspObfuscationPipeline different = JspObfuscationPlanner.compile(
+                steps, JspObfuscationPlanContext.webShell(
+                        JspObfuscationPlanContext.Format.JSP, 654321L)).getPipeline();
 
         assertEquals(first.apply(source), second.apply(source));
         assertTrue(!first.apply(source).equals(different.apply(source)));
@@ -222,5 +253,10 @@ class JspObfuscationPipelineTest {
         config.setClassBytesBase64Str("AQID");
         config.setObfuscationSeed(seed);
         return config;
+    }
+
+    private JspObfuscationPlanContext webShellContext() {
+        return JspObfuscationPlanContext.webShell(
+                JspObfuscationPlanContext.Format.JSP, 123L);
     }
 }

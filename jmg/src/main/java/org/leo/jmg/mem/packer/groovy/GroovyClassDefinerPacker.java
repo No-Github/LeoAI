@@ -3,11 +3,11 @@ package org.leo.jmg.mem.packer.groovy;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
-import org.leo.jmg.mem.packer.Util;
+import org.leo.jmg.mem.packer.PackerResources;
 
 @PackerMeta(name = "GroovyClassDefiner", group = "Groovy", order = 1)
 public class GroovyClassDefinerPacker implements Packer {
-    private final String template = Util.loadTemplateFromResource("/memshell-template/shell.groovy.txt");
+    private final String template = PackerResources.loadTemplate("/memshell-template/shell.groovy.txt");
 
     @Override
     public String pack(ClassPackerConfig config) {
