@@ -83,6 +83,15 @@ public class CloneWithJavassist {
         final Map<String, Boolean> methodIsStatic = new HashMap<String, Boolean>();
 
         CtMethod[] declaredMethods = cc.getDeclaredMethods();
+        // 目标名不得与任何原方法、接口契约或字段名相同，否则 Javassist 编译替换表达式时
+        // 可能解析到错误的重载（例如将普通方法重命名为 InvocationHandler.invoke）。
+        used.addAll(interfaceMethodNames);
+        for (CtMethod method : declaredMethods) {
+            used.add(method.getName());
+        }
+        for (CtField field : cc.getDeclaredFields()) {
+            used.add(field.getName());
+        }
         for (CtMethod m : declaredMethods) {
             String name = m.getName();
             if (name.equals("run")) continue;

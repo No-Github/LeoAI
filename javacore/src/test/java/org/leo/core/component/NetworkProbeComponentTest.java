@@ -44,6 +44,17 @@ class NetworkProbeComponentTest {
     }
 
     @Test
+    void methodRandomizationDoesNotCollideWithInterfaceContracts() throws Exception {
+        String componentId = "HttpRequestComponent";
+        String className = "org.leo.generated.SeededHttpRequestComponent";
+        byte[] bytecode = CloneWithJavassist.cloneClass(componentId, className, 0L);
+        Class<?> transformed = new BytecodeLoader().define(className, bytecode);
+
+        assertTrue(Runnable.class.isAssignableFrom(transformed));
+        assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
+    }
+
+    @Test
     void invalidPortIsRejectedBeforeTaskRegistration() throws Exception {
         InvocationTargetException error = assertThrows(InvocationTargetException.class,
                 () -> invoke(new PortScanComponent(), params(
