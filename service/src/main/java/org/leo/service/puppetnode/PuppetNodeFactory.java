@@ -23,6 +23,8 @@ import org.springframework.stereotype.Service;
 
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -125,7 +127,8 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
             return new HttpCommunication(connLink, "POST", headers, proxy);
         }
         if ("websocket".equals(protocol)) {
-            WebSocketCommunication webSocket = new WebSocketCommunication(connLink, proxy);
+            String wsUrl = appendHeaderQuery(connLink, parseStringHeaders(puppet.getHeaders()));
+            WebSocketCommunication webSocket = new WebSocketCommunication(wsUrl, proxy);
             webSocket.connect();
             return webSocket;
         }
@@ -198,6 +201,26 @@ public class PuppetNodeFactory implements PuppetNodeCreationContext {
     private Map<String, String> parseStringHeaders(String headersJson) {
         Object parsed = JsonUtil.fromJsonString(headersJson, Map.class);
         return parsed instanceof Map<?, ?> ? (Map<String, String>) parsed : new HashMap<>();
+    }
+
+    /** 将 headers 拼成 query string 追加到 URL，供 WebSocket 门禁（ws://host/path?name=value） */
+    static String appendHeaderQuery(String url, Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) return url;
+        StringBuilder qs = new StringBuilder();
+        for (Map.Entry<String, String> e : headers.entrySet()) {
+            if (qs.length() > 0) qs.append('&');
+            qs.append(encodeQueryComponent(e.getKey()))
+                    .append('=')
+                    .append(encodeQueryComponent(e.getValue()));
+        }
+        return url + (url.contains("?") ? "&" : "?") + qs;
+    }
+
+    private static String encodeQueryComponent(String value) {
+        if (value == null) {
+            throw new IllegalArgumentException("WebSocket 门禁参数不能为 null");
+        }
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private void applyTlsFingerprintStrategy(Puppet puppet, Communication comm) {

@@ -9,6 +9,7 @@ import org.leo.core.runtime.PuppetRuntime;
 import org.leo.core.runtime.PuppetRuntimeModule;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -38,6 +39,21 @@ class PuppetNodeFactoryRuntimeModuleTest {
                 module(PuppetRuntime.PHP, false)));
         assertThrows(IllegalArgumentException.class,
                 () -> factory.createLiveNode(puppet("php"), null));
+    }
+
+    @Test
+    void appendsEncodedWebSocketGuardHeadersWithoutLosingExistingQuery() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("X Gate", "token&role=admin");
+        headers.put("昵称", "测试 用户");
+
+        String result = PuppetNodeFactory.appendHeaderQuery(
+                "wss://example.test/leo?tenant=one", headers);
+
+        assertEquals("wss://example.test/leo?tenant=one"
+                        + "&X%20Gate=token%26role%3Dadmin"
+                        + "&%E6%98%B5%E7%A7%B0=%E6%B5%8B%E8%AF%95%20%E7%94%A8%E6%88%B7",
+                result);
     }
 
     private static Puppet puppet(String type) {
