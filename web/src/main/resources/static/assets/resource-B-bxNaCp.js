@@ -1,0 +1,1 @@
+import{o as e}from"./auth-DZ88OQMs.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};
