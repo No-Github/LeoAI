@@ -109,7 +109,7 @@ public class InjectorGenerator {
     /**
      * B1: 注入字节码噪声，增加注入器类字节码多样性。
      * <p>
-     * 添加随机命名的私有方法（无副作用：局部变量 + 常量运算），并在构造函数开头调用，
+     * 添加随机命名的私有方法（无副作用：局部变量 + 常量运算），并在父类构造完成后调用，
      * 打破"固定字段 + 固定方法"的注入器结构特征。噪声方法被构造函数引用，
      * 不会被 {@link ClassFileMinimizer} 移除。
      * <p>
@@ -139,11 +139,12 @@ public class InjectorGenerator {
             }
         }
 
-        // 构造函数开头调用噪声方法（保证被引用，不被瘦身移除）
+        // 必须插入到显式 super()/this() 调用之后。insertBefore() 会在父类构造前
+        // 调用实例方法，此时 this 仍是未初始化对象，会触发构造器 VerifyError。
         if (constructorCalls.length() > 0) {
             for (CtConstructor constructor : ctClass.getDeclaredConstructors()) {
                 try {
-                    constructor.insertBefore(constructorCalls.toString());
+                    constructor.insertBeforeBody(constructorCalls.toString());
                 } catch (Exception ignored) {
                     // 某些构造函数可能无法插入，跳过
                 }

@@ -505,6 +505,11 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
+    public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception {
+        return sqlService.inspectRuntime(connection);
+    }
+
+    @Override
     public Map<String, Object> getClassBytecode(String className) throws Exception {
         return resourceService.getClassBytecode(className);
     }

@@ -42,8 +42,8 @@ class GeneratorCatalogTest {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
 
         for (InjectorDescriptor descriptor : GeneratorCatalog.getAllDescriptors()) {
-            String shellResource = "shell-template/"
-                    + descriptor.getShellTemplateName().replace('.', '/') + ".class";
+            String shellResource =
+                    descriptor.getShellTemplateName().replace('.', '/') + ".class";
             String injectorResource =
                     descriptor.getInjectorTemplateName().replace('.', '/') + ".class";
 
@@ -80,8 +80,10 @@ class GeneratorCatalogTest {
 
         assertNotNull(filter);
         assertNotNull(valve);
-        assertEquals("LeoFilterChunkTpl", filter.getShellTemplateName());
-        assertEquals("LeoValveChunkTpl", valve.getShellTemplateName());
+        assertEquals("org.leo.jmg.mem.shell.http.LeoFilterChunkTpl",
+                filter.getShellTemplateName());
+        assertEquals("org.leo.jmg.mem.shell.http.LeoValveChunkTpl",
+                valve.getShellTemplateName());
         assertNull(GeneratorCatalog.resolve(
                 "InforSuite", "ListenerInjector", "httpchunk"));
         assertNull(GeneratorCatalog.resolve(

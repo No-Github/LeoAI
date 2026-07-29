@@ -54,7 +54,8 @@ class PuppetNodeSqlServicePhpContractTest {
         database = Files.createTempFile("leo-php-sql-service-", ".sqlite");
         service = new PuppetNodeSqlService(new SqlDialectFactory());
         connection = new LinkedHashMap<>();
-        connection.put("type", "sqlite");
+        connection.put("dialect", "sqlite");
+        connection.put("connectionMode", "standard");
         connection.put("variant", "file");
         connection.put("file", database.toAbsolutePath().toString());
         connection.put("username", "");

@@ -49,7 +49,7 @@ class GenerationLifecycleTest {
         assertEquals(GenerationPlan.ArtifactKind.INJECTOR, plan.getArtifactKind());
         assertEquals("FilterInjector",
                 plan.getInjectorDescriptor().getInjectorName());
-        assertEquals("LeoFilterChunkTpl",
+        assertEquals("org.leo.jmg.mem.shell.http.LeoFilterChunkTpl",
                 plan.getInjectorDescriptor().getShellTemplateName());
         assertNotNull(plan.getPacker());
         assertFalse(plan.isAbstractTranslet());

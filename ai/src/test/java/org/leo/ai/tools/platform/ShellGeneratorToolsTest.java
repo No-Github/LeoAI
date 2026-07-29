@@ -1,6 +1,7 @@
 package org.leo.ai.tools.platform;
 
 import org.junit.jupiter.api.Test;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.Puppet;
@@ -101,12 +102,12 @@ class ShellGeneratorToolsTest {
         ShellGeneratorTools tools = tools(mockDisguiseService(), new ShellResultStore(),
                 new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))));
 
-        IllegalArgumentException protocolError = assertThrows(IllegalArgumentException.class,
+        AiToolException protocolError = assertThrows(AiToolException.class,
                 () -> tools.generatePhpWebShell(
                         "req", "resp", "httpchunk", "compact", null, null, 200, null));
         assertTrue(protocolError.getMessage().contains("仅支持 http"));
 
-        IllegalArgumentException headerError = assertThrows(IllegalArgumentException.class,
+        AiToolException headerError = assertThrows(AiToolException.class,
                 () -> tools.generatePhpWebShell(
                         "req", "resp", "http", "compact", "X-Test", null, 200, null));
         assertTrue(headerError.getMessage().contains("必须同时设置"));

@@ -41,15 +41,18 @@ public class PuppetNodeAiThreadService {
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final PuppetNodeAiAgentRegistry agentRegistry;
+    private final AiTurnProtocolService turnProtocolService;
 
     public PuppetNodeAiThreadService(AiModelConfigService modelConfigService,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
-                                     PuppetNodeAiAgentRegistry agentRegistry) {
+                                     PuppetNodeAiAgentRegistry agentRegistry,
+                                     AiTurnProtocolService turnProtocolService) {
         this.modelConfigService = modelConfigService;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
+        this.turnProtocolService = turnProtocolService;
     }
 
     public ThreadResolution ensureThreadReady(
@@ -125,6 +128,7 @@ public class PuppetNodeAiThreadService {
                 item.put("configModel", record.getConfigModel());
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, record.getThreadId()));
+                applyProtocolSnapshot(item, record.getThreadId());
                 result.add(item);
             }
         }
@@ -135,13 +139,16 @@ public class PuppetNodeAiThreadService {
                 item.put("hasCheckpoint",
                         hasThreadCheckpoint(session, thread.getThreadId()));
             }
+            applyProtocolSnapshot(item, thread.getThreadId());
             result.add(item);
         }
         if (puppetId == null) {
             for (AiThread thread : memoryThreads) {
                 if (result.stream().noneMatch(item ->
                         thread.getThreadId().equals(item.get("threadId")))) {
-                    result.add(threadToMap(thread, 0));
+                    Map<String, Object> item = threadToMap(thread, 0);
+                    applyProtocolSnapshot(item, thread.getThreadId());
+                    result.add(item);
                 }
             }
         }
@@ -269,8 +276,9 @@ public class PuppetNodeAiThreadService {
         data.put("lastSeq", Math.max(
                 thread.getLastSseEventSeq(),
                 conversationStore.findLastEventSeq(threadId)));
-        data.put("runStatus", thread.getRunStatus());
         data.putAll(runtimeSnapshot(thread));
+        data.putAll(turnProtocolService.snapshotThread(
+                threadId, thread.getRunStatus()).toMap());
         return data;
     }
 
@@ -460,6 +468,15 @@ public class PuppetNodeAiThreadService {
         payload.put("lastSeq", thread.getLastSseEventSeq());
         payload.put("executing", thread.isExecuting());
         return payload;
+    }
+
+    private void applyProtocolSnapshot(Map<String, Object> target,
+                                       String threadId) {
+        String fallback = String.valueOf(
+                target.getOrDefault("runStatus", AiThread.STATUS_IDLE));
+        AiTurnProtocolService.ThreadSnapshot snapshot =
+                turnProtocolService.snapshotThread(threadId, fallback);
+        if (snapshot != null) target.putAll(snapshot.toMap());
     }
 
     private Map<String, Object> threadToMap(AiThread thread, int messageCount) {

@@ -64,7 +64,8 @@ class PlatformAiThreadServiceTest {
         record.setMode("plan");
         when(conversationStore.findThread(THREAD_ID)).thenReturn(record);
         PlatformAiThreadService service = new PlatformAiThreadService(
-                mock(AiModelConfigService.class), conversationStore, agentRegistry);
+                mock(AiModelConfigService.class), conversationStore,
+                agentRegistry, mock(AiTurnProtocolService.class));
         return new Fixture(service, conversationStore, agentRegistry);
     }
 

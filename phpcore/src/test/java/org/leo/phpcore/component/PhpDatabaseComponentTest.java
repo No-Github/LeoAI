@@ -111,9 +111,24 @@ class PhpDatabaseComponentTest {
         assertTrue(String.valueOf(unsupported.get("msg")).contains("unsupported"));
     }
 
+    @Test
+    void reportsPdoRuntimeCapabilitiesBeforeConnecting() throws Exception {
+        Map<String, Object> capabilities = invoke(
+                "capabilities", Map.of("requestedDriver", "sqlite"));
+
+        assertEquals(200, code(capabilities));
+        assertEquals("php", capabilities.get("runtime"));
+        assertEquals("pdo", capabilities.get("provider"));
+        assertEquals(true, capabilities.get("available"));
+        assertEquals(true, ((Map<?, ?>) capabilities.get("requestedDriver")).get("available"));
+        assertTrue(((List<?>) capabilities.get("drivers")).stream()
+                .anyMatch(item -> "sqlite".equals(((Map<?, ?>) item).get("id"))));
+    }
+
     private Map<String, Object> execute(String sql) throws Exception {
         Map<String, Object> connection = new LinkedHashMap<>();
-        connection.put("type", "sqlite");
+        connection.put("dialect", "sqlite");
+        connection.put("connectionMode", "standard");
         connection.put("variant", "file");
         connection.put("file", database.toAbsolutePath().toString());
         Map<String, Object> params = new LinkedHashMap<>(new PhpDatabaseConnectionAdapter()

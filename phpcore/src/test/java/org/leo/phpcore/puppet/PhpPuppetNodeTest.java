@@ -334,7 +334,8 @@ class PhpPuppetNodeTest {
 
         assertTrue(node instanceof SqlCapable);
         Map<String, Object> result = node.executeSql(DatabaseConnectionSpec.fromMap(Map.of(
-                        "type", "sqlite", "variant", "file", "file", "/tmp/example.sqlite",
+                        "dialect", "sqlite", "connectionMode", "standard",
+                        "variant", "file", "file", "/tmp/example.sqlite",
                         "username", "db-user", "password", "db-password")),
                 "UPDATE inventory SET quantity = 2 WHERE id = 1");
 
@@ -349,6 +350,35 @@ class PhpPuppetNodeTest {
         assertEquals("db-password", request.get("password"));
         assertEquals("UPDATE inventory SET quantity = 2 WHERE id = 1", request.get("sql"));
         assertEquals(1, ((Number) result.get("affectedRows")).intValue());
+    }
+
+    @Test
+    void routesDatabaseRuntimeInspectionWithoutOpeningAConnection() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Disguise portable = new PortableDisguise();
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            Map<String, Object> request = decoded.execution();
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) invokes.add(request);
+            return response(decoded, Map.of(
+                    "code", 200,
+                    "runtime", "php",
+                    "provider", "pdo",
+                    "available", true));
+        };
+        PhpPuppetNode node = node(communication, portable);
+
+        Map<String, Object> result = node.inspectDatabaseRuntime(Map.of(
+                "dialect", "postgresql",
+                "runtimeOptions", Map.of("php", Map.of("pdoDriver", "pgsql"))));
+
+        assertEquals("php", result.get("runtime"));
+        assertEquals(1, invokes.size());
+        assertEquals("DatabaseComponent", invokes.get(0).get("componentName"));
+        assertEquals("capabilities", invokes.get(0).get("action"));
+        assertEquals("pgsql", invokes.get(0).get("requestedDriver"));
+        assertFalse(invokes.get(0).containsKey("dsn"));
+        assertFalse(invokes.get(0).containsKey("password"));
     }
 
     private PhpPuppetNode node(Communication communication, Disguise disguise) {

@@ -16,7 +16,8 @@ class PhpDatabaseConnectionAdapterTest {
     @Test
     void createsPdoParametersWithoutJdbcFields() {
         Map<String, Object> result = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "host", "db.internal", "database", "inventory",
+                "dialect", "mysql", "connectionMode", "standard",
+                "host", "db.internal", "database", "inventory",
                 "username", "app", "password", "secret", "options", Map.of("charset", "utf8mb4"))));
 
         assertEquals("pdo", result.get("provider"));
@@ -29,11 +30,29 @@ class PhpDatabaseConnectionAdapterTest {
     @Test
     void createsNativeSqliteAndOracleServiceDsns() {
         Map<String, Object> sqlite = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "sqlite", "variant", "file", "file", "/tmp/example.sqlite")));
+                "dialect", "sqlite", "connectionMode", "standard",
+                "variant", "file", "file", "/tmp/example.sqlite")));
         assertEquals("sqlite:/tmp/example.sqlite", sqlite.get("dsn"));
 
         Map<String, Object> oracle = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "oracle", "variant", "service", "host", "oracle.internal", "service", "ORCLPDB1")));
+                "dialect", "oracle", "connectionMode", "standard",
+                "variant", "service", "host", "oracle.internal", "service", "ORCLPDB1")));
         assertTrue(String.valueOf(oracle.get("dsn")).startsWith("oci:dbname=//oracle.internal:1521/ORCLPDB1"));
+    }
+
+    @Test
+    void usesCustomPdoConnectorForAnUnknownDatabase() {
+        Map<String, Object> result = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "generic",
+                "connectionMode", "custom",
+                "username", "app",
+                "password", "secret",
+                "runtimeOptions", Map.of("php", Map.of(
+                        "pdoDriver", "odbc",
+                        "dsn", "odbc:Warehouse")))));
+
+        assertEquals("odbc", result.get("pdoDriver"));
+        assertEquals("odbc:Warehouse", result.get("dsn"));
+        assertEquals("app", result.get("username"));
     }
 }

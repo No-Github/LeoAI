@@ -9,11 +9,17 @@ import java.util.Map;
 public final class PhpDatabaseConnectionAdapter {
 
     public Map<String, Object> adapt(DatabaseConnectionSpec connection) {
-        Map<String, Object> override = connection.nativeOptions("php");
+        Map<String, Object> override = connection.runtimeOptions("php");
         String pdoDriver = text(override.get("pdoDriver"));
         String dsn = text(override.get("dsn"));
-        if (pdoDriver.isBlank()) pdoDriver = defaultDriver(connection.getType());
-        if (dsn.isBlank()) dsn = buildDsn(connection, pdoDriver);
+        if (DatabaseConnectionSpec.MODE_CUSTOM.equals(connection.getConnectionMode())) {
+            if (pdoDriver.isBlank() || dsn.isBlank()) {
+                throw new IllegalArgumentException("当前 PHP Puppet 未配置自定义 PDO 连接");
+            }
+        } else {
+            if (pdoDriver.isBlank()) pdoDriver = defaultDriver(connection.getDialect());
+            if (dsn.isBlank()) dsn = buildDsn(connection, pdoDriver);
+        }
 
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("provider", "pdo");
@@ -37,20 +43,20 @@ public final class PhpDatabaseConnectionAdapter {
     }
 
     private String buildDsn(DatabaseConnectionSpec connection, String pdoDriver) {
-        if ("sqlite".equals(connection.getType())) {
+        if ("sqlite".equals(connection.getDialect())) {
             return "sqlite:" + required(connection.getFile(), "connection.file");
         }
         String host = clean(required(connection.getHost(), "connection.host"));
-        int port = connection.getPort() == null ? defaultPort(connection.getType()) : connection.getPort();
+        int port = connection.getPort() == null ? defaultPort(connection.getDialect()) : connection.getPort();
         String database = clean(connection.getDatabase());
-        return switch (connection.getType()) {
+        return switch (connection.getDialect()) {
             case "mysql" -> "mysql:host=" + host + ";port=" + port
                     + optional(";dbname=", database) + ";charset=" + mysqlCharset(connection.getOptions());
             case "postgresql" -> "pgsql:host=" + host + ";port=" + port
                     + optional(";dbname=", database) + pgOptions(connection.getOptions());
             case "sqlserver" -> sqlServerDsn(pdoDriver, host, port, database, connection.getOptions());
             case "oracle" -> "oci:dbname=" + oracleTarget(connection, host, port) + ";charset=AL32UTF8";
-            default -> throw new IllegalArgumentException("PHP 不支持数据库类型: " + connection.getType());
+            default -> throw new IllegalArgumentException("PHP 不支持数据库方言: " + connection.getDialect());
         };
     }
 

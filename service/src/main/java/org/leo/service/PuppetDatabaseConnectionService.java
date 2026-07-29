@@ -57,12 +57,12 @@ public class PuppetDatabaseConnectionService {
         }
     }
 
-    public boolean deleteById(String connectionId) {
-        return mapper.deleteById(connectionId) > 0;
+    public boolean deleteById(String connectionId, String puppetId) {
+        return mapper.deleteByIdAndPuppet(connectionId, puppetId) > 0;
     }
 
-    public boolean existsByName(String connectionName, String excludeConnectionId) {
-        return mapper.existsByName(connectionName, excludeConnectionId);
+    public boolean existsByName(String puppetId, String connectionName, String excludeConnectionId) {
+        return mapper.existsByName(puppetId, connectionName, excludeConnectionId);
     }
 
     public boolean recordTestResult(String connectionId, boolean success, String message) {
@@ -72,16 +72,17 @@ public class PuppetDatabaseConnectionService {
         return mapper.updateTestStatus(connectionId, success ? 1 : 2, normalizedMessage) > 0;
     }
 
-    public boolean setEnabled(String connectionId, boolean enabled) {
-        if (connectionId == null || connectionId.isBlank()) return false;
-        return mapper.updateStatus(connectionId, enabled ? 1 : 0) > 0;
+    public boolean setEnabled(String connectionId, String puppetId, boolean enabled) {
+        if (connectionId == null || connectionId.isBlank()
+                || puppetId == null || puppetId.isBlank()) return false;
+        return mapper.updateStatusByPuppet(connectionId, puppetId, enabled ? 1 : 0) > 0;
     }
 
     public void applyConnectionSpec(PuppetDatabaseConnection target, DatabaseConnectionSpec spec) {
         if (target == null) throw new IllegalArgumentException("数据库连接配置不能为空");
         if (spec == null) throw new IllegalArgumentException("connection 不能为空");
         String existingPassword = target.getPassword();
-        target.setDbType(spec.getType());
+        target.setDialect(spec.getDialect());
         target.setUsername(spec.getUsername());
         if (target.getConnectionId() != null && !target.getConnectionId().isBlank()
                 && (spec.getPassword() == null || spec.getPassword().isBlank())) {
@@ -119,17 +120,30 @@ public class PuppetDatabaseConnectionService {
         view.put("puppetId", source.getPuppetId());
         view.put("connection", sanitizeConnectionView(
                 withoutPassword(DatabaseConnectionSpec.fromMap(storedConnectionValues(source)).toMap())));
-        view.put("dbType", source.getDbType());
+        view.put("dialect", source.getDialect());
         view.put("username", source.getUsername());
         view.put("status", source.getStatus());
         view.put("testStatus", source.getTestStatus());
         view.put("lastTestTime", source.getLastTestTime());
         view.put("lastTestMessage", source.getLastTestMessage());
         view.put("timeoutSeconds", source.getTimeoutSeconds());
-        view.put("scope", source.getScope());
         view.put("description", source.getDescription());
         view.put("remark", source.getRemark());
         return view;
+    }
+
+    /**
+     * Restores protected values omitted or masked by {@link #toConnectionView}
+     * when an existing profile is edited. This keeps read responses
+     * non-sensitive without turning masked placeholders into persisted
+     * credentials.
+     */
+    public Map<String, Object> mergeProtectedValues(PuppetDatabaseConnection source,
+                                                    Map<String, Object> incoming) {
+        if (source == null) return new LinkedHashMap<String, Object>(incoming);
+        Map<String, Object> merged = new LinkedHashMap<String, Object>(incoming);
+        mergeProtectedValues(storedConnectionValues(source), merged);
+        return merged;
     }
 
     private Map<String, Object> withoutPassword(Map<String, Object> source) {
@@ -143,7 +157,7 @@ public class PuppetDatabaseConnectionService {
         Map<String, Object> values = source.getConnectionSpec() == null || source.getConnectionSpec().isBlank()
                 ? new LinkedHashMap<String, Object>()
                 : PortableJsonCodec.decode(source.getConnectionSpec().getBytes(StandardCharsets.UTF_8));
-        values.putIfAbsent("type", source.getDbType());
+        values.putIfAbsent("dialect", source.getDialect());
         values.put("username", source.getUsername());
         values.put("timeoutSeconds", source.getTimeoutSeconds());
         return values;
@@ -155,6 +169,31 @@ public class PuppetDatabaseConnectionService {
             if (!isSecretKey(key)) safe.put(key, sanitizeViewValue(value));
         });
         return safe;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void mergeProtectedValues(Map<String, Object> stored, Map<String, Object> incoming) {
+        stored.forEach((key, storedValue) -> {
+            if (isSecretKey(key)) {
+                if (!incoming.containsKey(key)) incoming.put(key, storedValue);
+                return;
+            }
+            Object incomingValue = incoming.get(key);
+            if (storedValue instanceof Map<?, ?> storedMap
+                    && incomingValue instanceof Map<?, ?> incomingMap) {
+                Map<String, Object> writable = new LinkedHashMap<String, Object>();
+                incomingMap.forEach((nestedKey, value) -> writable.put(String.valueOf(nestedKey), value));
+                mergeProtectedValues((Map<String, Object>) storedMap, writable);
+                incoming.put(key, writable);
+                return;
+            }
+            if (storedValue instanceof String storedText
+                    && incomingValue instanceof String incomingText
+                    && incomingText.contains("***")
+                    && incomingText.equals(sanitizeViewValue(storedText))) {
+                incoming.put(key, storedText);
+            }
+        });
     }
 
     private Object sanitizeViewValue(Object value) {

@@ -141,7 +141,7 @@ public class SqlTools {
 
     private String sqlOperationPath(DatabaseConnectionSpec connection, String sqlScript) {
         String sql = truncate(sqlScript, 180);
-        String target = connection.getType() + "://"
+        String target = connection.getDialect() + "://"
                 + (connection.getHost() == null ? "local" : connection.getHost())
                 + (connection.getDatabase() == null ? "" : "/" + connection.getDatabase());
         return sql == null || sql.isBlank() ? target : target + " | " + sql;

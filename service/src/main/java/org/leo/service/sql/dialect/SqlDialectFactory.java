@@ -16,6 +16,7 @@ public class SqlDialectFactory {
         register(new SqlServerDialect());
         register(new OracleDialect());
         register(new SqliteDialect());
+        register(new GenericSqlDialect());
     }
 
     public AbstractSqlDialect require(String type) {

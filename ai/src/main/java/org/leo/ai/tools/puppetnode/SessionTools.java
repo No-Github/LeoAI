@@ -1,6 +1,7 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.ReconSummaryDigestService;
 import org.leo.ai.service.ReconSummaryOrganizeService;
 import org.leo.core.session.PuppetNodeSession;
@@ -57,8 +58,11 @@ public class SessionTools {
             case "get"    -> doGetReconSummary();
             case "set"    -> doSetReconSummary(content);
             case "append" -> doAppendReconSummary(content);
-            default       -> throw new IllegalArgumentException(
-                    "无效的 action: " + action + "，可选值: get | set | append");
+            default       -> throw AiToolException.modelCorrectable(
+                    "INVALID_ACTION",
+                    "无效的 action: " + action
+                            + "，可选值: get | set | append",
+                    "将 action 改为 get、set 或 append 后重新调用。");
         };
     }
 
@@ -66,7 +70,10 @@ public class SessionTools {
 
     private Map<String, Object> doSetReconSummary(String reconSummary) {
         if (reconSummary == null || reconSummary.isBlank()) {
-            throw new IllegalArgumentException("set 失败：缺少必填参数 content（侦察摘要内容）");
+            throw AiToolException.modelCorrectable(
+                    "MISSING_REQUIRED_ARGUMENT",
+                    "set 失败：缺少必填参数 content（侦察摘要内容）",
+                    "为 content 提供非空 Markdown 文本后重新调用。");
         }
         PuppetNodeSession session = currentSessionOrThrow();
         String normalized = reconSummary.trim();
@@ -81,7 +88,10 @@ public class SessionTools {
 
     private Map<String, Object> doAppendReconSummary(String content) {
         if (content == null || content.isBlank()) {
-            throw new IllegalArgumentException("append 失败：缺少必填参数 content（要追加的 Markdown 文本）");
+            throw AiToolException.modelCorrectable(
+                    "MISSING_REQUIRED_ARGUMENT",
+                    "append 失败：缺少必填参数 content（要追加的 Markdown 文本）",
+                    "为 content 提供非空 Markdown 文本后重新调用。");
         }
         PuppetNodeSession session = currentSessionOrThrow();
         String sessionId = session.getSessionId();
@@ -124,18 +134,21 @@ public class SessionTools {
         return result;
     }
 
-    /**
-     * 解析当前 ThreadLocal 上下文中的 puppet 会话；找不到则抛出 {@link IllegalStateException}，
-     * langchain4j 默认错误处理器会把异常 message 作为工具结果回传给 LLM。
-     */
+    /** 解析当前 ThreadLocal 上下文中的 puppet 会话。 */
     private PuppetNodeSession currentSessionOrThrow() {
         String sessionId = AiToolContext.getSessionId();
         if (sessionId == null) {
-            throw new IllegalStateException("上下文中无 sessionId（ThreadLocal 未注入），无法定位 puppet 会话");
+            throw AiToolException.fatal(
+                    "TOOL_CONTEXT_MISSING",
+                    "工具执行上下文缺少 sessionId。",
+                    null);
         }
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         if (session == null) {
-            throw new IllegalStateException("会话不存在: " + sessionId);
+            throw AiToolException.userActionRequired(
+                    "SESSION_EXPIRED",
+                    "当前 Puppet 会话不存在或已过期。",
+                    "不要重复调用；请向用户说明需要重新连接 Puppet。");
         }
         return session;
     }

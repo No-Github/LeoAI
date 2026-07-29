@@ -2,6 +2,7 @@ package org.leo.ai.tools.platform;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.SkillRegistryService;
 
 /**
@@ -28,12 +29,19 @@ public class SkillActivationTools {
     public String activateSkill(
             @P("skill 名称，如 recon-basic-info") String name) {
 
-        if (name == null || name.isBlank())
-            throw new IllegalArgumentException("name 不能为空");
+        if (name == null || name.isBlank()) {
+            throw AiToolException.modelCorrectable(
+                    "MISSING_REQUIRED_ARGUMENT",
+                    "skill 名称 name 不能为空。",
+                    "从当前系统提示提供的 Skill 列表中选择名称后重新调用。");
+        }
 
         String content = skillRegistry.getSkillContent(scope, name.trim());
         if (content == null) {
-            throw new IllegalStateException("未找到 skill：name=" + name + "。请确认名称是否正确（区分大小写）。");
+            throw AiToolException.modelCorrectable(
+                    "SKILL_NOT_FOUND",
+                    "未找到 skill：name=" + name + "。",
+                    "检查当前可用 Skill 名称并注意大小写；不要猜测不存在的 Skill。");
         }
         // 剥掉 frontmatter（enabled / description / tags 等元数据），只把正文交给 AI
         return SkillRegistryService.stripFrontmatter(content);

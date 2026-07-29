@@ -44,7 +44,7 @@ class TransportTemplateBoundsTest {
 
     @Test
     void packagedWebSocketTemplateContainsFragmentValidation() throws Exception {
-        String resource = "shell-template/LeoWebSocketTpl.class";
+        String resource = "org/leo/jmg/mem/shell/http/LeoWebSocketTpl.class";
         try (InputStream input = Thread.currentThread().getContextClassLoader()
                 .getResourceAsStream(resource)) {
             assertTrue(input != null, "WebSocket template resource should exist");

@@ -302,6 +302,7 @@ class AiTurnOrchestratorTest {
         private AiTurnExecutionListener deferredListener;
 
         private TestExecutionEngine(Mode mode) {
+            super(new org.leo.ai.agent.AiToolErrorHandler());
             this.mode = mode;
         }
 

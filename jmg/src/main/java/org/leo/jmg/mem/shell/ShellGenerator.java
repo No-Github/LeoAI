@@ -41,10 +41,9 @@ public class ShellGenerator {
         pool.appendSystemPath();
 
         // 从模板类字节码克隆出一个新的 CtClass，避免直接修改模板本身
-        String classPath = shellTplName.replace('.', '/') + ".class";
-        String resourcePath = "shell-template/" + classPath;
+        String resourcePath = shellTplName.replace('.', '/') + ".class";
 
-        // shell 模板从 resources/shell-template 下读取，避免依赖模板类可被 Class.forName 加载
+        // 直接读取已编译模板类的字节码，避免依赖 Class.forName，也避免维护一份容易过期的资源副本。
         try (InputStream is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath)) {
             if (is == null) {
                 throw new RuntimeException("Cannot find shell template class bytes from resource: " + resourcePath

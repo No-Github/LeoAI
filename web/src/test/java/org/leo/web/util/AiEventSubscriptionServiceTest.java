@@ -93,6 +93,7 @@ class AiEventSubscriptionServiceTest {
         assertTrue(thread.claimExecution());
         AiSseEvent currentTurn = thread.recordSseEvent("turn", "current");
         thread.markCompleted();
+        thread.clearExecuting();
         SseEmitter emitter = mock(SseEmitter.class);
         when(eventStore.listEventsAfter(
                 "thread-3", thread.getCurrentRunStartSeq(), 200))
@@ -145,6 +146,40 @@ class AiEventSubscriptionServiceTest {
         stream.get(2, TimeUnit.SECONDS);
 
         verify(writer).sendStatus(emitter, AiThread.STATUS_COMPLETED);
+        verify(emitter).complete();
+    }
+
+    @Test
+    void closesAfterQueuedTurnCancellationEvenWhenRuntimeStayedIdle()
+            throws Exception {
+        AiSseEmitterWriter writer = mock(AiSseEmitterWriter.class);
+        AiConversationStoreService eventStore =
+                mock(AiConversationStoreService.class);
+        AiEventSubscriptionService service =
+                new AiEventSubscriptionService(
+                        mock(AiSseExecutor.class), writer, eventStore);
+        AiThread thread = new AiThread("thread-queued", "test");
+        AiSseEvent completed = new AiSseEvent(
+                1L, 1L, "turn/completed",
+                Map.of("turn", Map.of(
+                        "id", "turn-queued",
+                        "status", "interrupted")),
+                null, "turn-queued", "assistant-queued", null);
+        SseEmitter emitter = mock(SseEmitter.class);
+        when(eventStore.listEventsAfter("thread-queued", 0L, 200))
+                .thenReturn(List.of(completed));
+        when(eventStore.findLastEventSeq("thread-queued"))
+                .thenReturn(1L);
+        when(eventStore.findThread("thread-queued"))
+                .thenReturn(threadRecord(AiThread.STATUS_IDLE));
+        when(eventStore.hasLatestTurnCompletedEvent("thread-queued"))
+                .thenReturn(true);
+
+        service.stream("test", "thread-queued", thread, emitter,
+                0L, new AtomicBoolean(false));
+
+        verify(writer).sendEvent(emitter, completed);
+        verify(writer, never()).sendStatus(emitter, AiThread.STATUS_IDLE);
         verify(emitter).complete();
     }
 

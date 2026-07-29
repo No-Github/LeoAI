@@ -19,17 +19,18 @@ import java.util.Set;
  */
 public final class GeneratorCatalog {
 
-    private static final String SHELL_FILTER = "LeoFilterTpl";
-    private static final String SHELL_FILTER_CHUNK = "LeoFilterChunkTpl";
-    private static final String SHELL_VALVE = "LeoValveTpl";
-    private static final String SHELL_VALVE_CHUNK = "LeoValveChunkTpl";
-    private static final String SHELL_LISTENER = "LeoListenerTpl";
-    private static final String SHELL_LISTENER_CHUNK = "LeoListenerChunkTpl";
-    private static final String SHELL_SERVLET = "LeoServletTpl";
-    private static final String SHELL_SERVLET_CHUNK = "LeoServletChunkTpl";
-    private static final String SHELL_WEBSOCKET = "LeoWebSocketTpl";
-    private static final String SHELL_INTERCEPTOR = "LeoInterceptorTpl";
-    private static final String SHELL_STRUCT2 = "LeoStruct2ActionTpl";
+    private static final String SHELL_PACKAGE = "org.leo.jmg.mem.shell.http.";
+    private static final String SHELL_FILTER = SHELL_PACKAGE + "LeoFilterTpl";
+    private static final String SHELL_FILTER_CHUNK = SHELL_PACKAGE + "LeoFilterChunkTpl";
+    private static final String SHELL_VALVE = SHELL_PACKAGE + "LeoValveTpl";
+    private static final String SHELL_VALVE_CHUNK = SHELL_PACKAGE + "LeoValveChunkTpl";
+    private static final String SHELL_LISTENER = SHELL_PACKAGE + "LeoListenerTpl";
+    private static final String SHELL_LISTENER_CHUNK = SHELL_PACKAGE + "LeoListenerChunkTpl";
+    private static final String SHELL_SERVLET = SHELL_PACKAGE + "LeoServletTpl";
+    private static final String SHELL_SERVLET_CHUNK = SHELL_PACKAGE + "LeoServletChunkTpl";
+    private static final String SHELL_WEBSOCKET = SHELL_PACKAGE + "LeoWebSocketTpl";
+    private static final String SHELL_INTERCEPTOR = SHELL_PACKAGE + "LeoInterceptorTpl";
+    private static final String SHELL_STRUCT2 = SHELL_PACKAGE + "LeoStruct2ActionTpl";
     private static final Map<ServerType, List<InjectorDescriptor>> BY_SERVER;
     private static final List<InjectorDescriptor> ALL;
 

@@ -3,6 +3,7 @@ package org.leo.ai.tools.puppetnode;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStep;
 import org.leo.core.entity.AiStepStatus;
@@ -40,7 +41,7 @@ public class PlanTools {
             @P("步骤超时毫秒，0 表示不启用（可选，默认 0）") long stepTimeoutMs) {
         AiThread thread = resolveThread();
         if (thread == null) {
-            throw new IllegalStateException("会话或线程不存在，无法创建计划");
+            throw sessionUnavailable("创建计划");
         }
         AiPlan plan = new AiPlan(title, goal, normalizeSteps(steps));
         if (stepTimeoutMs > 0) {
@@ -66,11 +67,14 @@ public class PlanTools {
             @P("结果摘要或原因（complete/fail/skip 时填写，start 时可留空）") String resultText) {
         AiThread thread = resolveThread();
         if (thread == null) {
-            throw new IllegalStateException("会话或线程不存在，无法更新计划");
+            throw sessionUnavailable("更新计划");
         }
         AiPlan plan = thread.getCurrentPlan();
         if (plan == null) {
-            throw new IllegalStateException("当前没有可更新的计划");
+            throw AiToolException.modelCorrectable(
+                    "PLAN_NOT_FOUND",
+                    "当前没有可更新的计划。",
+                    "先调用 createPlan 创建计划，再更新步骤。");
         }
 
         boolean ok;
@@ -80,13 +84,24 @@ public class PlanTools {
             case "complete" -> ok = plan.completeStep(stepIndex, text);
             case "fail"     -> ok = plan.failStep(stepIndex, text);
             case "skip"     -> ok = plan.skipStep(stepIndex, text);
-            default         -> { throw new IllegalArgumentException("无效的 action：" + action + "，可选值：start | complete | fail | skip"); }
+            default -> throw AiToolException.modelCorrectable(
+                    "INVALID_ACTION",
+                    "无效的 action：" + action
+                            + "，可选值：start | complete | fail | skip",
+                    "将 action 改为 start、complete、fail 或 skip。");
         }
         if (!ok) {
             if ("start".equals(action) && plan.getSteps().stream().anyMatch(s -> s.getIndex() == stepIndex)) {
-                throw new IllegalStateException("步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动。请先完成依赖步骤。");
+                throw AiToolException.modelCorrectable(
+                        "PLAN_DEPENDENCY_INCOMPLETE",
+                        "步骤 " + stepIndex
+                                + " 的依赖步骤尚未完成，无法启动。",
+                        "先完成该步骤的 dependsOn 依赖步骤，再重新启动。");
             }
-            throw new IllegalStateException("未找到指定步骤: " + stepIndex);
+            throw AiToolException.modelCorrectable(
+                    "PLAN_STEP_NOT_FOUND",
+                    "未找到指定步骤: " + stepIndex,
+                    "检查当前计划中的步骤索引后重新调用。");
         }
 
         emitPlanStep(thread, plan, stepIndex, action, text);
@@ -102,11 +117,14 @@ public class PlanTools {
             @P("最终结论") String finalSummary) {
         AiThread thread = resolveThread();
         if (thread == null) {
-            throw new IllegalStateException("会话或线程不存在，无法完成计划");
+            throw sessionUnavailable("完成计划");
         }
         AiPlan plan = thread.getCurrentPlan();
         if (plan == null) {
-            throw new IllegalStateException("当前没有可完成的计划");
+            throw AiToolException.modelCorrectable(
+                    "PLAN_NOT_FOUND",
+                    "当前没有可完成的计划。",
+                    "先调用 createPlan 创建计划；如果无需计划，请不要调用 completePlan。");
         }
         plan.complete(finalSummary);
         emitPlan(thread, plan, false);
@@ -173,6 +191,13 @@ public class PlanTools {
             if (thread != null) return thread;
         }
         return session.getActiveThread();
+    }
+
+    private AiToolException sessionUnavailable(String action) {
+        return AiToolException.userActionRequired(
+                "SESSION_OR_THREAD_UNAVAILABLE",
+                "会话或线程不存在，无法" + action + "。",
+                "不要重复调用；请向用户说明当前 AI/Puppet 会话需要重新建立。");
     }
 
     private AiThread resolveThreadByIds(String sessionId, String threadId) {

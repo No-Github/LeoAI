@@ -9,7 +9,7 @@ public class PuppetDatabaseConnection {
     private String connectionId;
     private String connectionName;
     private String puppetId;
-    private String dbType;
+    private String dialect;
     private String connectionSpec;
     private String username;
     private String password;
@@ -20,9 +20,6 @@ public class PuppetDatabaseConnection {
     private Integer maxConnections;
     private Integer timeoutSeconds;
     private String createUserId;
-    private String teamId;
-    private String scope;
-    private Integer isPublic;
     private Date createTime;
     private Date updateTime;
     private String description;
@@ -33,8 +30,6 @@ public class PuppetDatabaseConnection {
         testStatus = 0;
         maxConnections = 10;
         timeoutSeconds = 30;
-        isPublic = 0;
-        scope = "private";
         createTime = new Date();
         updateTime = new Date();
     }
@@ -45,8 +40,8 @@ public class PuppetDatabaseConnection {
     public void setConnectionName(String connectionName) { this.connectionName = connectionName; }
     public String getPuppetId() { return puppetId; }
     public void setPuppetId(String puppetId) { this.puppetId = puppetId; }
-    public String getDbType() { return dbType; }
-    public void setDbType(String dbType) { this.dbType = dbType; }
+    public String getDialect() { return dialect; }
+    public void setDialect(String dialect) { this.dialect = dialect; }
     public String getConnectionSpec() { return connectionSpec; }
     public void setConnectionSpec(String connectionSpec) { this.connectionSpec = connectionSpec; }
     public String getUsername() { return username; }
@@ -68,12 +63,6 @@ public class PuppetDatabaseConnection {
     public void setTimeoutSeconds(Integer timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
     public String getCreateUserId() { return createUserId; }
     public void setCreateUserId(String createUserId) { this.createUserId = createUserId; }
-    public String getTeamId() { return teamId; }
-    public void setTeamId(String teamId) { this.teamId = teamId; }
-    public String getScope() { return scope; }
-    public void setScope(String scope) { this.scope = scope; }
-    public Integer getIsPublic() { return isPublic; }
-    public void setIsPublic(Integer isPublic) { this.isPublic = isPublic; }
     public Date getCreateTime() { return createTime; }
     public void setCreateTime(Date createTime) { this.createTime = createTime; }
     public Date getUpdateTime() { return updateTime; }

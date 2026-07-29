@@ -37,99 +37,12 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enableWalMode();
-        rebuildLegacyEventJournal();
-        ensureTurnProtocolColumns();
-        ensureRunLeaseTokenColumn();
         validateAiConversationSchema();
         validateApiKeys();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             executeScript("sql/data.sql");
         }
-    }
-
-    private void ensureTurnProtocolColumns() throws SQLException {
-        try (Connection connection = dataSource.getConnection()) {
-            Set<String> columns = tableColumns(connection, "ai_turns");
-            if (columns.isEmpty()) return;
-            try (Statement statement = connection.createStatement()) {
-                addColumnIfMissing(statement, columns, "protocol_status",
-                        "ALTER TABLE ai_turns ADD COLUMN protocol_status "
-                                + "VARCHAR(16) NOT NULL DEFAULT 'completed'");
-                addColumnIfMissing(statement, columns, "dispatch_status",
-                        "ALTER TABLE ai_turns ADD COLUMN dispatch_status "
-                                + "VARCHAR(16) NOT NULL DEFAULT 'completed'");
-                addColumnIfMissing(statement, columns, "command_scope",
-                        "ALTER TABLE ai_turns ADD COLUMN command_scope VARCHAR(16)");
-                addColumnIfMissing(statement, columns, "command_json",
-                        "ALTER TABLE ai_turns ADD COLUMN command_json TEXT");
-                addColumnIfMissing(statement, columns, "client_user_message_id",
-                        "ALTER TABLE ai_turns ADD COLUMN client_user_message_id VARCHAR(128)");
-                addColumnIfMissing(statement, columns, "user_item_id",
-                        "ALTER TABLE ai_turns ADD COLUMN user_item_id VARCHAR(64)");
-                addColumnIfMissing(statement, columns, "assistant_item_id",
-                        "ALTER TABLE ai_turns ADD COLUMN assistant_item_id VARCHAR(64)");
-                addColumnIfMissing(statement, columns, "started_at",
-                        "ALTER TABLE ai_turns ADD COLUMN started_at INTEGER");
-                addColumnIfMissing(statement, columns, "interrupt_requested",
-                        "ALTER TABLE ai_turns ADD COLUMN interrupt_requested "
-                                + "INTEGER NOT NULL DEFAULT 0");
-                addColumnIfMissing(statement, columns, "error_message",
-                        "ALTER TABLE ai_turns ADD COLUMN error_message TEXT");
-                statement.executeUpdate("""
-                        CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_turns_client_message
-                        ON ai_turns(thread_id, client_user_message_id)
-                        WHERE client_user_message_id IS NOT NULL
-                        """);
-                statement.executeUpdate("DROP INDEX IF EXISTS uk_ai_turns_active_thread");
-                statement.executeUpdate("""
-                        CREATE UNIQUE INDEX uk_ai_turns_active_thread
-                        ON ai_turns(thread_id)
-                        WHERE dispatch_status IN ('running', 'cancelling')
-                        """);
-            }
-        }
-    }
-
-    private void addColumnIfMissing(Statement statement,
-                                    Set<String> columns,
-                                    String column,
-                                    String sql) throws SQLException {
-        if (!columns.contains(column)) {
-            statement.executeUpdate(sql);
-            columns.add(column);
-        }
-    }
-
-    private void ensureRunLeaseTokenColumn() throws SQLException {
-        try (Connection connection = dataSource.getConnection()) {
-            Set<String> columns = tableColumns(connection, "ai_runs");
-            if (columns.isEmpty() || columns.contains("lease_token")) return;
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate(
-                        "ALTER TABLE ai_runs ADD COLUMN lease_token VARCHAR(64)");
-            }
-            log.info("已为 ai_runs 增加执行租约 fencing token");
-        }
-    }
-
-    /**
-     * 事件日志属于可重建的运行态数据。旧版本 ai_events 缺少稳定路由字段时只重建
-     * 该表，不影响线程、消息、模型配置及其他业务数据。
-     */
-    private void rebuildLegacyEventJournal() throws SQLException {
-        Set<String> required = Set.of(
-                "event_id", "thread_id", "run_id", "turn_id", "item_id",
-                "subagent_invocation_id", "event_seq", "timestamp", "name", "data_json");
-        try (Connection connection = dataSource.getConnection()) {
-            Set<String> actual = tableColumns(connection, "ai_events");
-            if (actual.isEmpty() || actual.containsAll(required)) return;
-            log.info("重建旧版 AI 事件日志以启用持久化 Turn/Item 游标");
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("DROP TABLE ai_events");
-            }
-        }
-        executeScript("sql/schema.sql");
     }
 
     private void executeScript(String resource) throws SQLException {
@@ -190,6 +103,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireColumns(connection, "ai_messages",
                     Set.of("message_id", "thread_id", "turn_id", "run_id",
                             "message_seq", "status", "role"));
+            requireNullableColumn(connection, "ai_messages", "run_id");
             requireColumns(connection, "ai_events",
                     Set.of("event_id", "thread_id", "run_id", "turn_id", "item_id",
                             "subagent_invocation_id", "event_seq", "timestamp",
@@ -211,6 +125,22 @@ public class DatabaseInitializer implements CommandLineRunner {
             throw new IllegalStateException(
                     "AI 数据库结构已过期，缺少 " + table + "." + missing
                             + "；当前版本不兼容旧 AI 对话数据，请重建数据库");
+        }
+    }
+
+    private void requireNullableColumn(Connection connection,
+                                       String table,
+                                       String column) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(
+                     "PRAGMA table_info('" + table + "')")) {
+            while (result.next()) {
+                if (!column.equals(result.getString("name"))) continue;
+                if (result.getInt("notnull") == 0) return;
+                throw new IllegalStateException(
+                        "AI 数据库结构已过期，" + table + "." + column
+                                + " 必须允许 NULL；当前版本不兼容旧 AI 对话数据，请重建数据库");
+            }
         }
     }
 

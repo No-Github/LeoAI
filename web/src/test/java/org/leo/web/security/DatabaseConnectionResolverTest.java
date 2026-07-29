@@ -24,7 +24,8 @@ class DatabaseConnectionResolverTest {
         PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
         Map<String, Object> supplied = new LinkedHashMap<String, Object>();
-        supplied.put("type", "mysql");
+        supplied.put("dialect", "mysql");
+        supplied.put("connectionMode", "standard");
         supplied.put("host", "db.internal");
 
         Map<String, Object> resolved = resolver.resolve(supplied, "puppet-1", null);
@@ -35,7 +36,7 @@ class DatabaseConnectionResolverTest {
     }
 
     @Test
-    void resolvesConnectionReferencesOnlyAfterPuppetAndPermissionChecks() {
+    void resolvesConnectionReferencesOnlyAfterPuppetBindingChecks() {
         PuppetDatabaseConnectionService service = mock(PuppetDatabaseConnectionService.class);
         DatabaseConnectionResolver resolver = new DatabaseConnectionResolver(service);
         PuppetDatabaseConnection saved = new PuppetDatabaseConnection();
@@ -45,7 +46,8 @@ class DatabaseConnectionResolverTest {
         saved.setStatus(1);
         User owner = user("owner");
         DatabaseConnectionSpec spec = DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "host", "db.internal", "port", 3306,
+                "dialect", "mysql", "connectionMode", "standard",
+                "host", "db.internal", "port", 3306,
                 "database", "inventory", "username", "app", "password", "secret"));
         when(service.findById("connection-1")).thenReturn(saved);
         when(service.toActiveConnectionSpec(saved)).thenReturn(spec);

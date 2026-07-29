@@ -112,10 +112,10 @@ class ShellGeneratorConfigTest {
 
         assertDoesNotThrow(() -> validateInjector(filter));
         assertDoesNotThrow(() -> validateInjector(valve));
-        assertEquals("LeoFilterChunkTpl",
+        assertEquals("org.leo.jmg.mem.shell.http.LeoFilterChunkTpl",
                 GeneratorCatalog.resolve(
                         "Tomcat", "FilterInjector", "httpchunk").getShellTemplateName());
-        assertEquals("LeoValveChunkTpl",
+        assertEquals("org.leo.jmg.mem.shell.http.LeoValveChunkTpl",
                 GeneratorCatalog.resolve(
                         "Tomcat", "ValveInjector", "httpchunk").getShellTemplateName());
         assertNull(GeneratorCatalog.resolve(

@@ -32,13 +32,16 @@ public class PlatformAiThreadService {
     private final AiModelConfigService modelConfigService;
     private final AiConversationStoreService conversationStore;
     private final PlatformAiAgentRegistry agentRegistry;
+    private final AiTurnProtocolService turnProtocolService;
 
     public PlatformAiThreadService(AiModelConfigService modelConfigService,
                                    AiConversationStoreService conversationStore,
-                                   PlatformAiAgentRegistry agentRegistry) {
+                                   PlatformAiAgentRegistry agentRegistry,
+                                   AiTurnProtocolService turnProtocolService) {
         this.modelConfigService = modelConfigService;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
+        this.turnProtocolService = turnProtocolService;
     }
 
     public AgentInfoResponse createAgent(HttpSession httpSession, User user,
@@ -97,6 +100,11 @@ public class PlatformAiThreadService {
             item.put("runStatus",
                     runtime != null ? runtime.getRunStatus() : record.getRunStatus());
             item.put("executing", runtime != null && runtime.isExecuting());
+            AiTurnProtocolService.ThreadSnapshot snapshot =
+                    turnProtocolService.snapshotThread(
+                    record.getThreadId(),
+                    String.valueOf(item.get("runStatus")));
+            if (snapshot != null) item.putAll(snapshot.toMap());
             item.put("mode", runtime != null ? runtime.getMode() : record.getMode());
             item.put("configId", record.getConfigId());
             item.put("configName", record.getConfigName());
@@ -208,15 +216,15 @@ public class PlatformAiThreadService {
                 conversationStore.findLastEventSeq(threadId));
         String runStatus = state != null && state.isExecuting()
                 ? state.getRunStatus() : persisted.getRunStatus();
+        AiTurnProtocolService.ThreadSnapshot protocolSnapshot =
+                turnProtocolService.snapshotThread(threadId, runStatus);
         data.put("lastSeq", lastSeq);
-        data.put("runStatus", runStatus);
+        data.putAll(protocolSnapshot.toMap());
         if (state != null) {
             data.putAll(runtimeSnapshot(state));
             data.put("lastSeq", lastSeq);
-            data.put("runStatus", runStatus);
+            data.putAll(protocolSnapshot.toMap());
         } else {
-            data.put("status", runStatus);
-            data.put("executing", false);
             data.put("elapsedMs", 0L);
             data.put("stopReason", null);
         }

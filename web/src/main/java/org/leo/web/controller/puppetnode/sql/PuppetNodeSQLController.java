@@ -21,6 +21,7 @@ import org.leo.web.dto.puppetnode.sql.SqlRequests.ExportTaskRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.InsertRowRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.MetadataRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.QueryTableRequest;
+import org.leo.web.dto.puppetnode.sql.SqlRequests.RuntimeCapabilitiesRequest;
 import org.leo.web.dto.puppetnode.sql.SqlRequests.UpdateRowRequest;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.DatabaseConnectionResolver;
@@ -84,19 +85,23 @@ public class PuppetNodeSQLController {
             SqlCapable node = sqlNode(request);
             Map<String, Object> connection = resolveConnection(request);
             String connectionId = connectionReference(request);
-            try {
-                Map<String, Object> result = puppetNodeSqlService.testConnection(node, connection);
-                if (connectionId != null) {
-                    recordConnectionTestResult(connectionId, true, successfulTestMessage(result));
-                }
-                return ApiResponse.success("连接成功", result);
-            } catch (Exception e) {
-                if (connectionId != null) {
-                    recordConnectionTestResult(connectionId, false, e.getMessage());
-                }
-                throw e;
+            Map<String, Object> result = puppetNodeSqlService.testConnection(node, connection);
+            boolean success = Boolean.TRUE.equals(result.get("success"));
+            if (connectionId != null) {
+                recordConnectionTestResult(connectionId, success,
+                        success ? successfulTestMessage(result)
+                                : String.valueOf(result.getOrDefault("message", "连接失败")));
             }
+            return ApiResponse.success(success ? "连接成功" : "连接失败", result);
         });
+    }
+
+    @PostMapping("/runtime-capabilities")
+    public Map<String, Object> runtimeCapabilities(@RequestBody RuntimeCapabilitiesRequest request) {
+        return sqlCall("数据库运行时能力探测失败", () -> ApiResponse.success(
+                "ok",
+                puppetNodeSqlService.getRuntimeCapabilities(
+                        sqlNode(request), resolveConnection(request))));
     }
 
     @GetMapping("/dialects")
@@ -527,7 +532,7 @@ public class PuppetNodeSQLController {
 
     private void putConnectionAuditParams(Map<String, Object> params, ConnectionPayload request) {
         Map<String, Object> options = request.connectionOptions();
-        params.put("dbType", firstText(options, "type", null));
+        params.put("dbDialect", firstText(options, "dialect", null));
         params.put("dbHost", firstText(options, "host", null));
         params.put("dbUser", firstText(options, "username", null));
         params.put("dbTarget", connectionTarget(options));
@@ -547,7 +552,7 @@ public class PuppetNodeSQLController {
         }
         Map<String, Object> options = request.connectionOptions();
         StringBuilder path = new StringBuilder();
-        appendPathPart(path, firstText(options, "type", null));
+        appendPathPart(path, firstText(options, "dialect", null));
         appendPathPart(path, connectionTarget(options));
         appendPathPart(path, database);
         appendPathPart(path, table);

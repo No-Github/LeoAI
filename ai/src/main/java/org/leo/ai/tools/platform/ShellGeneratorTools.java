@@ -5,6 +5,7 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
 import org.leo.core.entity.Puppet;
@@ -180,10 +181,16 @@ public class ShellGeneratorTools {
 
         String effectiveProtocol = isBlank(protocol) ? "http" : protocol.trim().toLowerCase(Locale.ROOT);
         if (!"http".equals(effectiveProtocol)) {
-            throw new IllegalArgumentException("PHP WebShell 当前仅支持 http 协议，当前值: " + protocol);
+            throw AiToolException.modelCorrectable(
+                    "UNSUPPORTED_CAPABILITY",
+                    "PHP WebShell 当前仅支持 http 协议，当前值: " + protocol,
+                    "先调用 getPuppetShellConfig；仅在目标 protocol=http 时生成 PHP WebShell。");
         }
         if (isBlank(headerName) != isBlank(headerValue)) {
-            throw new IllegalArgumentException("headerName 与 headerValue 必须同时设置或同时留空");
+            throw AiToolException.modelCorrectable(
+                    "CROSS_FIELD_CONSTRAINT",
+                    "headerName 与 headerValue 必须同时设置或同时留空。",
+                    "同时提供两个字段，或将两个字段都留空。");
         }
 
         Map<String, Object> options = new LinkedHashMap<>();
@@ -252,11 +259,15 @@ public class ShellGeneratorTools {
             try {
                 validateMutatedTemplate(mutated);
                 break; // 验证通过，退出重试
-            } catch (IllegalStateException e) {
+            } catch (AiToolException e) {
                 lastError = e.getMessage();
                 if (attempt == maxAttempts) {
-                    throw new IllegalStateException(
-                            "经过 " + maxAttempts + " 次尝试仍未生成合法模板，最后一次错误：" + lastError);
+                    throw AiToolException.modelCorrectable(
+                            "GENERATED_CONTENT_INVALID",
+                            "经过 " + maxAttempts
+                                    + " 次尝试仍未生成合法模板，最后一次错误："
+                                    + lastError,
+                            "调整 mutationHint 后重新调用；不要直接使用无效模板。");
                 }
             }
         }
@@ -444,14 +455,24 @@ public class ShellGeneratorTools {
 
     private void validateMutatedTemplate(String template) {
         if (template == null || template.isBlank()) {
-            throw new IllegalStateException("LLM 返回了空模板，请重试");
+            throw invalidGeneratedTemplate(
+                    "LLM 返回了空模板。");
         }
         if (!template.contains("{{base64Str}}")) {
-            throw new IllegalStateException("LLM 生成的模板缺少 {{base64Str}} 占位符，模板无效");
+            throw invalidGeneratedTemplate(
+                    "LLM 生成的模板缺少 {{base64Str}} 占位符。");
         }
         if (!template.contains("<%")) {
-            throw new IllegalStateException("LLM 生成的模板不包含 JSP scriptlet 标记，模板无效");
+            throw invalidGeneratedTemplate(
+                    "LLM 生成的模板不包含 JSP scriptlet 标记。");
         }
+    }
+
+    private AiToolException invalidGeneratedTemplate(String message) {
+        return AiToolException.modelCorrectable(
+                "GENERATED_CONTENT_INVALID",
+                message,
+                "调整 mutationHint 后重新调用模板变异工具；不要直接使用无效模板。");
     }
 
     private String stripCodeFences(String text) {

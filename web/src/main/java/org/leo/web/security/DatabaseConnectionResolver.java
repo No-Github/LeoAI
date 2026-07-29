@@ -47,9 +47,6 @@ public final class DatabaseConnectionResolver {
                 || !Objects.equals(saved.getPuppetId(), expectedPuppetId)) {
             throw ApiException.forbidden("数据库连接配置与当前 Puppet 不匹配");
         }
-        if (!DatabaseConnectionPermissionPolicy.canUseCredentials(saved, currentUser)) {
-            throw ApiException.forbidden("无权限使用此数据库连接");
-        }
         return connectionService.toActiveConnectionSpec(saved).toMap();
     }
 

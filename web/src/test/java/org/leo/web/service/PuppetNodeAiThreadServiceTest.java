@@ -71,7 +71,8 @@ class PuppetNodeAiThreadServiceTest {
                 mock(AiModelConfigService.class),
                 conversationStore,
                 sessionWarmupService,
-                mock(PuppetNodeAiAgentRegistry.class));
+                mock(PuppetNodeAiAgentRegistry.class),
+                mock(AiTurnProtocolService.class));
         return new Fixture(service, conversationStore, sessionWarmupService);
     }
 

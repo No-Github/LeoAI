@@ -87,7 +87,8 @@ public class PuppetNodeAiController {
         try {
             reservation = turnProtocolService.begin(
                     threadId, body.clientUserMessageId(),
-                    command.getScope(), command.toJson());
+                    command.getScope(), command.toJson(),
+                    message, body.attachments());
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
@@ -120,20 +121,19 @@ public class PuppetNodeAiController {
                 body != null ? body.sessionId() : null, "缺少 sessionId");
         String threadId = requiredText(
                 body != null ? body.threadId() : null, "缺少 threadId");
-        String turnId = requiredText(
-                body != null ? body.turnId() : null, "缺少 turnId");
+        String turnId = body != null ? body.turnId() : null;
         PuppetNodeSession session = requiredSession(sessionId);
         AiThread thread = aiThreadService.requireThread(session, threadId);
         try {
-            turnProtocolService.requestInterrupt(
-                    threadId, turnId);
+            AiTurnProtocolService.TurnSnapshot turn =
+                    turnProtocolService.requestInterrupt(threadId, turnId);
+            if (turn.id().equals(thread.getActiveTurnId())) {
+                thread.stop();
+            }
+            return ApiResponse.success(Map.of("turn", turn.toMap()));
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
-        if (turnId.equals(thread.getActiveTurnId())) {
-            thread.stop();
-        }
-        return ApiResponse.success(Map.of());
     }
 
     // ─── 线程管理 ─────────────────────────────────────────────────────────────

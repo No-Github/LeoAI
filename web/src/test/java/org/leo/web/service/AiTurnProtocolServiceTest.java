@@ -4,6 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiTurnRecord;
 
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,7 +26,8 @@ class AiTurnProtocolServiceTest {
         AiTurnProtocolService service = new AiTurnProtocolService(store);
 
         AiTurnProtocolService.Reservation reservation = service.begin(
-                "thread-1", "client-1", "platform", "{\"message\":\"hello\"}");
+                "thread-1", "client-1", "platform",
+                "{\"message\":\"hello\"}", "hello", null);
 
         assertTrue(reservation.reused());
     }
@@ -37,8 +41,35 @@ class AiTurnProtocolServiceTest {
         AiTurnProtocolService service = new AiTurnProtocolService(store);
 
         assertThrows(IllegalStateException.class, () -> service.begin(
-                "thread-1", "client-1", "platform", "{\"message\":\"different\"}"));
-        verify(store, never()).reserveProtocolTurn(any());
+                "thread-1", "client-1", "platform",
+                "{\"message\":\"different\"}", "different", null));
+        verify(store, never()).reserveProtocolTurn(any(), any(), any());
+    }
+
+    @Test
+    void resolvesTheAuthoritativeActiveTurnWhenClientHasNoTurnId() {
+        AiConversationStoreService store =
+                mock(AiConversationStoreService.class);
+        AiTurnRecord active = existingTurn();
+        active.setDispatchStatus("running");
+        when(store.listInProgressProtocolTurns("thread-1"))
+                .thenReturn(List.of(active));
+        AiTurnRecord cancelling = existingTurn();
+        cancelling.setDispatchStatus("cancelling");
+        cancelling.setInterruptRequested(true);
+        when(store.findProtocolTurn("turn-1")).thenReturn(active);
+        when(store.requestProtocolTurnInterrupt("thread-1", "turn-1"))
+                .thenReturn(cancelling);
+        AiTurnProtocolService service =
+                new AiTurnProtocolService(store);
+
+        AiTurnProtocolService.TurnSnapshot result =
+                service.requestInterrupt("thread-1", null);
+
+        assertEquals("turn-1", result.id());
+        assertEquals("cancelling", result.status());
+        verify(store).requestProtocolTurnInterrupt(
+                "thread-1", "turn-1");
     }
 
     private AiTurnRecord existingTurn() {

@@ -781,6 +781,36 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
+    public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("requestedDriver", requestedPdoDriver(connection));
+        return invoke("DatabaseComponent", "capabilities", params);
+    }
+
+    private String requestedPdoDriver(Map<String, Object> connection) {
+        if (connection == null) return "";
+        Object runtimeOptions = connection.get("runtimeOptions");
+        if (runtimeOptions instanceof Map<?, ?> runtimes) {
+            Object phpOptions = runtimes.get("php");
+            if (phpOptions instanceof Map<?, ?> php) {
+                Object configured = php.get("pdoDriver");
+                if (configured != null && !String.valueOf(configured).isBlank()) {
+                    return String.valueOf(configured).trim().toLowerCase();
+                }
+            }
+        }
+        String dialect = String.valueOf(connection.getOrDefault("dialect", "")).trim().toLowerCase();
+        return switch (dialect) {
+            case "mysql" -> "mysql";
+            case "postgresql" -> "pgsql";
+            case "sqlserver" -> "sqlsrv";
+            case "oracle" -> "oci";
+            case "sqlite" -> "sqlite";
+            default -> "";
+        };
+    }
+
+    @Override
     public Map<String, Object> invokePlugin(String pluginId, String source,
                                             Map<String, Object> params) throws Exception {
         Map<String, Object> payload = new LinkedHashMap<>();

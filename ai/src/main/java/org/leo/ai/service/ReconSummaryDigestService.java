@@ -5,6 +5,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.leo.ai.agent.AiAsyncExecutionConfig;
 import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,7 +65,7 @@ public class ReconSummaryDigestService {
     /**
      * 异步生成 digest（不阻塞调用线程）。
      */
-    @Async
+    @Async(AiAsyncExecutionConfig.BACKGROUND_EXECUTOR)
     public void generateAndSaveAsync(PuppetNodeSession session) {
         if (session == null) return;
         String summary = session.getReconSummary();

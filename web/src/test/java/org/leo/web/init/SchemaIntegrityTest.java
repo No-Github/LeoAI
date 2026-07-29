@@ -55,6 +55,13 @@ class SchemaIntegrityTest {
                           (thread_id, owner_id, lease_token, acquired_at, heartbeat_at, expires_at)
                         VALUES ('thread-1', 'owner-1', 'lease-1', 1, 1, 10)
                         """);
+                statement.executeUpdate("""
+                        INSERT INTO ai_messages
+                          (message_id, thread_id, turn_id, run_id, message_seq, status,
+                           role, content, timestamp)
+                        VALUES ('message-queued', 'thread-1', 'turn-1', NULL, 1, 'pending',
+                                'user', 'queued command', 1)
+                        """);
                 assertEquals(0, statement.executeUpdate("""
                         INSERT INTO ai_thread_leases
                           (thread_id, owner_id, lease_token, acquired_at, heartbeat_at, expires_at)
@@ -80,11 +87,15 @@ class SchemaIntegrityTest {
                           (run_id, thread_id, turn_id, status, started_at, trace_id)
                         VALUES ('run-1', 'thread-1', 'turn-1', 'running', 1, 'trace-1')
                         """);
+                assertEquals(1, statement.executeUpdate("""
+                        UPDATE ai_messages SET run_id='run-1'
+                        WHERE message_id='message-queued' AND run_id IS NULL
+                        """));
                 statement.executeUpdate("""
                         INSERT INTO ai_messages
                           (message_id, thread_id, turn_id, run_id, message_seq, status,
                            role, content, timestamp)
-                        VALUES ('message-1', 'thread-1', 'turn-1', 'run-1', 1, 'pending',
+                        VALUES ('message-1', 'thread-1', 'turn-1', 'run-1', 2, 'pending',
                                 'user', 'hello', 1)
                         """);
                 statement.executeUpdate("""

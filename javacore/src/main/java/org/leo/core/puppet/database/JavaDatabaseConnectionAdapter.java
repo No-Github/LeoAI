@@ -10,11 +10,17 @@ import java.util.StringJoiner;
 public final class JavaDatabaseConnectionAdapter {
 
     public Map<String, Object> adapt(DatabaseConnectionSpec connection) {
-        Map<String, Object> override = connection.nativeOptions("java");
+        Map<String, Object> override = connection.runtimeOptions("java");
         String driverClass = text(override.get("driverClass"));
         String jdbcUrl = text(override.get("jdbcUrl"));
-        if (driverClass.isBlank()) driverClass = defaultDriver(connection.getType());
-        if (jdbcUrl.isBlank()) jdbcUrl = buildUrl(connection);
+        if (DatabaseConnectionSpec.MODE_CUSTOM.equals(connection.getConnectionMode())) {
+            if (driverClass.isBlank() || jdbcUrl.isBlank()) {
+                throw new IllegalArgumentException("当前 Java Puppet 未配置自定义 JDBC 连接");
+            }
+        } else {
+            if (driverClass.isBlank()) driverClass = defaultDriver(connection.getDialect());
+            if (jdbcUrl.isBlank()) jdbcUrl = buildUrl(connection);
+        }
 
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("provider", "jdbc");
@@ -23,6 +29,32 @@ public final class JavaDatabaseConnectionAdapter {
         result.put("username", connection.getUsername());
         result.put("password", connection.getPassword());
         result.put("timeoutSeconds", connection.getTimeoutSeconds());
+        result.put("connectionProperties", connectionProperties(connection, override));
+        copyIfPresent(override, result, "queryTimeoutSeconds");
+        copyIfPresent(override, result, "maxRows");
+        copyIfPresent(override, result, "maxResultBytes");
+        copyIfPresent(override, result, "maxCellBytes");
+        copyIfPresent(override, result, "fetchSize");
+        return result;
+    }
+
+    private Map<String, Object> connectionProperties(DatabaseConnectionSpec connection,
+                                                     Map<String, Object> override) {
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.putAll(connection.getOptions());
+        result.putAll(map(override.get("properties")));
+        result.putAll(map(override.get("connectionProperties")));
+        return result;
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key) && source.get(key) != null) target.put(key, source.get(key));
+    }
+
+    private Map<String, Object> map(Object value) {
+        if (!(value instanceof Map<?, ?> source)) return Map.of();
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        source.forEach((key, item) -> result.put(String.valueOf(key), item));
         return result;
     }
 
@@ -38,7 +70,7 @@ public final class JavaDatabaseConnectionAdapter {
     }
 
     private String buildUrl(DatabaseConnectionSpec connection) {
-        String type = connection.getType();
+        String type = connection.getDialect();
         if ("sqlite".equals(type)) return "jdbc:sqlite:" + required(connection.getFile(), "connection.file");
         String host = required(connection.getHost(), "connection.host");
         int port = connection.getPort() == null ? defaultPort(type) : connection.getPort();

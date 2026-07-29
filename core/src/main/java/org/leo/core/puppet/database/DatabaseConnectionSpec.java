@@ -2,18 +2,24 @@ package org.leo.core.puppet.database;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Runtime-neutral database connection description.
  *
- * <p>The shared SQL management layer owns database semantics only. JDBC and PDO
- * details belong to their runtime modules and may be supplied explicitly through
- * {@code nativeOptions} for advanced, runtime-specific overrides.</p>
+ * <p>{@code dialect} controls SQL generation, while {@code connectionMode}
+ * and {@code runtimeOptions} control how a concrete Puppet runtime connects.
+ * A custom connector may therefore reuse a built-in SQL dialect without
+ * pretending to be that database vendor.</p>
  */
 public final class DatabaseConnectionSpec {
 
-    private final String type;
+    public static final String MODE_STANDARD = "standard";
+    public static final String MODE_CUSTOM = "custom";
+
+    private final String dialect;
+    private final String connectionMode;
     private final String variant;
     private final String host;
     private final Integer port;
@@ -25,9 +31,11 @@ public final class DatabaseConnectionSpec {
     private final String password;
     private final Integer timeoutSeconds;
     private final Map<String, Object> options;
-    private final Map<String, Object> nativeOptions;
+    private final Map<String, Object> dialectOptions;
+    private final Map<String, Object> runtimeOptions;
 
-    public DatabaseConnectionSpec(String type,
+    public DatabaseConnectionSpec(String dialect,
+                                  String connectionMode,
                                   String variant,
                                   String host,
                                   Integer port,
@@ -39,8 +47,10 @@ public final class DatabaseConnectionSpec {
                                   String password,
                                   Integer timeoutSeconds,
                                   Map<String, Object> options,
-                                  Map<String, Object> nativeOptions) {
-        this.type = normalize(type);
+                                  Map<String, Object> dialectOptions,
+                                  Map<String, Object> runtimeOptions) {
+        this.dialect = normalize(dialect);
+        this.connectionMode = normalize(connectionMode);
         this.variant = normalize(variant);
         this.host = trimToNull(host);
         this.port = port;
@@ -52,34 +62,36 @@ public final class DatabaseConnectionSpec {
         this.password = password == null ? "" : password;
         this.timeoutSeconds = timeoutSeconds;
         this.options = immutableCopy(options);
-        this.nativeOptions = immutableCopy(nativeOptions);
+        this.dialectOptions = immutableCopy(dialectOptions);
+        this.runtimeOptions = immutableCopy(runtimeOptions);
         validate();
     }
 
     public static DatabaseConnectionSpec fromMap(Map<String, Object> source) {
         if (source == null) throw new IllegalArgumentException("connection 不能为空");
-        Map<String, Object> nativeOptions = map(source.get("nativeOptions"));
-
         return new DatabaseConnectionSpec(
-                string(source.get("type")),
+                string(source.get("dialect")),
+                string(source.get("connectionMode")),
                 string(source.get("variant")),
                 string(source.get("host")),
                 integer(source.get("port")),
-                firstString(source, "database", "databaseName"),
+                string(source.get("database")),
                 string(source.get("service")),
                 string(source.get("sid")),
-                firstString(source, "file", "path"),
-                firstString(source, "username", "user"),
+                string(source.get("file")),
+                string(source.get("username")),
                 string(source.get("password")),
                 integer(source.get("timeoutSeconds")),
                 map(source.get("options")),
-                nativeOptions
+                map(source.get("dialectOptions")),
+                map(source.get("runtimeOptions"))
         );
     }
 
     public Map<String, Object> toMap() {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
-        result.put("type", type);
+        result.put("dialect", dialect);
+        result.put("connectionMode", connectionMode);
         result.put("variant", variant);
         result.put("host", host);
         result.put("port", port);
@@ -91,15 +103,17 @@ public final class DatabaseConnectionSpec {
         result.put("password", password);
         result.put("timeoutSeconds", timeoutSeconds);
         result.put("options", options);
-        result.put("nativeOptions", nativeOptions);
+        result.put("dialectOptions", dialectOptions);
+        result.put("runtimeOptions", runtimeOptions);
         return result;
     }
 
-    public Map<String, Object> nativeOptions(String runtime) {
-        return map(nativeOptions.get(normalize(runtime)));
+    public Map<String, Object> runtimeOptions(String runtime) {
+        return map(runtimeOptions.get(normalize(runtime)));
     }
 
-    public String getType() { return type; }
+    public String getDialect() { return dialect; }
+    public String getConnectionMode() { return connectionMode; }
     public String getVariant() { return variant; }
     public String getHost() { return host; }
     public Integer getPort() { return port; }
@@ -111,20 +125,58 @@ public final class DatabaseConnectionSpec {
     public String getPassword() { return password; }
     public Integer getTimeoutSeconds() { return timeoutSeconds; }
     public Map<String, Object> getOptions() { return options; }
-    public Map<String, Object> getNativeOptions() { return nativeOptions; }
+    public Map<String, Object> getDialectOptions() { return dialectOptions; }
+    public Map<String, Object> getRuntimeOptions() { return runtimeOptions; }
 
     private void validate() {
-        if (type.isBlank()) throw new IllegalArgumentException("connection.type 不能为空");
-        if ("sqlite".equals(type)) {
-            if (file == null && string(nativeOptions("java").get("jdbcUrl")).isBlank()
-                    && string(nativeOptions("php").get("dsn")).isBlank()) {
-                throw new IllegalArgumentException("SQLite connection.file 不能为空");
-            }
+        if (dialect.isBlank()) throw new IllegalArgumentException("connection.dialect 不能为空");
+        if (!MODE_STANDARD.equals(connectionMode) && !MODE_CUSTOM.equals(connectionMode)) {
+            throw new IllegalArgumentException("connection.connectionMode 必须是 standard 或 custom");
+        }
+        if (timeoutSeconds != null && (timeoutSeconds < 1 || timeoutSeconds > 300)) {
+            throw new IllegalArgumentException("connection.timeoutSeconds 必须在 1 到 300 之间");
+        }
+        if (port != null && (port < 1 || port > 65535)) {
+            throw new IllegalArgumentException("connection.port 无效");
+        }
+
+        if (MODE_CUSTOM.equals(connectionMode)) {
+            validateCustomRuntimeOptions();
             return;
         }
-        boolean nativeOnly = !nativeOptions("java").isEmpty() || !nativeOptions("php").isEmpty();
-        if (host == null && !nativeOnly) throw new IllegalArgumentException("connection.host 不能为空");
-        if (port != null && (port < 1 || port > 65535)) throw new IllegalArgumentException("connection.port 无效");
+        if ("generic".equals(dialect)) {
+            throw new IllegalArgumentException("generic 方言必须使用 custom 连接模式");
+        }
+        if ("sqlite".equals(dialect)) {
+            if (file == null) throw new IllegalArgumentException("SQLite connection.file 不能为空");
+        } else if (host == null) {
+            throw new IllegalArgumentException("connection.host 不能为空");
+        }
+    }
+
+    private void validateCustomRuntimeOptions() {
+        Map<String, Object> java = runtimeOptions("java");
+        Map<String, Object> php = runtimeOptions("php");
+        boolean javaConfigured = completePair(java, "driverClass", "jdbcUrl", "Java");
+        boolean phpConfigured = completePair(php, "pdoDriver", "dsn", "PHP");
+        if (!javaConfigured && !phpConfigured) {
+            throw new IllegalArgumentException(
+                    "custom 连接至少需要完整配置 Java(driverClass、jdbcUrl) 或 PHP(pdoDriver、dsn)");
+        }
+    }
+
+    private boolean completePair(Map<String, Object> values,
+                                 String firstKey,
+                                 String secondKey,
+                                 String runtime) {
+        String first = string(values.get(firstKey));
+        String second = string(values.get(secondKey));
+        if (first.isBlank() && second.isBlank()) return false;
+        if (first.isBlank() || second.isBlank()) {
+            throw new IllegalArgumentException(runtime + " 自定义连接必须同时配置 "
+                    + firstKey + " 和 " + secondKey);
+        }
+        return true;
     }
 
     private static Map<String, Object> immutableCopy(Map<String, Object> value) {
@@ -140,11 +192,6 @@ public final class DatabaseConnectionSpec {
         return result;
     }
 
-    private static String firstString(Map<String, Object> source, String first, String second) {
-        String value = string(source.get(first));
-        return value.isBlank() ? string(source.get(second)) : value;
-    }
-
     private static Integer integer(Object value) {
         if (value instanceof Number number) return number.intValue();
         String text = string(value);
@@ -154,7 +201,7 @@ public final class DatabaseConnectionSpec {
     }
 
     private static String normalize(String value) {
-        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static String trimToNull(String value) {

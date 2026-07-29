@@ -26,28 +26,28 @@ public final class DatabaseConnectionController {
         this.managementService = managementService;
     }
 
-    @PostMapping({"/database-connections", "/puppet-jdbc"})
+    @PostMapping("/database-connections")
     public HashMap<String, Object> save(HttpServletRequest request,
                                         @RequestBody HashMap<String, Object> params) {
         User user = requireUser(request);
         return ApiResponse.success(managementService.save(user, requirePuppetId(params), params));
     }
 
-    @PostMapping({"/database-connections/list", "/puppet-jdbc/list"})
+    @PostMapping("/database-connections/list")
     public HashMap<String, Object> list(HttpServletRequest request,
                                         @RequestBody HashMap<String, Object> params) {
-        return ApiResponse.success(managementService.listVisible(
+        return ApiResponse.success(managementService.listByPuppet(
                 requirePuppetId(params), requireUser(request)));
     }
 
-    @PostMapping({"/database-connections/delete", "/puppet-jdbc/delete"})
+    @PostMapping("/database-connections/delete")
     public HashMap<String, Object> delete(HttpServletRequest request,
                                           @RequestBody HashMap<String, Object> params) {
-        managementService.delete(connectionId(params), requireUser(request));
+        managementService.delete(connectionId(params), requirePuppetId(params), requireUser(request));
         return ApiResponse.success();
     }
 
-    @PostMapping({"/database-connections/status", "/puppet-jdbc/status"})
+    @PostMapping("/database-connections/status")
     public HashMap<String, Object> updateStatus(HttpServletRequest request,
                                                 @RequestBody HashMap<String, Object> params) {
         Object enabled = params == null ? null : params.get("enabled");
@@ -55,7 +55,7 @@ public final class DatabaseConnectionController {
             throw ApiException.badRequest("enabled必须是布尔值");
         }
         Map<String, Object> result = managementService.setEnabled(
-                connectionId(params), value, requireUser(request));
+                connectionId(params), requirePuppetId(params), value, requireUser(request));
         return ApiResponse.success(result);
     }
 
@@ -78,8 +78,7 @@ public final class DatabaseConnectionController {
 
     private String connectionId(Map<String, Object> params) {
         if (params == null) throw ApiException.badRequest("params不能为空");
-        String id = text(params.get("connectionId"));
-        return id == null ? text(params.get("connId")) : id;
+        return text(params.get("connectionId"));
     }
 
     private String text(Object value) {

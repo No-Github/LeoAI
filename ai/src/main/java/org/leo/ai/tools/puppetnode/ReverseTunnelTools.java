@@ -1,6 +1,7 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.puppet.capability.ReverseTunnelCapable;
@@ -74,7 +75,10 @@ public class ReverseTunnelTools {
         ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
         Socks5ProxyStatistics.StatisticsSnapshot snapshot = puppet.getReverseTunnelStatistics(listenId);
         if (snapshot == null) {
-            throw new IllegalStateException("反向隧道未启动或不存在: " + listenId);
+            throw AiToolException.modelCorrectable(
+                    "RESOURCE_NOT_FOUND",
+                    "反向隧道未启动或不存在: " + listenId,
+                    "先调用 listReverseTunnels 获取当前有效 listenId。");
         }
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);

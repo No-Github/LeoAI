@@ -8,6 +8,7 @@ public class AiMessageRecord {
     private String runId;
     private String runStatus;
     private String protocolStatus;
+    private String dispatchStatus;
     private String protocolErrorMessage;
     private Long messageSeq;
     private String status;
@@ -36,6 +37,9 @@ public class AiMessageRecord {
 
     public String getProtocolStatus() { return protocolStatus; }
     public void setProtocolStatus(String protocolStatus) { this.protocolStatus = protocolStatus; }
+
+    public String getDispatchStatus() { return dispatchStatus; }
+    public void setDispatchStatus(String dispatchStatus) { this.dispatchStatus = dispatchStatus; }
 
     public String getProtocolErrorMessage() { return protocolErrorMessage; }
     public void setProtocolErrorMessage(String protocolErrorMessage) {

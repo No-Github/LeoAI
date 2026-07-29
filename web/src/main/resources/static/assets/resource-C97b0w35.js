@@ -1,0 +1,1 @@
+import{o as e}from"./auth-D9k1gh3X.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};

@@ -135,6 +135,18 @@ class ModuleBoundaryTest {
     }
 
     @Test
+    void aiAgentFactoryKeepsToolErrorsInsideTheRecoveryProtocol()
+            throws Exception {
+        String source = Files.readString(repositoryRoot().resolve(
+                "ai/src/main/java/org/leo/ai/agent/AiAgentFactory.java"));
+
+        assertTrue(source.contains(".toolArgumentsErrorHandler("));
+        assertTrue(source.contains(".toolExecutionErrorHandler("));
+        assertTrue(source.contains(".hallucinatedToolNameStrategy("));
+        assertFalse(source.contains("AiToolArgumentNormalizer"));
+    }
+
+    @Test
     void aiWebServicesDelegateSseTransportAndAgentRuntimeCaching() throws Exception {
         Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
         List<Path> services = List.of(

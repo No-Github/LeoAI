@@ -1,6 +1,7 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.entity.User;
@@ -62,7 +63,7 @@ public class FileTools {
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         String userId = session.getCreateByUser();
         if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("当前会话缺少用户信息，无法启动下载任务");
+            throw missingSessionUser("下载");
         }
         FileCapable fileNode = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
@@ -96,7 +97,7 @@ public class FileTools {
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         String userId = session.getCreateByUser();
         if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("当前会话缺少用户信息，无法启动上传任务");
+            throw missingSessionUser("上传");
         }
         FileCapable fileNode = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
@@ -105,7 +106,10 @@ public class FileTools {
         Path sourceFile = uploadEngineService.resolveVfsFilePath(vfsPath);
         uploadEngineService.validateReadPermission(userId, privilege, sourceFile);
         if (!Files.exists(sourceFile) || !Files.isRegularFile(sourceFile)) {
-            throw new IllegalArgumentException("平台侧文件不存在: " + vfsPath);
+            throw AiToolException.modelCorrectable(
+                    "RESOURCE_NOT_FOUND",
+                    "平台侧文件不存在: " + vfsPath,
+                    "先查询平台侧 VFS 文件列表，使用存在且有读取权限的路径。");
         }
         int resolvedChunkSize = chunkSize == null ? (1024 * 1024) : chunkSize;
         Map<String, Object> auditParams = fileAuditParams(sessionId, filePath, vfsPath, null);
@@ -371,6 +375,13 @@ public class FileTools {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private AiToolException missingSessionUser(String action) {
+        return AiToolException.userActionRequired(
+                "SESSION_USER_MISSING",
+                "当前会话缺少用户信息，无法启动文件" + action + "任务。",
+                "不要重复调用；请向用户说明需要重新建立带有效用户身份的会话。");
     }
 
     private String escapeShell(String s) {

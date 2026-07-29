@@ -27,10 +27,71 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiConversationStoreServiceTest {
+
+    @Test
+    void reservesTurnAndVisibleMessagesInOneStoreOperation() {
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        when(mapper.insertProtocolTurn(any(AiTurnRecord.class))).thenReturn(1);
+        AiConversationStoreService service =
+                new AiConversationStoreService(mapper);
+        AiTurnRecord turn = new AiTurnRecord();
+        turn.setTurnId("turn-queued");
+        turn.setThreadId("thread-1");
+        turn.setUserItemId("user-queued");
+        turn.setAssistantItemId("assistant-queued");
+
+        boolean reserved = service.reserveProtocolTurn(
+                turn, "visible command", Map.of("name", "a.txt"));
+
+        assertEquals(true, reserved);
+        ArgumentCaptor<AiMessageRecord> messages =
+                ArgumentCaptor.forClass(AiMessageRecord.class);
+        verify(mapper).insertProtocolTurn(turn);
+        verify(mapper, org.mockito.Mockito.times(2))
+                .insertMessage(messages.capture());
+        AiMessageRecord user = messages.getAllValues().get(0);
+        AiMessageRecord assistant = messages.getAllValues().get(1);
+        assertEquals("user-queued", user.getMessageId());
+        assertEquals("visible command", user.getContent());
+        assertNull(user.getRunId());
+        assertEquals("assistant-queued", assistant.getMessageId());
+        assertEquals("assistant", assistant.getRole());
+        assertNull(assistant.getRunId());
+    }
+
+    @Test
+    void bindsAReservedTurnToItsRunWithoutDuplicatingMessages() {
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        AiTurnRecord reserved = new AiTurnRecord();
+        reserved.setTurnId("turn-1");
+        reserved.setThreadId("thread-1");
+        reserved.setUserItemId("user-1");
+        reserved.setAssistantItemId("assistant-1");
+        when(mapper.findTurnById("turn-1")).thenReturn(reserved);
+        when(mapper.insertRun(any(AiRunRecord.class))).thenReturn(1);
+        when(mapper.attachRunToTurnMessages(
+                eq("thread-1"), eq("turn-1"), anyString())).thenReturn(2);
+        AiConversationStoreService service =
+                new AiConversationStoreService(mapper);
+
+        AiConversationStoreService.PersistedTurn turn = service.beginTurn(
+                "turn-1", "user-1", "assistant-1", "thread-1", 7,
+                "guarded input", "visible input", null, 100L,
+                "{\"model\":\"test\"}",
+                AiTurnTrace.start("test", "thread-1", 100L));
+
+        assertEquals("user-1", turn.userMessageId());
+        assertEquals("assistant-1", turn.assistantMessageId());
+        verify(mapper, never()).insertTurn(any(AiTurnRecord.class));
+        verify(mapper, never()).insertMessage(any(AiMessageRecord.class));
+        verify(mapper).attachRunToTurnMessages(
+                eq("thread-1"), eq("turn-1"), eq(turn.runId()));
+    }
 
     @Test
     void beginsTurnWithLinkedRunAndPendingUserMessage() {

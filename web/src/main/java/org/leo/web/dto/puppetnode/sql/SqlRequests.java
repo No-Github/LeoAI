@@ -32,6 +32,10 @@ public final class SqlRequests {
                                   String table) implements ConnectionPayload {
     }
 
+    public record RuntimeCapabilitiesRequest(String sessionId,
+                                             Map<String, Object> connection) implements ConnectionPayload {
+    }
+
     public record QueryTableRequest(String sessionId,
                                     Map<String, Object> connection,
                                     String database,

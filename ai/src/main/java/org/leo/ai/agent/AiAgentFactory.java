@@ -78,6 +78,7 @@ public class AiAgentFactory {
     private final ShellGeneratorTools shellGeneratorTools;
     private final SkillActivationTools platformSkillActivationTools;
     private final PlatformPlanTools platformPlanTools;
+    private final AiToolErrorHandler toolErrorHandler;
     private final ExecutorService aiToolExecutor;
 
     public AiAgentFactory(ChatMemoryProvider memoryProvider,
@@ -112,6 +113,7 @@ public class AiAgentFactory {
                           ShellGeneratorTools shellGeneratorTools,
                           @Qualifier("platformSkillActivationTools") SkillActivationTools platformSkillActivationTools,
                           PlatformPlanTools platformPlanTools,
+                          AiToolErrorHandler toolErrorHandler,
                           ExecutorService aiToolExecutor) {
         this.memoryProvider = memoryProvider;
         this.memoryProviderFactory = memoryProviderFactory;
@@ -145,6 +147,7 @@ public class AiAgentFactory {
         this.shellGeneratorTools = shellGeneratorTools;
         this.platformSkillActivationTools = platformSkillActivationTools;
         this.platformPlanTools = platformPlanTools;
+        this.toolErrorHandler = toolErrorHandler;
         this.aiToolExecutor = aiToolExecutor;
     }
 
@@ -176,6 +179,12 @@ public class AiAgentFactory {
                 .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(aiToolExecutor)
+                .toolArgumentsErrorHandler(
+                        toolErrorHandler::handleArguments)
+                .toolExecutionErrorHandler(
+                        toolErrorHandler::handleExecution)
+                .hallucinatedToolNameStrategy(
+                        toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
                     if (execution != null && execution.invocationContext() != null) {
                         AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
@@ -186,6 +195,12 @@ public class AiAgentFactory {
                     try {
                         triggerAutoReconAppend(execution);
                         autoAppendToolResultToPlanStep(execution);
+                        if (execution != null
+                                && !AiToolErrorHandler.isErrorResult(execution)) {
+                            toolErrorHandler.recordSuccess(
+                                    execution.invocationContext().chatMemoryId(),
+                                    execution.request().name());
+                        }
                     } finally {
                         AiToolContext.clear();
                     }
@@ -245,16 +260,34 @@ public class AiAgentFactory {
                 .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(platformSystemPromptProvider::getSystemMessage)
                 .executeToolsConcurrently(aiToolExecutor)
+                .toolArgumentsErrorHandler(
+                        toolErrorHandler::handleArguments)
+                .toolExecutionErrorHandler(
+                        toolErrorHandler::handleExecution)
+                .hallucinatedToolNameStrategy(
+                        toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
                     if (execution != null && execution.invocationContext() != null) {
                         AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
                     }
                 })
-                .afterToolExecution(execution -> AiToolContext.clear());
+                .afterToolExecution(execution -> {
+                    try {
+                        if (execution != null
+                                && !AiToolErrorHandler.isErrorResult(execution)) {
+                            toolErrorHandler.recordSuccess(
+                                    execution.invocationContext().chatMemoryId(),
+                                    execution.request().name());
+                        }
+                    } finally {
+                        AiToolContext.clear();
+                    }
+                });
         if (enableTools) {
             builder.tools(puppetTools, userTools, teamTools,
                     pluginTools, fingerprintTools, disguiseTools,
-                    shellGeneratorTools, platformPlanTools, platformSkillActivationTools);
+                    shellGeneratorTools, platformPlanTools,
+                    platformSkillActivationTools);
             if (additionalTools != null) {
                 builder.tools(additionalTools);
             }
@@ -269,7 +302,8 @@ public class AiAgentFactory {
     );
 
     private void triggerAutoReconAppend(dev.langchain4j.service.tool.ToolExecution execution) {
-        if (execution == null || execution.hasFailed()) return;
+        if (execution == null
+                || AiToolErrorHandler.isErrorResult(execution)) return;
         String toolName = execution.request() != null ? execution.request().name() : null;
         if (toolName == null || AUTO_RECON_APPEND_SKIPPED_TOOLS.contains(toolName)) return;
 
@@ -368,7 +402,7 @@ public class AiAgentFactory {
     private static String buildToolResultSummary(String toolName,
                                                   dev.langchain4j.service.tool.ToolExecution execution) {
         StringBuilder sb = new StringBuilder(toolName);
-        if (execution.hasFailed()) {
+        if (AiToolErrorHandler.isErrorResult(execution)) {
             sb.append(" 失败");
             String err = execution.result();
             if (err != null && !err.isBlank()) {

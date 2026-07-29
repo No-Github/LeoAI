@@ -4,6 +4,7 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.entity.AiTurnRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -99,11 +100,24 @@ public class AiEventSubscriptionService {
                         : persistedThread != null
                                 ? persistedThread.getRunStatus()
                                 : runtime.getRunStatus();
+                List<AiTurnRecord> inProgressTurns =
+                        eventStore.listInProgressProtocolTurns(threadId);
+                boolean protocolExecuting = !inProgressTurns.isEmpty();
+                if (protocolExecuting) {
+                    String dispatchStatus =
+                            inProgressTurns.get(0).getDispatchStatus();
+                    status = dispatchStatus != null
+                            ? dispatchStatus
+                            : "running";
+                }
                 boolean completionRecorded =
                         eventStore.hasLatestTurnCompletedEvent(threadId);
-                if (isTerminal(status) && cursor >= serverLastSeq
-                        && completionRecorded) {
-                    writer.sendStatus(emitter, status);
+                if (!runtime.isExecuting() && cursor >= serverLastSeq
+                        && completionRecorded
+                        && !protocolExecuting) {
+                    if (isTerminal(status)) {
+                        writer.sendStatus(emitter, status);
+                    }
                     return;
                 }
 
@@ -113,7 +127,8 @@ public class AiEventSubscriptionService {
                     heartbeat.put("ts", now);
                     heartbeat.put("status", status);
                     heartbeat.put("lastSeq", serverLastSeq);
-                    heartbeat.put("executing", runtime.isExecuting());
+                    heartbeat.put("executing",
+                            runtime.isExecuting() || protocolExecuting);
                     writer.sendHeartbeat(emitter, heartbeat);
                     lastHeartbeatAt = now;
                 }

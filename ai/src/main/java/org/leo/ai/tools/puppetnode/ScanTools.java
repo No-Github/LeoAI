@@ -1,6 +1,7 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.capability.ScanCapable;
 import dev.langchain4j.agent.tool.Tool;
@@ -53,7 +54,10 @@ public class ScanTools {
     public Map<String, Object> scanReachableHost(ArrayList<String> scanHostsList, int scanTimeout) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         if (scanHostsList == null || scanHostsList.isEmpty()) {
-            throw new IllegalArgumentException("scanHostsList 不能为空");
+            throw AiToolException.modelCorrectable(
+                    "MISSING_REQUIRED_ARGUMENT",
+                    "scanHostsList 不能为空。",
+                    "提供至少一个合法 IP 地址或主机名后重新调用。");
         }
         ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
         return scanNode.scanReachableHost(scanHostsList, scanTimeout);

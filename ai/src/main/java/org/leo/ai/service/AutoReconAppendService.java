@@ -5,6 +5,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import org.leo.ai.agent.AiAsyncExecutionConfig;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
@@ -88,7 +89,7 @@ public class AutoReconAppendService {
      * @param toolName    触发分析的工具名称（用于注释）
      * @param toolOutput  工具原始输出文本
      */
-    @Async
+    @Async(AiAsyncExecutionConfig.BACKGROUND_EXECUTOR)
     public void analyzeAndAppend(String sessionId, String toolName, String toolOutput) {
         if (toolOutput == null || toolOutput.trim().length() < MIN_CONTENT_LEN) return;
 

@@ -1,5 +1,6 @@
 package org.leo.ai.util;
 
+import org.leo.ai.agent.AiToolException;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
@@ -12,7 +13,10 @@ public class PuppetNodeSessionUtils {
     public static PuppetNodeSession getSession(String sessionId) {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         if (session == null) {
-            throw new IllegalArgumentException("会话不存在: " + sessionId);
+            throw AiToolException.userActionRequired(
+                    "SESSION_EXPIRED",
+                    "当前 Puppet 会话不存在或已过期。",
+                    "不要重复调用；请向用户说明需要重新连接 Puppet。");
         }
         return session;
     }
@@ -23,11 +27,17 @@ public class PuppetNodeSessionUtils {
 
     public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {
         if (capabilityType == null) {
-            throw new IllegalArgumentException("capabilityType不能为空");
+            throw AiToolException.fatal(
+                    "CAPABILITY_TYPE_MISSING",
+                    "工具没有声明所需的 Puppet 能力类型。",
+                    null);
         }
         AbstractPuppetNode node = getPuppetNode(sessionId);
         if (node == null) {
-            throw new IllegalArgumentException("Puppet实体不存在: " + sessionId);
+            throw AiToolException.userActionRequired(
+                    "PUPPET_UNAVAILABLE",
+                    "当前会话没有可用的 Puppet 实体。",
+                    "不要重复调用；请向用户说明需要重新连接或选择 Puppet。");
         }
         if (PuppetNodeCapabilityRegistry.supports(node, capabilityType)) {
             return capabilityType.cast(node);
@@ -38,8 +48,12 @@ public class PuppetNodeSessionUtils {
                 ? PuppetNodeCapabilityRegistry.getStatus(node, capabilityName) : null;
         String reason = status != null && status.getReason() != null && !status.getReason().isBlank()
                 ? ", reason=" + status.getReason() : "";
-        throw new IllegalArgumentException("当前 Puppet 类型不支持能力: "
-                + capabilityType.getSimpleName() + " (type=" + nodeType + reason + ")");
+        throw AiToolException.modelCorrectable(
+                "UNSUPPORTED_CAPABILITY",
+                "当前 Puppet 类型不支持能力: "
+                        + capabilityType.getSimpleName()
+                        + " (type=" + nodeType + reason + ")",
+                "查询当前 Puppet capabilities，选择已支持的工具或向用户说明能力限制。");
     }
 
     public static Object getAiContextValue(String sessionId, String key) {

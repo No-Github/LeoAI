@@ -20,23 +20,86 @@ public class PuppetNodeSqlService {
     }
 
     public Map<String, Object> testConnection(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
-        AbstractSqlDialect dialect = dialect(connection);
-        String testSql = dialect.buildTestSql();
         long startedAt = System.nanoTime();
-        Map<String, Object> raw = executeRaw(puppetNode, connection, testSql);
-        List<Map<String, Object>> rowList = rows(raw);
-        String version = "";
-        if (!rowList.isEmpty()) {
-            Object firstValue = rowList.get(0).values().stream().findFirst().orElse("");
-            version = firstValue == null ? "" : String.valueOf(firstValue);
+        List<Map<String, Object>> diagnostics = new ArrayList<Map<String, Object>>();
+        Map<String, Object> capabilities = getRuntimeCapabilities(puppetNode, connection);
+        boolean inspectionSupported = isSuccessCode(capabilities.get("code"));
+        if (inspectionSupported) {
+            boolean providerAvailable = !Boolean.FALSE.equals(capabilities.get("available"));
+            boolean driverAvailable = requestedDriverAvailable(capabilities);
+            if (!providerAvailable || !driverAvailable) {
+                String message = capabilityFailureMessage(capabilities, providerAvailable);
+                diagnostics.add(diagnostic("driver", "failed", message));
+                return failedConnectionTest(startedAt, diagnostics, capabilities,
+                        "driver", providerAvailable ? "DRIVER_NOT_FOUND" : "PROVIDER_NOT_FOUND",
+                        message);
+            }
+            diagnostics.add(diagnostic("driver", "passed", capabilitySuccessMessage(capabilities)));
+        } else {
+            diagnostics.add(diagnostic("driver", "warning",
+                    safeString(capabilities.getOrDefault("msg", "运行时不支持驱动预检，将直接测试连接"))));
         }
 
-        Map<String, Object> data = new LinkedHashMap<String, Object>();
-        data.put("databaseVersion", version);
-        data.put("runtimeMetadata", raw.get("runtimeMetadata"));
-        data.put("latencyMs", (System.nanoTime() - startedAt) / 1_000_000L);
-        data.put("statementType", detectStatementType(testSql));
-        return data;
+        try {
+            AbstractSqlDialect dialect = dialect(connection);
+            DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
+            String configuredTestSql = stringValue(connectionSpec.getDialectOptions().get("testSql"));
+            String testSql = configuredTestSql == null || configuredTestSql.isBlank()
+                    ? dialect.buildTestSql()
+                    : configuredTestSql;
+            Map<String, Object> raw = puppetNode.executeSql(connectionSpec, testSql);
+            if (raw == null) {
+                throw new IllegalStateException("puppet 执行结果为空");
+            }
+            if (!isSuccessCode(raw.get("code"))) {
+                String category = safeString(raw.get("errorCategory"));
+                String failureStage = failureStage(category);
+                String message = safeString(raw.get("msg"));
+                diagnostics.add(diagnostic(failureStage, "failed", message));
+                return failedConnectionTest(startedAt, diagnostics, capabilities,
+                        failureStage, category, message);
+            }
+
+            diagnostics.add(diagnostic("connection", "passed", "数据库连接已建立"));
+            diagnostics.add(diagnostic("healthCheck", "passed", "连通性 SQL 执行成功"));
+            List<Map<String, Object>> rowList = rows(raw);
+            String version = "";
+            if (!rowList.isEmpty()) {
+                Object firstValue = rowList.get(0).values().stream().findFirst().orElse("");
+                version = firstValue == null ? "" : String.valueOf(firstValue);
+            }
+
+            Map<String, Object> data = new LinkedHashMap<String, Object>();
+            data.put("success", true);
+            data.put("databaseVersion", version);
+            data.put("runtimeMetadata", raw.get("runtimeMetadata"));
+            data.put("runtimeCapabilities", capabilities);
+            data.put("diagnostics", diagnostics);
+            data.put("latencyMs", (System.nanoTime() - startedAt) / 1_000_000L);
+            data.put("statementType", detectStatementType(testSql));
+            return data;
+        } catch (Exception error) {
+            String category = error instanceof IllegalArgumentException
+                    ? "INVALID_ARGUMENT" : "EXECUTION_ERROR";
+            String stage = failureStage(category);
+            String message = safeString(error.getMessage());
+            diagnostics.add(diagnostic(stage, "failed", message));
+            return failedConnectionTest(startedAt, diagnostics, capabilities,
+                    stage, category, message);
+        }
+    }
+
+    public Map<String, Object> getRuntimeCapabilities(SqlCapable puppetNode,
+                                                       Map<String, Object> connection) {
+        try {
+            Map<String, Object> result = puppetNode.inspectDatabaseRuntime(
+                    connection == null ? Collections.emptyMap() : connection);
+            if (result != null) return new LinkedHashMap<String, Object>(result);
+            return Map.of("code", 500, "available", false, "msg", "Puppet 运行时能力响应为空");
+        } catch (Exception error) {
+            return Map.of("code", 500, "available", false,
+                    "msg", safeString(error.getMessage()));
+        }
     }
 
     public List<Map<String, Object>> getDialects() {
@@ -244,6 +307,82 @@ public class PuppetNodeSqlService {
         return result;
     }
 
+    private Map<String, Object> failedConnectionTest(long startedAt,
+                                                     List<Map<String, Object>> diagnostics,
+                                                     Map<String, Object> capabilities,
+                                                     String failureStage,
+                                                     String category,
+                                                     String message) {
+        Map<String, Object> data = new LinkedHashMap<String, Object>();
+        data.put("success", false);
+        data.put("failureStage", failureStage);
+        data.put("errorCategory", category == null || category.isBlank() ? "UNKNOWN" : category);
+        data.put("message", message == null || message.isBlank() ? "连接测试失败" : message);
+        data.put("runtimeCapabilities", capabilities);
+        data.put("diagnostics", diagnostics);
+        data.put("latencyMs", (System.nanoTime() - startedAt) / 1_000_000L);
+        return data;
+    }
+
+    private Map<String, Object> diagnostic(String stage, String status, String message) {
+        Map<String, Object> item = new LinkedHashMap<String, Object>();
+        item.put("stage", stage);
+        item.put("status", status);
+        item.put("message", message);
+        return item;
+    }
+
+    private boolean isSuccessCode(Object code) {
+        if (code instanceof Number number) {
+            return number.intValue() >= 200 && number.intValue() < 300;
+        }
+        try {
+            int value = Integer.parseInt(String.valueOf(code));
+            return value >= 200 && value < 300;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean requestedDriverAvailable(Map<String, Object> capabilities) {
+        Object value = capabilities.get("requestedDriver");
+        if (!(value instanceof Map<?, ?> requested)) return true;
+        return !Boolean.FALSE.equals(requested.get("available"));
+    }
+
+    private String capabilityFailureMessage(Map<String, Object> capabilities,
+                                            boolean providerAvailable) {
+        if (!providerAvailable) {
+            String message = safeString(capabilities.get("msg"));
+            return message.isBlank() ? "数据库运行时 Provider 不可用" : message;
+        }
+        Object value = capabilities.get("requestedDriver");
+        if (value instanceof Map<?, ?> requested) {
+            String message = safeString(requested.get("message"));
+            return message.isBlank() ? "数据库驱动不可用" : message;
+        }
+        return "数据库驱动不可用";
+    }
+
+    private String capabilitySuccessMessage(Map<String, Object> capabilities) {
+        Object value = capabilities.get("requestedDriver");
+        if (value instanceof Map<?, ?> requested) {
+            String message = safeString(requested.get("message"));
+            if (!message.isBlank()) return message;
+        }
+        return "数据库运行时 Provider 可用";
+    }
+
+    private String failureStage(String category) {
+        String normalized = category == null ? "" : category.trim().toUpperCase(Locale.ROOT);
+        if (normalized.contains("DRIVER") || normalized.contains("PROVIDER")) return "driver";
+        if (normalized.contains("URL") || normalized.contains("ARGUMENT")
+                || normalized.contains("CONFIG")) return "configuration";
+        if (normalized.contains("AUTH")) return "authentication";
+        if (normalized.contains("CONNECTION") || normalized.contains("TIMEOUT")) return "network";
+        return "healthCheck";
+    }
+
     private Map<String, Object> normalizeQueryResult(Map<String, Object> raw, String statementType) {
         List<Map<String, Object>> rowList = rows(raw);
         List<Map<String, Object>> columns = columns(raw);
@@ -259,7 +398,13 @@ public class PuppetNodeSqlService {
         Map<String, Object> data = new LinkedHashMap<String, Object>();
         data.put("columns", columns);
         data.put("rows", rowList);
+        data.put("rowCount", raw.get("rowCount") == null ? rowList.size() : toInteger(raw.get("rowCount")));
         data.put("affectedRows", toInteger(raw.get("affectedRows")));
+        data.put("generatedKey", raw.get("generatedKey"));
+        data.put("truncated", toBoolean(raw.get("truncated")));
+        data.put("truncationReason", raw.get("truncationReason"));
+        data.put("resultBytes", toInteger(raw.get("resultBytes")));
+        data.put("runtimeMetadata", raw.get("runtimeMetadata"));
         data.put("statementType", statementType);
         return data;
     }
@@ -323,7 +468,7 @@ public class PuppetNodeSqlService {
     }
 
     private AbstractSqlDialect dialect(Map<String, Object> connection) {
-        return sqlDialectFactory.require(stringValue(connection.get("type")));
+        return sqlDialectFactory.require(stringValue(connection.get("dialect")));
     }
 
     private Object firstValue(Map<String, Object> row, String... keys) {

@@ -37,6 +37,19 @@ class GeneratedBytecodeCompatibilityTest {
     }
 
     @Test
+    void generatedInjectorPassesJvmVerificationWithoutInitialization() throws Exception {
+        GenerationResult result = new ShellGenerator(
+                GenerationRequest.from(createConfig()))
+                .generateFormattedInjector();
+
+        Class<?> injectorClass = new ByteArrayClassLoader()
+                .defineAndResolve(result.getInjectorClassBytes());
+
+        assertEquals("org.example.LegacyInjector", injectorClass.getName());
+        injectorClass.getDeclaredConstructor();
+    }
+
+    @Test
     void generatedCoreLoadsInConfiguredLegacyJvm(@TempDir Path tempDir) throws Exception {
         String javaExecutable = System.getProperty("jmg.legacy.java");
         Assumptions.assumeTrue(javaExecutable != null && !javaExecutable.trim().isEmpty(),
@@ -240,6 +253,12 @@ class GeneratedBytecodeCompatibilityTest {
     private static final class ByteArrayClassLoader extends ClassLoader {
         private Class<?> define(byte[] bytes) {
             return defineClass(null, bytes, 0, bytes.length);
+        }
+
+        private Class<?> defineAndResolve(byte[] bytes) {
+            Class<?> type = define(bytes);
+            resolveClass(type);
+            return type;
         }
     }
 }

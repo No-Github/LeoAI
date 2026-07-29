@@ -2,6 +2,7 @@ package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
+import org.leo.ai.agent.AiToolErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -20,16 +21,27 @@ public class AiTurnExecutionEngine {
 
     private static final Logger logger = LoggerFactory.getLogger(AiTurnExecutionEngine.class);
 
+    private final AiToolErrorHandler toolErrorHandler;
+
+    public AiTurnExecutionEngine(AiToolErrorHandler toolErrorHandler) {
+        this.toolErrorHandler =
+                Objects.requireNonNull(toolErrorHandler, "toolErrorHandler");
+    }
+
     void execute(AiTurnCommand command, AiTurnExecutionListener listener) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(listener, "listener");
 
         AiTurnCoordinator.Execution turn = command.execution();
+        AiToolErrorHandler.TurnScope toolErrorScope =
+                toolErrorHandler.beginTurn(command.memoryId());
         AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
         StringBuilder output = new StringBuilder();
         turn.registerCancellation(() -> cancelCaptured(handleRef));
         if (turn.isCancellationRequested()) {
-            fail(turn, listener, new InterruptedException(turn.cancellationReason()));
+            fail(turn, listener,
+                    new InterruptedException(turn.cancellationReason()),
+                    toolErrorScope);
             return;
         }
 
@@ -62,28 +74,36 @@ public class AiTurnExecutionEngine {
                             AiTurnEvent.toolCompleted(AiToolEventNormalizer.completed(execution))))
                     .onCompleteResponse(response -> complete(
                             turn, listener, new AiTurnResult(
-                                    output.toString(), response, System.currentTimeMillis())))
-                    .onError(error -> fail(turn, listener, error))
+                                    output.toString(), response,
+                                    System.currentTimeMillis()),
+                            toolErrorScope))
+                    .onError(error -> fail(
+                            turn, listener, error, toolErrorScope))
                     .start();
         } catch (Throwable error) {
-            fail(turn, listener, error);
+            fail(turn, listener, error, toolErrorScope);
         }
     }
 
     private void complete(AiTurnCoordinator.Execution turn,
                           AiTurnExecutionListener listener,
-                          AiTurnResult result) {
+                          AiTurnResult result,
+                          AiToolErrorHandler.TurnScope toolErrorScope) {
         try {
             turn.finish(AiTurnOutcome.COMPLETED, () -> listener.onCompleted(result));
         } catch (Throwable error) {
             notifyTerminalFailure(listener, AiTurnOutcome.COMPLETED, asException(error));
+        } finally {
+            toolErrorScope.close();
         }
     }
 
     private void fail(AiTurnCoordinator.Execution turn,
                       AiTurnExecutionListener listener,
-                      Throwable error) {
+                      Throwable error,
+                      AiToolErrorHandler.TurnScope toolErrorScope) {
         if (turn.isFinished()) {
+            toolErrorScope.close();
             return;
         }
         AiTurnOutcome outcome = turn.isCancellation(error)
@@ -95,6 +115,8 @@ public class AiTurnExecutionEngine {
             turn.finish(outcome, () -> listener.onFailed(failure));
         } catch (Throwable terminalError) {
             notifyTerminalFailure(listener, outcome, asException(terminalError));
+        } finally {
+            toolErrorScope.close();
         }
     }
 

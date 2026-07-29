@@ -109,7 +109,7 @@ class DatabaseInitializerFreshStartTest {
     }
 
     @Test
-    void rebuildsOnlyLegacyDisposableEventJournal() throws Exception {
+    void rejectsLegacyEventJournalInsteadOfApplyingCompatibilityPatches() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-events.db"));
         try (Connection connection = dataSource.getConnection()) {
@@ -131,18 +131,11 @@ class DatabaseInitializerFreshStartTest {
             }
         }
 
-        new DatabaseInitializer(dataSource).run();
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> new DatabaseInitializer(dataSource).run());
 
-        try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement()) {
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM pragma_table_info('ai_events') WHERE name='turn_id'"));
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM pragma_table_info('ai_events') WHERE name='item_id'"));
-            assertEquals(1, scalar(statement,
-                    "SELECT COUNT(*) FROM pragma_table_info('ai_events') "
-                            + "WHERE name='subagent_invocation_id'"));
-        }
+        assertTrue(error.getMessage().contains("不兼容旧 AI 对话数据"));
     }
 
     private int scalar(Statement statement, String sql) throws SQLException {

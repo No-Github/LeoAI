@@ -14,7 +14,8 @@ class JavaDatabaseConnectionAdapterTest {
     @Test
     void createsJdbcParametersFromCanonicalMysqlConnection() {
         Map<String, Object> result = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "host", "db.internal", "port", 3307, "database", "inventory",
+                "dialect", "mysql", "connectionMode", "standard",
+                "host", "db.internal", "port", 3307, "database", "inventory",
                 "username", "app", "password", "secret", "options", Map.of("useSSL", false))));
 
         assertEquals("jdbc", result.get("provider"));
@@ -26,13 +27,44 @@ class JavaDatabaseConnectionAdapterTest {
     @Test
     void supportsOracleSidAndExplicitJavaOverride() {
         Map<String, Object> oracle = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "oracle", "variant", "sid", "host", "oracle.internal", "sid", "ORCL")));
+                "dialect", "oracle", "connectionMode", "standard",
+                "variant", "sid", "host", "oracle.internal", "sid", "ORCL")));
         assertEquals("jdbc:oracle:thin:@oracle.internal:1521:ORCL", oracle.get("jdbcUrl"));
 
         Map<String, Object> overridden = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "sqlite", "file", "/tmp/default.sqlite", "nativeOptions", Map.of("java", Map.of(
+                "dialect", "sqlite", "connectionMode", "custom",
+                "runtimeOptions", Map.of("java", Map.of(
                         "driverClass", "custom.Driver", "jdbcUrl", "jdbc:custom:value")))));
         assertEquals("custom.Driver", overridden.get("driverClass"));
         assertEquals("jdbc:custom:value", overridden.get("jdbcUrl"));
+    }
+
+    @Test
+    void forwardsGenericJdbcPropertiesAndExecutionLimits() {
+        Map<String, Object> result = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "generic", "connectionMode", "custom",
+                "username", "app",
+                "options", Map.of("tenant", "north"),
+                "runtimeOptions", Map.of("java", Map.of(
+                        "driverClass", "vendor.CustomDriver",
+                        "jdbcUrl", "jdbc:custom://db.internal/main",
+                        "properties", Map.of("sslMode", "verify-full"),
+                        "connectionProperties", Map.of("tenant", "override"),
+                        "queryTimeoutSeconds", 12,
+                        "maxRows", 500,
+                        "maxResultBytes", 2048,
+                        "maxCellBytes", 512,
+                        "fetchSize", 50)))));
+
+        assertEquals("vendor.CustomDriver", result.get("driverClass"));
+        assertEquals("jdbc:custom://db.internal/main", result.get("jdbcUrl"));
+        Map<?, ?> properties = (Map<?, ?>) result.get("connectionProperties");
+        assertEquals("override", properties.get("tenant"));
+        assertEquals("verify-full", properties.get("sslMode"));
+        assertEquals(12, result.get("queryTimeoutSeconds"));
+        assertEquals(500, result.get("maxRows"));
+        assertEquals(2048, result.get("maxResultBytes"));
+        assertEquals(512, result.get("maxCellBytes"));
+        assertEquals(50, result.get("fetchSize"));
     }
 }

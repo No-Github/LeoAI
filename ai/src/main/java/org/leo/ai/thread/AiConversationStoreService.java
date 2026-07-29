@@ -170,12 +170,32 @@ public class AiConversationStoreService {
         return isBlank(threadId) ? null : mapper.findNextQueuedTurn(threadId);
     }
 
+    public List<AiTurnRecord> listInProgressProtocolTurns(String threadId) {
+        return isBlank(threadId) ? List.of() : mapper.listInProgressTurns(threadId);
+    }
+
     public List<String> listDispatchableProtocolThreadIds() {
         return mapper.listDispatchableThreadIds();
     }
 
-    public boolean reserveProtocolTurn(AiTurnRecord turn) {
-        return turn != null && mapper.insertProtocolTurn(turn) == 1;
+    /**
+     * 原子接收用户命令。Turn 和两条可展示消息先于任何运行时对象持久化，
+     * 因此刷新页面后 queued/running/cancelling 都可仅从数据库恢复。
+     */
+    @Transactional
+    public boolean reserveProtocolTurn(AiTurnRecord turn,
+                                       String userContent,
+                                       Object attachments) {
+        if (turn == null || mapper.insertProtocolTurn(turn) != 1) return false;
+        appendMessage(
+                turn.getUserItemId(), turn.getThreadId(), turn.getTurnId(),
+                null, MESSAGE_PENDING, "user", userContent,
+                null, null, null, attachments);
+        appendMessage(
+                turn.getAssistantItemId(), turn.getThreadId(), turn.getTurnId(),
+                null, MESSAGE_PENDING, "assistant", "",
+                null, null, null, null);
+        return true;
     }
 
     public boolean claimProtocolTurnStart(String turnId, long startedAt) {
@@ -183,13 +203,31 @@ public class AiConversationStoreService {
                 && mapper.markProtocolTurnStarted(turnId, startedAt) == 1;
     }
 
+    @Transactional
     public AiTurnRecord requestProtocolTurnInterrupt(
             String threadId, String turnId) {
         mapper.requestProtocolTurnInterrupt(threadId, turnId);
         AiTurnRecord current = findProtocolTurn(turnId);
         if (current != null && "queued".equals(current.getDispatchStatus())) {
-            return completeProtocolTurn(
+            AiTurnRecord completed = completeProtocolTurn(
                     turnId, "interrupted", null, System.currentTimeMillis());
+            mapper.updateTurnMessageStatus(
+                    threadId, turnId, MESSAGE_DISCARDED);
+            Map<String, Object> turn = new LinkedHashMap<>();
+            turn.put("id", turnId);
+            turn.put("threadId", threadId);
+            turn.put("status", "interrupted");
+            turn.put("interruptRequested", true);
+            appendEvent(threadId, new AiSseEvent(
+                    mapper.findLastEventSeq(threadId) + 1L,
+                    System.currentTimeMillis(),
+                    "turn/completed",
+                    Map.of("turn", turn),
+                    null,
+                    turnId,
+                    current.getAssistantItemId(),
+                    null));
+            return completed;
         }
         return current;
     }
@@ -529,12 +567,15 @@ public class AiConversationStoreService {
         String runId = UUID.randomUUID().toString();
         trace.bind(turnId, runId);
 
-        AiTurnRecord turn = new AiTurnRecord();
-        turn.setTurnId(turnId);
-        turn.setThreadId(threadId);
-        turn.setStatus(MESSAGE_PENDING);
-        turn.setCreatedAt(startedAt);
-        mapper.insertTurn(turn);
+        AiTurnRecord reservedTurn = mapper.findTurnById(turnId);
+        if (reservedTurn == null) {
+            AiTurnRecord turn = new AiTurnRecord();
+            turn.setTurnId(turnId);
+            turn.setThreadId(threadId);
+            turn.setStatus(MESSAGE_PENDING);
+            turn.setCreatedAt(startedAt);
+            mapper.insertTurn(turn);
+        }
 
         AiRunRecord run = new AiRunRecord();
         run.setRunId(runId);
@@ -558,14 +599,29 @@ public class AiConversationStoreService {
                     "Run 创建", runId);
         }
 
-        String userMessageId = appendMessage(
-                requestedUserItemId,
-                threadId, turnId, runId, MESSAGE_PENDING,
-                "user", userContent, null, null, null, attachments);
-        String assistantMessageId = appendMessage(
-                requestedAssistantItemId,
-                threadId, turnId, runId, MESSAGE_PENDING,
-                "assistant", "", null, null, null, null);
+        String userMessageId;
+        String assistantMessageId;
+        if (reservedTurn != null
+                && !isBlank(reservedTurn.getUserItemId())
+                && !isBlank(reservedTurn.getAssistantItemId())) {
+            int attached = mapper.attachRunToTurnMessages(
+                    threadId, turnId, runId);
+            if (attached != 2) {
+                throw new IllegalStateException(
+                        "Turn 预留消息不完整: " + turnId);
+            }
+            userMessageId = reservedTurn.getUserItemId();
+            assistantMessageId = reservedTurn.getAssistantItemId();
+        } else {
+            userMessageId = appendMessage(
+                    requestedUserItemId,
+                    threadId, turnId, runId, MESSAGE_PENDING,
+                    "user", userContent, null, null, null, attachments);
+            assistantMessageId = appendMessage(
+                    requestedAssistantItemId,
+                    threadId, turnId, runId, MESSAGE_PENDING,
+                    "assistant", "", null, null, null, null);
+        }
         return new PersistedTurn(
                 turnId, runId, threadId, userMessageId, assistantMessageId,
                 startedAt, emptyToNull(leaseToken));
@@ -780,6 +836,10 @@ public class AiConversationStoreService {
             item.put("turnId", record.getTurnId());
             item.put("runId", record.getRunId());
             item.put("runStatus", record.getRunStatus());
+            item.put("protocolStatus", record.getProtocolStatus());
+            item.put("dispatchStatus", record.getDispatchStatus());
+            item.put("protocolErrorMessage",
+                    record.getProtocolErrorMessage());
             item.put("sequence", record.getMessageSeq());
             item.put("status", record.getStatus());
             item.put("role", record.getRole());

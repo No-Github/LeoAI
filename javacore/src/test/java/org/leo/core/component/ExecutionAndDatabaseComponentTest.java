@@ -10,6 +10,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -52,6 +53,84 @@ class ExecutionAndDatabaseComponentTest {
         assertEquals(1, response.get("rowCount"));
         assertEquals(1, ((java.util.List<?>) response.get("rows")).size());
         assertEquals("jdbc", ((Map<?, ?>) response.get("runtimeMetadata")).get("provider"));
+    }
+
+    @Test
+    void databaseBindsParametersWithoutConcatenatingSql() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "driverClass", "org.sqlite.JDBC",
+                "jdbcUrl", "jdbc:sqlite::memory:",
+                "sql", "SELECT ? AS value",
+                "parameters", List.of("bound-value")));
+
+        assertEquals(200, code(response));
+        Map<?, ?> row = (Map<?, ?>) ((java.util.List<?>) response.get("rows")).get(0);
+        assertEquals("bound-value", row.get("value"));
+    }
+
+    @Test
+    void databaseLimitsRowsAndKeepsDuplicateColumnsAddressable() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "driverClass", "org.sqlite.JDBC",
+                "jdbcUrl", "jdbc:sqlite::memory:",
+                "sql", "WITH RECURSIVE numbers(value) AS (SELECT 1 UNION ALL "
+                        + "SELECT value + 1 FROM numbers WHERE value < 5) "
+                        + "SELECT value AS id, value + 10 AS id FROM numbers",
+                "maxRows", "2"));
+
+        assertEquals(200, code(response));
+        assertEquals(2, response.get("rowCount"));
+        assertEquals(true, response.get("truncated"));
+        assertEquals("MAX_ROWS", response.get("truncationReason"));
+        java.util.List<?> columns = (java.util.List<?>) response.get("columns");
+        assertEquals("id", ((Map<?, ?>) columns.get(0)).get("name"));
+        assertEquals("id_2", ((Map<?, ?>) columns.get(1)).get("name"));
+        Map<?, ?> row = (Map<?, ?>) ((java.util.List<?>) response.get("rows")).get(0);
+        assertEquals(1, row.get("id"));
+        assertEquals(11, row.get("id_2"));
+    }
+
+    @Test
+    void databaseCapsOversizedCellsAndReportsTheBoundary() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "driverClass", "org.sqlite.JDBC",
+                "jdbcUrl", "jdbc:sqlite::memory:",
+                "sql", "SELECT printf('%0300d', 0) AS payload",
+                "maxCellBytes", 256));
+
+        assertEquals(200, code(response));
+        assertEquals(true, response.get("truncated"));
+        assertEquals("MAX_CELL_BYTES", response.get("truncationReason"));
+        Map<?, ?> row = (Map<?, ?>) ((java.util.List<?>) response.get("rows")).get(0);
+        assertEquals(256, String.valueOf(row.get("payload")).length());
+    }
+
+    @Test
+    void databaseReturnsStructuredDriverErrorsWithoutThrowing() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "driverClass", "missing.jdbc.Driver",
+                "jdbcUrl", "jdbc:missing:value",
+                "sql", "SELECT 1"));
+
+        assertEquals(503, code(response));
+        assertEquals("DRIVER_NOT_FOUND", response.get("errorCategory"));
+        assertEquals(false, response.get("retryable"));
+        assertEquals(0, response.get("rowCount"));
+    }
+
+    @Test
+    void databaseReportsAvailableRuntimeDriversBeforeConnecting() throws Exception {
+        Map<String, Object> response = invoke(new DatabaseComponent(), params(
+                "operation", "capabilities",
+                "requestedDriver", "org.sqlite.JDBC"));
+
+        assertEquals(200, code(response));
+        assertEquals("java", response.get("runtime"));
+        assertEquals("jdbc", response.get("provider"));
+        assertEquals(true, response.get("available"));
+        assertEquals(true, ((Map<?, ?>) response.get("requestedDriver")).get("available"));
+        assertTrue(((List<?>) response.get("drivers")).stream()
+                .anyMatch(item -> "org.sqlite.JDBC".equals(((Map<?, ?>) item).get("className"))));
     }
 
     @Test

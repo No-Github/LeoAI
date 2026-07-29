@@ -149,7 +149,8 @@ public class PlatformAiController {
         try {
             reservation = turnProtocolService.begin(
                     state.getStateId(), body.clientUserMessageId(),
-                    command.getScope(), command.toJson());
+                    command.getScope(), command.toJson(),
+                    message, body.attachments());
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
@@ -182,15 +183,16 @@ public class PlatformAiController {
                 body != null ? body.threadId() : null);
         String turnId = body != null ? body.turnId() : null;
         try {
-            turnProtocolService.requestInterrupt(
-                    state.getStateId(), turnId);
+            AiTurnProtocolService.TurnSnapshot turn =
+                    turnProtocolService.requestInterrupt(
+                            state.getStateId(), turnId);
+            if (turn.id().equals(state.getActiveTurnId())) {
+                state.stopGeneration();
+            }
+            return ApiResponse.success(Map.of("turn", turn.toMap()));
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
-        if (turnId.equals(state.getActiveTurnId())) {
-            state.stopGeneration();
-        }
-        return ApiResponse.success(Map.of());
     }
 
     @PostMapping("/createAgent")

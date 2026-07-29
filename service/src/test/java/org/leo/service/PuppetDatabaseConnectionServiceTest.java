@@ -60,10 +60,11 @@ class PuppetDatabaseConnectionServiceTest {
         PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection("plain-secret");
         DatabaseConnectionSpec spec = DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "variant", "default", "host", "db.internal", "port", 3307,
+                "dialect", "mysql", "connectionMode", "custom", "variant", "default",
+                "host", "db.internal", "port", 3307,
                 "database", "inventory", "username", "app", "password", "plain-secret",
                 "options", Map.of("charset", "utf8mb4"),
-                "nativeOptions", Map.of(
+                "runtimeOptions", Map.of(
                         "java", Map.of("jdbcUrl", "jdbc:custom:inventory", "driverClass", "custom.Driver"),
                         "php", Map.of("dsn", "custom:inventory", "pdoDriver", "custom"))));
 
@@ -74,8 +75,8 @@ class PuppetDatabaseConnectionServiceTest {
         assertEquals("db.internal", restored.getHost());
         assertEquals("inventory", restored.getDatabase());
         assertEquals("utf8mb4", restored.getOptions().get("charset"));
-        assertEquals("jdbc:custom:inventory", restored.nativeOptions("java").get("jdbcUrl"));
-        assertEquals("custom:inventory", restored.nativeOptions("php").get("dsn"));
+        assertEquals("jdbc:custom:inventory", restored.runtimeOptions("java").get("jdbcUrl"));
+        assertEquals("custom:inventory", restored.runtimeOptions("php").get("dsn"));
         assertEquals("plain-secret", restored.getPassword());
         assertFalse(connection.getConnectionSpec().contains("plain-secret"));
         assertEquals(0, connection.getTestStatus());
@@ -90,7 +91,8 @@ class PuppetDatabaseConnectionServiceTest {
         PuppetDatabaseConnection connection = connection(encrypted);
         connection.setConnectionId("connection-1");
         DatabaseConnectionSpec update = DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "host", "db.internal", "port", 3306,
+                "dialect", "mysql", "connectionMode", "standard",
+                "host", "db.internal", "port", 3306,
                 "database", "inventory", "username", "app", "password", ""));
 
         service.applyConnectionSpec(connection, update);
@@ -107,9 +109,10 @@ class PuppetDatabaseConnectionServiceTest {
         PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
         PuppetDatabaseConnection connection = connection(crypto.encrypt("plain-secret"));
         connection.setConnectionSpec(new String(org.leo.core.util.json.PortableJsonCodec.encode(Map.of(
-                "type", "mysql", "variant", "default", "host", "db.internal", "port", 3306,
+                "dialect", "mysql", "connectionMode", "custom", "variant", "default",
+                "host", "db.internal", "port", 3306,
                 "database", "db", "options", Map.of("apiToken", "nested-secret", "charset", "utf8mb4"),
-                "nativeOptions", Map.of("java", Map.of(
+                "runtimeOptions", Map.of("java", Map.of(
                         "jdbcUrl", "jdbc:mysql://app:url-secret@db.internal/db?password=query-secret",
                         "driverClass", "custom.Driver")))), java.nio.charset.StandardCharsets.UTF_8));
 
@@ -120,6 +123,34 @@ class PuppetDatabaseConnectionServiceTest {
         assertFalse(view.contains("url-secret"));
         assertFalse(view.contains("query-secret"));
         assertTrue(view.contains("charset=utf8mb4"));
+    }
+
+    @Test
+    void restoresMaskedAndOmittedSecretsWhenEditingAProfile() {
+        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
+        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
+        PuppetDatabaseConnection connection = connection(crypto.encrypt("plain-secret"));
+        connection.setConnectionSpec(new String(org.leo.core.util.json.PortableJsonCodec.encode(Map.of(
+                "dialect", "generic", "connectionMode", "custom",
+                "options", Map.of("apiToken", "stored-token", "region", "cn"),
+                "runtimeOptions", Map.of("java", Map.of(
+                        "jdbcUrl", "jdbc:vendor://app:url-secret@db.internal/db?token=query-secret",
+                        "driverClass", "custom.Driver",
+                        "connectionProperties", Map.of("privateKey", "stored-key"))))),
+                java.nio.charset.StandardCharsets.UTF_8));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> safeConnection = (Map<String, Object>) service
+                .toConnectionView(connection).get("connection");
+
+        Map<String, Object> merged = service.mergeProtectedValues(connection, safeConnection);
+        DatabaseConnectionSpec restored = DatabaseConnectionSpec.fromMap(merged);
+
+        assertEquals("stored-token", restored.getOptions().get("apiToken"));
+        assertEquals("jdbc:vendor://app:url-secret@db.internal/db?token=query-secret",
+                restored.runtimeOptions("java").get("jdbcUrl"));
+        assertEquals("stored-key",
+                ((Map<?, ?>) restored.runtimeOptions("java").get("connectionProperties")).get("privateKey"));
     }
 
     @Test
@@ -140,17 +171,17 @@ class PuppetDatabaseConnectionServiceTest {
         PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
         PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
-        when(mapper.updateStatus("connection-1", 0)).thenReturn(1);
+        when(mapper.updateStatusByPuppet("connection-1", "puppet-1", 0)).thenReturn(1);
         PuppetDatabaseConnection connection = connection("plain-secret");
         connection.setConnectionId("connection-1");
         connection.setStatus(0);
 
-        assertTrue(service.setEnabled("connection-1", false));
+        assertTrue(service.setEnabled("connection-1", "puppet-1", false));
         IllegalArgumentException error = assertThrows(
                 IllegalArgumentException.class, () -> service.toActiveConnectionSpec(connection));
 
         assertEquals("数据库连接已停用", error.getMessage());
-        verify(mapper).updateStatus("connection-1", 0);
+        verify(mapper).updateStatusByPuppet("connection-1", "puppet-1", 0);
     }
 
     private static PuppetDatabaseConnection connection(String password) {
@@ -159,13 +190,15 @@ class PuppetDatabaseConnectionServiceTest {
         connection.setPuppetId("puppet-1");
         connection.setCreateUserId("user-1");
         DatabaseConnectionSpec spec = DatabaseConnectionSpec.fromMap(Map.of(
-                "type", "mysql", "variant", "default", "host", "localhost", "port", 3306,
+                "dialect", "mysql", "connectionMode", "standard", "variant", "default",
+                "host", "localhost", "port", 3306,
                 "database", "db", "username", "app", "password", password));
-        connection.setDbType(spec.getType());
+        connection.setDialect(spec.getDialect());
         connection.setUsername(spec.getUsername());
         connection.setPassword(spec.getPassword());
         connection.setConnectionSpec(new String(org.leo.core.util.json.PortableJsonCodec.encode(
-                Map.of("type", "mysql", "variant", "default", "host", "localhost", "port", 3306,
+                Map.of("dialect", "mysql", "connectionMode", "standard",
+                        "variant", "default", "host", "localhost", "port", 3306,
                         "database", "db", "username", "app")), java.nio.charset.StandardCharsets.UTF_8));
         return connection;
     }

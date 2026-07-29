@@ -1,6 +1,7 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.capability.CatalinaManageCapable;
 import org.leo.core.session.PuppetNodeSession;
@@ -64,9 +65,11 @@ public class CatalinaTools {
                 return node.unloadSpringInterceptor(webFramework,
                         requireNonEmpty(identifier, "interceptorId"));
             default:
-                throw new IllegalArgumentException(
+                throw AiToolException.modelCorrectable(
+                        "INVALID_ENUM_VALUE",
                         "不支持的 componentType: " + componentType +
-                                "，有效值: filter/servlet/valve/listener/controller/interceptor");
+                                "，有效值: filter/servlet/valve/listener/controller/interceptor",
+                        "从有效值中选择 componentType，并先用 getCatalinaInfo 获取组件标识。");
         }
     }
 
@@ -74,15 +77,18 @@ public class CatalinaTools {
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         Map<String, Object> basicInfo = session.getBasicInfo(session.getCurrentHostId());
         if (basicInfo == null || basicInfo.get("MiddlewareInfo") == null) {
-            throw new IllegalArgumentException("会话中不存在基础信息: " + sessionId);
+            throw missingBasicInfo();
         }
         Object middlewareInfo = basicInfo.get("MiddlewareInfo");
         if (!(middlewareInfo instanceof Map<?, ?> middlewareMap)) {
-            throw new IllegalArgumentException("会话中的 MiddlewareInfo 格式无效: " + sessionId);
+            throw AiToolException.fatal(
+                    "INVALID_SESSION_STATE",
+                    "会话中的 MiddlewareInfo 格式无效。",
+                    null);
         }
         Object middlewareType = middlewareMap.get("MiddlewareType");
         if (middlewareType == null) {
-            throw new IllegalArgumentException("会话中不存在中间件类型信息: " + sessionId);
+            throw missingBasicInfo();
         }
         return String.valueOf(middlewareType);
     }
@@ -91,7 +97,7 @@ public class CatalinaTools {
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         Map<String, Object> basicInfo = session.getBasicInfo(session.getCurrentHostId());
         if (basicInfo == null) {
-            throw new IllegalArgumentException("会话中不存在基础信息: " + sessionId);
+            throw missingBasicInfo();
         }
         Object webFramework = basicInfo.get("WebFramework");
         return webFramework == null ? "" : String.valueOf(webFramework);
@@ -102,5 +108,12 @@ public class CatalinaTools {
             throw new IllegalArgumentException(label + " 不能为空");
         }
         return value;
+    }
+
+    private AiToolException missingBasicInfo() {
+        return AiToolException.modelCorrectable(
+                "PRECONDITION_REQUIRED",
+                "当前会话还没有容器基础信息。",
+                "先调用基础信息工具收集中间件信息，再调用 Catalina 管理工具。");
     }
 }

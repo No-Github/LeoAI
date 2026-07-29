@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS puppet_database_connections (
     connection_id VARCHAR(50) PRIMARY KEY,
     connection_name VARCHAR(100) NOT NULL,
     puppet_id VARCHAR(50) NOT NULL,
-    db_type VARCHAR(20) NOT NULL,
+    dialect VARCHAR(32) NOT NULL,
     connection_spec TEXT NOT NULL,
     username VARCHAR(100),
     password VARCHAR(512),
@@ -124,9 +124,6 @@ CREATE TABLE IF NOT EXISTS puppet_database_connections (
     max_connections INTEGER DEFAULT 10 CHECK (max_connections > 0),
     timeout_seconds INTEGER DEFAULT 30 CHECK (timeout_seconds > 0),
     create_user_id VARCHAR(50) NOT NULL,
-    team_id VARCHAR(50),
-    scope VARCHAR(16) NOT NULL DEFAULT 'private' CHECK (scope IN ('private', 'team', 'public')),
-    is_public INTEGER DEFAULT 0 CHECK (is_public IN (0, 1)),
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     description TEXT,
@@ -137,9 +134,6 @@ CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id
     ON puppet_database_connections(create_user_id);
 CREATE INDEX IF NOT EXISTS idx_database_connections_puppet_id
     ON puppet_database_connections(puppet_id);
-CREATE INDEX IF NOT EXISTS idx_database_connections_team_id
-    ON puppet_database_connections(team_id);
-
 -- 12. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id VARCHAR(50) PRIMARY KEY,
@@ -337,6 +331,17 @@ CREATE TABLE IF NOT EXISTS ai_turns (
 CREATE INDEX IF NOT EXISTS idx_ai_turns_thread_time
     ON ai_turns(thread_id, created_at);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_turns_client_message
+    ON ai_turns(thread_id, client_user_message_id)
+    WHERE client_user_message_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_turns_active_thread
+    ON ai_turns(thread_id)
+    WHERE dispatch_status IN ('running', 'cancelling');
+
+CREATE INDEX IF NOT EXISTS idx_ai_turns_thread_dispatch
+    ON ai_turns(thread_id, protocol_status, dispatch_status, created_at);
+
 -- 17. AI 单次运行记录：当前一个 Turn 对应一个 Run
 CREATE TABLE IF NOT EXISTS ai_runs (
     run_id VARCHAR(64) PRIMARY KEY,
@@ -373,7 +378,7 @@ CREATE TABLE IF NOT EXISTS ai_messages (
     message_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,
     turn_id VARCHAR(64) NOT NULL,
-    run_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64),
     message_seq INTEGER NOT NULL CHECK (message_seq > 0),
     status VARCHAR(16) NOT NULL
         CHECK (status IN ('pending', 'committed', 'discarded')),

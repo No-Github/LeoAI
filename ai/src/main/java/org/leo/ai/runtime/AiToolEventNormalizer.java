@@ -4,6 +4,7 @@ import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolExecution;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolErrorHandler;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -53,13 +54,15 @@ final class AiToolEventNormalizer {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         long startTime = toEpochMs(execution.startTime(), now);
+        boolean failed =
+                AiToolErrorHandler.isErrorResult(execution);
         data.put("kind", "tool");
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
         data.put("arguments", execution.request().arguments());
         data.put("resultPreview", truncate(execution.result(), 2000));
-        data.put("success", !execution.hasFailed());
-        data.put("status", execution.hasFailed() ? "failed" : "completed");
+        data.put("success", !failed);
+        data.put("status", failed ? "failed" : "completed");
         data.put("timestamp", startTime);
         data.put("startTime", startTime);
         data.put("endTime", toEpochMs(execution.finishTime(), now));

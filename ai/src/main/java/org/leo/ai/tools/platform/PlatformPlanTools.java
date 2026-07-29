@@ -3,6 +3,7 @@ package org.leo.ai.tools.platform;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.core.entity.AiPlan;
@@ -55,15 +56,24 @@ public class PlatformPlanTools {
             case "complete" -> plan.completeStep(stepIndex, text);
             case "fail" -> plan.failStep(stepIndex, text);
             case "skip" -> plan.skipStep(stepIndex, text);
-            default -> throw new IllegalArgumentException(
-                    "无效的 action：" + action + "，可选值：start | complete | fail | skip");
+            default -> throw AiToolException.modelCorrectable(
+                    "INVALID_ACTION",
+                    "无效的 action：" + action
+                            + "，可选值：start | complete | fail | skip",
+                    "将 action 改为 start、complete、fail 或 skip。");
         };
         if (!updated) {
             if ("start".equals(normalizedAction)
                     && plan.getSteps().stream().anyMatch(step -> step.getIndex() == stepIndex)) {
-                throw new IllegalStateException("步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动");
+                throw AiToolException.modelCorrectable(
+                        "PLAN_DEPENDENCY_INCOMPLETE",
+                        "步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动。",
+                        "先完成 dependsOn 依赖步骤，再重新启动该步骤。");
             }
-            throw new IllegalStateException("未找到指定步骤: " + stepIndex);
+            throw AiToolException.modelCorrectable(
+                    "PLAN_STEP_NOT_FOUND",
+                    "未找到指定步骤: " + stepIndex,
+                    "检查当前计划中的步骤索引后重新调用。");
         }
         state.notifyPlanUpdated();
         return success(plan);
@@ -82,7 +92,10 @@ public class PlatformPlanTools {
         String stateId = AiToolContext.requireSessionId();
         PlatformAiState state = PlatformAiStateStore.get(stateId);
         if (state == null) {
-            throw new IllegalStateException("平台 AI 会话不存在，无法操作计划");
+            throw AiToolException.userActionRequired(
+                    "SESSION_EXPIRED",
+                    "平台 AI 会话不存在，无法操作计划。",
+                    "不要重复调用；请向用户说明需要重新打开或创建 AI 会话。");
         }
         return state;
     }
@@ -90,7 +103,10 @@ public class PlatformPlanTools {
     private static AiPlan requirePlan(PlatformAiState state) {
         AiPlan plan = state.getCurrentPlan();
         if (plan == null) {
-            throw new IllegalStateException("当前没有可操作的计划");
+            throw AiToolException.modelCorrectable(
+                    "PLAN_NOT_FOUND",
+                    "当前没有可操作的计划。",
+                    "先调用 createPlan 创建计划，再操作计划步骤。");
         }
         return plan;
     }

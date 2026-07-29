@@ -125,6 +125,13 @@ public interface AiConversationMapper {
             + "ORDER BY created_at, turn_id LIMIT 1")
     AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId);
 
+    @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
+            + "AND protocol_status = 'inProgress' "
+            + "ORDER BY CASE dispatch_status "
+            + "WHEN 'cancelling' THEN 0 WHEN 'running' THEN 1 ELSE 2 END, "
+            + "created_at, turn_id")
+    List<AiTurnRecord> listInProgressTurns(@Param("threadId") String threadId);
+
     @Select("SELECT DISTINCT queued.thread_id FROM ai_turns queued "
             + "WHERE queued.protocol_status = 'inProgress' "
             + "AND queued.dispatch_status = 'queued' "
@@ -213,13 +220,25 @@ public interface AiConversationMapper {
             + "#{nodesJson}, #{reviewJson}, #{planJson})")
     int insertMessage(AiMessageRecord row);
 
-    @Select("SELECT m.*, r.status AS run_status, t.protocol_status AS protocol_status, "
-            + "t.error_message AS protocol_error_message FROM ai_messages m "
+    @Update("UPDATE ai_messages SET run_id = #{runId} "
+            + "WHERE thread_id = #{threadId} AND turn_id = #{turnId} "
+            + "AND run_id IS NULL")
+    int attachRunToTurnMessages(@Param("threadId") String threadId,
+                                @Param("turnId") String turnId,
+                                @Param("runId") String runId);
+
+    @Select("SELECT * FROM ("
+            + "SELECT m.*, r.status AS run_status, "
+            + "t.protocol_status AS protocol_status, "
+            + "t.dispatch_status AS dispatch_status, "
+            + "t.error_message AS protocol_error_message "
+            + "FROM ai_messages m "
             + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
             + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
             + "WHERE m.thread_id = #{threadId} "
-            + "ORDER BY m.timestamp ASC, m.message_seq ASC, m.message_id ASC "
-            + "LIMIT #{limit} OFFSET #{offset}")
+            + "ORDER BY m.message_seq DESC, m.message_id DESC "
+            + "LIMIT #{limit} OFFSET #{offset}"
+            + ") recent ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> listMessages(@Param("threadId") String threadId,
                                        @Param("offset") int offset,
                                        @Param("limit") int limit);

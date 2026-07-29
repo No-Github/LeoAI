@@ -36,7 +36,9 @@ public class AiTurnProtocolService {
     public Reservation begin(String threadId,
                              String clientUserMessageId,
                              String commandScope,
-                             String commandJson) {
+                             String commandJson,
+                             String userContent,
+                             Object attachments) {
         String clientId = isBlank(clientUserMessageId)
                 ? UUID.randomUUID().toString() : clientUserMessageId.trim();
         TurnSnapshot duplicate = findByClientId(threadId, clientId);
@@ -58,7 +60,7 @@ public class AiTurnProtocolService {
         row.setAssistantItemId("item-" + UUID.randomUUID());
         row.setCreatedAt(now);
         row.setInterruptRequested(false);
-        if (store.reserveProtocolTurn(row)) {
+        if (store.reserveProtocolTurn(row, userContent, attachments)) {
             return new Reservation(snapshot(row), false);
         }
 
@@ -78,6 +80,29 @@ public class AiTurnProtocolService {
         return store.listDispatchableProtocolThreadIds();
     }
 
+    public ThreadSnapshot snapshotThread(String threadId, String fallbackStatus) {
+        List<TurnSnapshot> inProgress = store
+                .listInProgressProtocolTurns(threadId)
+                .stream()
+                .map(this::snapshot)
+                .toList();
+        TurnSnapshot active = inProgress.stream()
+                .filter(turn -> STATUS_RUNNING.equals(turn.status())
+                        || STATUS_CANCELLING.equals(turn.status()))
+                .findFirst()
+                .orElse(null);
+        List<TurnSnapshot> queued = inProgress.stream()
+                .filter(turn -> STATUS_QUEUED.equals(turn.status()))
+                .toList();
+        String status = active != null
+                ? active.status()
+                : !queued.isEmpty()
+                        ? STATUS_QUEUED
+                        : fallbackStatus;
+        return new ThreadSnapshot(
+                status, !inProgress.isEmpty(), active, queued);
+    }
+
     public StartClaim tryStart(String turnId) {
         long startedAt = System.currentTimeMillis();
         boolean claimed = store.claimProtocolTurnStart(turnId, startedAt);
@@ -85,14 +110,26 @@ public class AiTurnProtocolService {
     }
 
     public TurnSnapshot requestInterrupt(String threadId, String turnId) {
-        AiTurnRecord current = require(turnId);
+        String targetTurnId = turnId;
+        if (isBlank(targetTurnId)) {
+            ThreadSnapshot thread = snapshotThread(threadId, null);
+            TurnSnapshot target = thread.activeTurn() != null
+                    ? thread.activeTurn()
+                    : thread.queuedTurns().stream().findFirst().orElse(null);
+            if (target == null) {
+                throw new IllegalStateException("当前线程没有可停止的 Turn");
+            }
+            targetTurnId = target.id();
+        }
+        AiTurnRecord current = require(targetTurnId);
         if (!threadId.equals(current.getThreadId())) {
             throw new IllegalStateException("Turn 不存在或已被后续 Turn 替代");
         }
         if (!STATUS_IN_PROGRESS.equals(current.getProtocolStatus())) {
             return snapshot(current);
         }
-        return snapshot(store.requestProtocolTurnInterrupt(threadId, turnId));
+        return snapshot(store.requestProtocolTurnInterrupt(
+                threadId, targetTurnId));
     }
 
     public TurnSnapshot completeFromRuntime(
@@ -166,6 +203,27 @@ public class AiTurnProtocolService {
     public record Reservation(TurnSnapshot turn, boolean reused) {}
 
     public record StartClaim(TurnSnapshot turn, boolean claimed) {}
+
+    public record ThreadSnapshot(String status,
+                                 boolean executing,
+                                 TurnSnapshot activeTurn,
+                                 List<TurnSnapshot> queuedTurns) {
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("status", status);
+            value.put("runStatus", status);
+            value.put("executing", executing);
+            value.put("activeTurn",
+                    activeTurn != null ? activeTurn.toMap() : null);
+            value.put("queuedTurns", queuedTurns.stream()
+                    .map(TurnSnapshot::toMap)
+                    .toList());
+            value.put("pendingTurnCount",
+                    queuedTurns.size() + (activeTurn != null ? 1 : 0));
+            return value;
+        }
+    }
 
     public record TurnSnapshot(String id,
                                String threadId,

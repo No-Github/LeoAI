@@ -13,6 +13,7 @@ import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolExecution;
 import org.junit.jupiter.api.Test;
+import org.leo.ai.agent.AiToolErrorHandler;
 import org.leo.core.ai.AiTurnRuntime;
 
 import java.util.ArrayList;
@@ -30,7 +31,8 @@ import static org.mockito.Mockito.mock;
 class AiTurnExecutionEngineTest {
 
     private final AiTurnCoordinator coordinator = new AiTurnCoordinator();
-    private final AiTurnExecutionEngine engine = new AiTurnExecutionEngine();
+    private final AiTurnExecutionEngine engine =
+            new AiTurnExecutionEngine(new AiToolErrorHandler());
 
     @Test
     void emitsTransportIndependentDeltasAndCompletesOnlyOnce() {

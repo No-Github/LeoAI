@@ -7,6 +7,7 @@ import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolException;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -172,10 +173,16 @@ public class PluginTools {
         String safeFileName = getSafeFileName(plugin.getPluginId());
         File pluginFile = new File(resolvePluginDir(), safeFileName);
         if (!pluginFile.exists() || !pluginFile.isFile()) {
-            throw new IllegalArgumentException("插件文件不存在或删除失败");
+            throw AiToolException.fatal(
+                    "PLUGIN_STORAGE_INCONSISTENT",
+                    "插件记录存在，但插件文件不存在。",
+                    null);
         }
         if (!pluginFile.delete()) {
-            throw new IllegalStateException("插件文件不存在或删除失败");
+            throw AiToolException.fatal(
+                    "PLUGIN_DELETE_FAILED",
+                    "插件文件删除失败。",
+                    null);
         }
         pluginManager.unload(plugin.getPluginId());
         return buildResult("deleted", plugin.getPluginId(), plugin.getPluginName());
@@ -261,7 +268,10 @@ public class PluginTools {
     private void savePlugin(Plugin plugin) throws Exception {
         File pluginDir = resolvePluginDir();
         if (!pluginDir.exists() && !pluginDir.mkdirs()) {
-            throw new IllegalStateException("创建插件目录失败: " + pluginDir.getAbsolutePath());
+            throw AiToolException.fatal(
+                    "PLUGIN_STORAGE_UNAVAILABLE",
+                    "插件存储目录不可用。",
+                    null);
         }
         String safeName = getSafeFileName(plugin.getPluginId());
         try (FileOutputStream fileOutputStream = new FileOutputStream(new File(pluginDir, safeName))) {

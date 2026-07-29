@@ -3,9 +3,15 @@
 $dbGet = static function ($value, $key, $default = null) {
     return is_array($value) && array_key_exists($key, $value) ? $value[$key] : $default;
 };
-$dbEmpty = static function ($code, $message) {
-    return ['code' => $code, 'msg' => $message, 'columns' => [], 'rows' => [],
+$dbEmpty = static function ($code, $message, $category = null, $sqlState = null, $retryable = false) {
+    $result = ['code' => $code, 'msg' => $message, 'columns' => [], 'rows' => [],
         'rowCount' => 0, 'affectedRows' => 0, 'generatedKey' => null];
+    if ($category !== null) {
+        $result['errorCategory'] = $category;
+        $result['sqlState'] = $sqlState;
+        $result['retryable'] = (bool)$retryable;
+    }
+    return $result;
 };
 $dbColumn = static function ($statement, $index) {
     $meta = false;
@@ -36,23 +42,48 @@ $dbCell = static function ($value, $column) {
 return [
     'id' => 'DatabaseComponent', 'version' => '2.0.0',
     'handle' => static function ($action, $params) use ($dbGet, $dbEmpty, $dbColumn, $dbCell) {
+        if ($action === 'capabilities') {
+            $pdoAvailable = class_exists('PDO');
+            $available = $pdoAvailable ? array_map('strtolower', PDO::getAvailableDrivers()) : [];
+            sort($available);
+            $drivers = [];
+            foreach ($available as $driver) {
+                $drivers[] = ['id' => $driver, 'name' => $driver,
+                    'available' => true, 'registered' => true];
+            }
+            $requested = strtolower(trim((string)$dbGet($params, 'requestedDriver', '')));
+            $requestedAvailable = $requested === '' || in_array($requested, $available, true);
+            return ['code' => 200, 'msg' => '数据库运行时能力探测成功',
+                'runtime' => 'php', 'provider' => 'pdo', 'available' => $pdoAvailable,
+                'drivers' => $drivers,
+                'requestedDriver' => ['id' => $requested, 'available' => $requestedAvailable,
+                    'message' => $requested === '' ? '未指定 PDO 驱动'
+                        : ($requestedAvailable ? 'PDO 驱动可用' : 'PDO 驱动不可用')],
+                'constraints' => ['requiresInstalledDriver' => true,
+                    'remoteInstallSupported' => false, 'customConnectorSupported' => true]];
+        }
         if ($action !== '' && $action !== 'exec') return $dbEmpty(400, 'unsupported database action');
-        if (!class_exists('PDO')) return $dbEmpty(503, 'PDO extension is missing');
+        if (!class_exists('PDO')) return $dbEmpty(
+            503, 'PDO extension is missing', 'PROVIDER_NOT_FOUND', null, false);
         $provider = strtolower(trim((string)$dbGet($params, 'provider', '')));
         $pdoDriver = strtolower(trim((string)$dbGet($params, 'pdoDriver', '')));
         $dsn = trim((string)$dbGet($params, 'dsn', ''));
         $sql = trim((string)$dbGet($params, 'sql', ''));
-        if ($provider !== 'pdo') return $dbEmpty(400, 'database provider must be pdo');
+        if ($provider !== 'pdo') return $dbEmpty(
+            400, 'database provider must be pdo', 'INVALID_PROVIDER', null, false);
         if ($pdoDriver === '' || $dsn === '' || $sql === '') {
-            return $dbEmpty(400, 'pdoDriver, dsn and sql are required');
+            return $dbEmpty(
+                400, 'pdoDriver, dsn and sql are required', 'INVALID_ARGUMENT', null, false);
         }
         $available = array_map('strtolower', PDO::getAvailableDrivers());
         if (!in_array($pdoDriver, $available, true)) {
             return $dbEmpty(503, 'PDO driver is unavailable: ' . $pdoDriver
-                . '; available drivers: ' . implode(', ', $available));
+                . '; available drivers: ' . implode(', ', $available),
+                'DRIVER_NOT_FOUND', null, false);
         }
         if (strtolower(substr($dsn, 0, strpos($dsn, ':'))) !== $pdoDriver) {
-            return $dbEmpty(400, 'PDO driver and DSN do not match');
+            return $dbEmpty(
+                400, 'PDO driver and DSN do not match', 'URL_MISMATCH', null, false);
         }
         try {
             $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -95,9 +126,19 @@ return [
             $statement->closeCursor(); $pdo = null;
             return $result;
         } catch (PDOException $error) {
-            return $dbEmpty(500, 'database operation failed: ' . $error->getMessage());
+            $state = (string)$error->getCode();
+            $category = 'SQL_ERROR'; $code = 422; $retryable = false;
+            if (strncmp($state, '08', 2) === 0) {
+                $category = 'CONNECTION_ERROR'; $code = 503; $retryable = true;
+            } elseif (strncmp($state, '28', 2) === 0) {
+                $category = 'AUTHENTICATION_ERROR';
+            } elseif (strncmp($state, '40', 2) === 0) {
+                $category = 'TRANSACTION_ROLLBACK'; $retryable = true;
+            }
+            return $dbEmpty($code, 'database operation failed: ' . $error->getMessage(),
+                $category, $state, $retryable);
         } catch (Exception $error) {
-            return $dbEmpty(500, $error->getMessage());
+            return $dbEmpty(500, $error->getMessage(), 'EXECUTION_ERROR', null, false);
         }
     }
 ];
