@@ -27,8 +27,9 @@ class ComponentBytecodeProfileTest {
             "FileUploadComponent", "FingerprintComponent", "HostIsReachableComponent",
             "HttpRequestComponent", "PluginComponent", "PortScanComponent",
             "ProxyForwardComponent", "ReconScanComponent", "ResourceComponent",
-            "ReverseTunnelComponent", "ScreenComponent", "SpringFrameworkManageComponent",
-            "TomcatCatalinaManageComponent", "WeblogicCatalinaManageComponent"
+            "ReverseTunnelComponent", "ScreenComponent", "GenericServletContainerManageComponent",
+            "JavaWebFrameworkManageComponent", "SpringFrameworkManageComponent",
+            "TomcatContainerManageComponent", "WeblogicContainerManageComponent"
     };
 
     @Test

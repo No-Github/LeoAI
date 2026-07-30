@@ -54,45 +54,41 @@ public class FileService extends ComponentService {
 
     public Map<String, Object> getFileList(String path) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 1);
+        payload.put("action", "list");
         payload.put("path", path.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);
     }
 
-    public Map<String, Object> getRootList() throws Exception {
+    public Map<String, Object> getFileSystemProfile() throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 6);
+        payload.put("action", "profile");
         return invokeComponent("FileComponent", payload);
     }
 
     public Map<String, Object> getFileMD5(String path) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 10);
+        payload.put("action", "checksum");
         payload.put("path", path.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);
     }
 
     public Map<String, Object> createDir(String dirName) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 3);
+        payload.put("action", "createDirectory");
         payload.put("path", dirName.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);
     }
 
     public Map<String, Object> deleteFile(String path) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 2);
+        payload.put("action", "delete");
         payload.put("path", path.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);
     }
 
-    public Map<String, Object> copyFile(String srcPath, String destPath) throws Exception {
-        return copyFile(srcPath, destPath, null);
-    }
-
     public Map<String, Object> copyFile(String srcPath, String destPath, String conflictStrategy) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 9);
+        payload.put("action", "copy");
         payload.put("path", srcPath.getBytes("utf-8"));
         payload.put("destPath", destPath.getBytes("utf-8"));
         if (conflictStrategy != null && !conflictStrategy.isBlank()) {
@@ -101,13 +97,9 @@ public class FileService extends ComponentService {
         return invokeComponent("FileComponent", payload);
     }
 
-    public Map<String, Object> moveFile(String srcPath, String newPath) throws Exception {
-        return moveFile(srcPath, newPath, null);
-    }
-
     public Map<String, Object> moveFile(String srcPath, String newPath, String conflictStrategy) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 5);
+        payload.put("action", "move");
         payload.put("path", srcPath.getBytes("utf-8"));
         payload.put("newPath", newPath.getBytes("utf-8"));
         if (conflictStrategy != null && !conflictStrategy.isBlank()) {
@@ -118,7 +110,7 @@ public class FileService extends ComponentService {
 
     public Map<String, Object> createFile(String path, String content) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 4);
+        payload.put("action", "createFile");
         payload.put("path", path.getBytes("utf-8"));
         payload.put("content", content.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);
@@ -126,7 +118,7 @@ public class FileService extends ComponentService {
 
     public Map<String, Object> editFile(String path, String content) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>();
-        payload.put("action", 7);
+        payload.put("action", "edit");
         payload.put("path", path.getBytes("utf-8"));
         payload.put("content", content.getBytes("utf-8"));
         return invokeComponent("FileComponent", payload);

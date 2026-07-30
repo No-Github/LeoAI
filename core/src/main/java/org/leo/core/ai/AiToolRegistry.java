@@ -80,7 +80,7 @@ public final class AiToolRegistry {
                 Set.of(CTX_PUPPET), true));
         m.put("container", new ToolCategory(
                 "container", "容器管理",
-                "将卸载 Web 容器或 Spring Web 挂载组件，可能改变目标应用运行状态。",
+                "将移除 Web 容器或 Spring Web 运行期组件，可能改变目标应用运行状态。",
                 Set.of(CTX_PUPPET), true));
         m.put("platform_write", new ToolCategory(
                 "platform_write", "平台写操作",
@@ -116,9 +116,9 @@ public final class AiToolRegistry {
                 "resumescanport", "stopscanport", "scanreachablehost"
         }) m.put(t, "scan");
 
-        // container — Catalina 卸载操作（仅 admin）
+        // container — Web Runtime 组件操作（仅 admin）
         for (String t : new String[]{
-                "unloadwebcomponent"
+                "removewebruntimecomponent"
         }) m.put(t, "container");
 
         // script — 平台脚本引擎（仅 admin）

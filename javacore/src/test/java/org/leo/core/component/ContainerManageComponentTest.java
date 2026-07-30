@@ -6,6 +6,9 @@ import org.leo.core.util.javassist.CloneWithJavassist;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,22 +21,26 @@ class ContainerManageComponentTest {
     @Test
     void transformedContainerPayloadsInitializeAfterMethodRandomization() throws Exception {
         assertTransformedRunnable("SpringFrameworkManageComponent");
-        assertTransformedRunnable("TomcatCatalinaManageComponent");
-        assertTransformedRunnable("WeblogicCatalinaManageComponent");
+        assertTransformedRunnable("TomcatContainerManageComponent");
+        assertTransformedRunnable("WeblogicContainerManageComponent");
+        assertTransformedRunnable("GenericServletContainerManageComponent");
+        assertTransformedRunnable("JavaWebFrameworkManageComponent");
     }
 
     @Test
     void unknownOperationsReturnBadRequest() throws Exception {
         assertEquals(400, code(invoke(new SpringFrameworkManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new TomcatCatalinaManageComponent(), "unknown")));
-        assertEquals(400, code(invoke(new WeblogicCatalinaManageComponent(), "unknown")));
+        assertEquals(400, code(invoke(new TomcatContainerManageComponent(), "unknown")));
+        assertEquals(400, code(invoke(new WeblogicContainerManageComponent(), "unknown")));
+        assertEquals(400, code(invoke(new GenericServletContainerManageComponent(), "unknown")));
+        assertEquals(400, code(invoke(new JavaWebFrameworkManageComponent(), "unknown")));
     }
 
     @Test
     void tomcatFieldWriterFindsInheritedFields() throws Exception {
         ChildHolder holder = new ChildHolder();
-        TomcatCatalinaManageComponent.setFieldValue(holder, "value", "updated");
-        assertEquals("updated", TomcatCatalinaManageComponent.getFV(holder, "value"));
+        TomcatContainerManageComponent.setFieldValue(holder, "value", "updated");
+        assertEquals("updated", TomcatContainerManageComponent.getFV(holder, "value"));
     }
 
     @Test
@@ -42,7 +49,7 @@ class ContainerManageComponentTest {
         manager.filters.put("sample", new FakeFilter("example.Filter"));
         manager.filterPatternList.add(new FakeFilterPattern("sample", "targetServlet", "/sample"));
 
-        ArrayList filters = new WeblogicCatalinaManageComponent().getAllFilter(new FakeWeblogicContext(manager));
+        ArrayList filters = new WeblogicContainerManageComponent().getAllFilter(new FakeWeblogicContext(manager));
 
         assertEquals(1, filters.size());
         Map info = (Map) filters.get(0);
@@ -59,14 +66,43 @@ class ContainerManageComponentTest {
         manager.filterPatternList.add(new FakeFilterPattern("remove", "b", "/b"));
         manager.filterPatternList.add(new FakeFilterPattern("keep", "c", "/c"));
 
-        Method remove = WeblogicCatalinaManageComponent.class.getDeclaredMethod(
+        Method remove = WeblogicContainerManageComponent.class.getDeclaredMethod(
                 "removeFilter", Object.class, String.class);
         remove.setAccessible(true);
-        remove.invoke(new WeblogicCatalinaManageComponent(), manager, "remove");
+        remove.invoke(new WeblogicContainerManageComponent(), manager, "remove");
 
         assertFalse(manager.filters.containsKey("remove"));
         assertEquals(1, manager.filterPatternList.size());
         assertEquals("keep", manager.filterPatternList.get(0).getFilterName());
+    }
+
+    @Test
+    void genericServletAdapterRejectsMutationOperations() throws Exception {
+        Map<String, Object> response = invoke(new GenericServletContainerManageComponent(), "unLoadFilter");
+        assertEquals(409, code(response));
+        assertEquals("UNSUPPORTED", response.get("status"));
+        assertEquals(Boolean.FALSE, response.get("removed"));
+    }
+
+    @Test
+    void genericServletAdapterUsesStandardRegistrationApi() {
+        FakeServletContext context = new FakeServletContext();
+        context.filters.put("auth", new FakeFilterRegistration(
+                "example.AuthFilter", Arrays.asList("/api/*"), Collections.singletonList("api")));
+        context.servlets.put("api", new FakeServletRegistration(
+                "example.ApiServlet", Arrays.asList("/api/*", "/health")));
+
+        GenericServletContainerManageComponent component =
+                new GenericServletContainerManageComponent();
+        ArrayList filters = component.getAllFilter(context);
+        ArrayList servlets = component.getAllServlet(context);
+
+        assertEquals(1, filters.size());
+        assertEquals("auth", ((Map) filters.get(0)).get("filterName"));
+        assertEquals("example.AuthFilter", ((Map) filters.get(0)).get("filterClassName"));
+        assertEquals(2, servlets.size());
+        assertTrue(servlets.stream().map(item -> ((Map) item).get("url"))
+                .anyMatch("/health"::equals));
     }
 
     private Map<String, Object> invoke(Object component, Object methodName) throws Exception {
@@ -162,6 +198,62 @@ class ContainerManageComponentTest {
 
         public Object keys() {
             return new String[]{pattern};
+        }
+    }
+
+    private static final class FakeServletContext {
+        private final Map<String, Object> filters = new HashMap<>();
+        private final Map<String, Object> servlets = new HashMap<>();
+
+        public Map<String, Object> getFilterRegistrations() {
+            return filters;
+        }
+
+        public Map<String, Object> getServletRegistrations() {
+            return servlets;
+        }
+    }
+
+    private static final class FakeFilterRegistration {
+        private final String className;
+        private final Collection<String> urlMappings;
+        private final Collection<String> servletMappings;
+
+        private FakeFilterRegistration(String className, Collection<String> urlMappings,
+                                       Collection<String> servletMappings) {
+            this.className = className;
+            this.urlMappings = urlMappings;
+            this.servletMappings = servletMappings;
+        }
+
+        public String getClassName() {
+            return className;
+        }
+
+        public Collection<String> getUrlPatternMappings() {
+            return urlMappings;
+        }
+
+        public Collection<String> getServletNameMappings() {
+            return servletMappings;
+        }
+    }
+
+    private static final class FakeServletRegistration {
+        private final String className;
+        private final Collection<String> mappings;
+
+        private FakeServletRegistration(String className, Collection<String> mappings) {
+            this.className = className;
+            this.mappings = mappings;
+        }
+
+        public String getClassName() {
+            return className;
+        }
+
+        public Collection<String> getMappings() {
+            return mappings;
         }
     }
 

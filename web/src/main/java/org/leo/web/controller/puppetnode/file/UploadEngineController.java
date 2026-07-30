@@ -94,7 +94,7 @@ public class UploadEngineController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            Map<String, Object> data = uploadEngineService.progress(taskId);
+            Map<String, Object> data = uploadEngineService.progress(user.getUserId(), taskId);
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("查询上传进度失败: " + e.getMessage());
@@ -114,7 +114,7 @@ public class UploadEngineController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            Map<String, Object> data = uploadEngineService.cancel(taskId);
+            Map<String, Object> data = uploadEngineService.cancel(user.getUserId(), taskId);
             AuditLogUtil.logSystemOperation(user, "FILE_UPLOAD_CANCEL", "取消上传任务", taskId, params,
                     ApiResponse.CODE_SUCCESS, "取消上传任务", "SUCCESS", null,
                     AuditLogUtil.getClientIp(request), false);
@@ -124,12 +124,86 @@ public class UploadEngineController {
         }
     }
 
-    /**
-     * 直接上传模式不保留可恢复源文件，因此不支持 resume。
-     */
+    @RequestMapping(value = "/pause", method = RequestMethod.POST)
+    public HashMap<String, Object> pause(HttpServletRequest request,
+                                         @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            Map<String, Object> data = uploadEngineService.pause(user.getUserId(), taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_UPLOAD_PAUSE", "暂停上传任务",
+                    taskId, params, ApiResponse.CODE_SUCCESS, "暂停上传任务",
+                    "SUCCESS", null, AuditLogUtil.getClientIp(request), false);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("暂停上传任务失败: " + e.getMessage());
+        }
+    }
+
     @RequestMapping(value = "/resume", method = RequestMethod.POST)
-    public HashMap<String, Object> resume() {
-        return ApiResponse.error("直接上传模式不支持恢复任务，请重新上传文件");
+    public HashMap<String, Object> resume(HttpServletRequest request,
+                                          @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
+            FileCapable fileNode = ControllerUtil.requireCapability(sessionId, FileCapable.class);
+            Map<String, Object> data = uploadEngineService.resume(
+                    fileNode, user.getUserId(), sessionId, taskId);
+            AuditLogUtil.logSuccess(ControllerUtil.getAbstractPuppetNode(sessionId),
+                    "FILE_UPLOAD_RESUME", "恢复上传任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "恢复上传任务", AuditLogUtil.getClientIp(request));
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("恢复上传任务失败: " + e.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/retry", method = RequestMethod.POST)
+    public HashMap<String, Object> retry(HttpServletRequest request,
+                                         @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
+            FileCapable fileNode = ControllerUtil.requireCapability(sessionId, FileCapable.class);
+            Map<String, Object> data = uploadEngineService.retry(
+                    fileNode, user.getUserId(), sessionId, taskId);
+            AuditLogUtil.logSuccess(ControllerUtil.getAbstractPuppetNode(sessionId),
+                    "FILE_UPLOAD_RETRY", "重试上传任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "重试上传任务", AuditLogUtil.getClientIp(request));
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("重试上传任务失败: " + e.getMessage());
+        }
+    }
+
+    @RequestMapping(value = "/remove", method = RequestMethod.POST)
+    public HashMap<String, Object> remove(HttpServletRequest request,
+                                          @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            Map<String, Object> data = uploadEngineService.remove(user.getUserId(), taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_UPLOAD_REMOVE", "清理上传任务",
+                    taskId, params, ApiResponse.CODE_SUCCESS, "清理上传任务",
+                    "SUCCESS", null, AuditLogUtil.getClientIp(request), false);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("清理上传任务失败: " + e.getMessage());
+        }
     }
 
     /**

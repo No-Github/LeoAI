@@ -169,7 +169,7 @@ if [ "$MODE" = "--check" ]; then
     echo "=== 检查已提交 payload 与源码一致性 ==="
     payload_count=$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.payload' | wc -l | tr -d ' ')
     if [ "$payload_count" -ne "$source_count" ]; then
-        echo "错误: 源文件数为 $source_count，但 resources 中有 $payload_count 个 payload。" >&2
+        echo "错误: 源文件数为 ${source_count}，但 resources 中有 ${payload_count} 个 payload。" >&2
         exit 1
     fi
 

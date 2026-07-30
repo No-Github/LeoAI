@@ -88,10 +88,26 @@ public class DownloadEngineController {
         }
     }
 
-    /**
-     * 取消任务（会停止 worker；已下载数据保留，可后续 resume）。
-     * 入参：sessionId, taskId
-     */
+    /** 暂停任务，保留已下载分块，可通过 resume 继续。 */
+    @RequestMapping(value = "/pause", method = RequestMethod.POST)
+    public HashMap<String, Object> pause(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            Map<String, Object> data = downloadEngineService.pause(user.getUserId(), taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_PAUSE", "暂停下载任务", taskId, params,
+                    ApiResponse.CODE_SUCCESS, "暂停下载任务", "SUCCESS", null,
+                    AuditLogUtil.getClientIp(request), false);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("暂停下载任务失败: " + e.getMessage());
+        }
+    }
+
+    /** 取消任务并将任务置为终态。 */
     @RequestMapping(value = "/cancel", method = RequestMethod.POST)
     public HashMap<String, Object> cancel(HttpServletRequest request, @RequestBody HashMap<String, Object> params) {
         try {
@@ -100,7 +116,7 @@ public class DownloadEngineController {
                 return ApiResponse.unauthorized("用户未登录");
             }
             String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
-            Map<String, Object> data = downloadEngineService.cancel(taskId);
+            Map<String, Object> data = downloadEngineService.cancel(user.getUserId(), taskId);
             AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_CANCEL", "取消下载任务", taskId, params,
                     ApiResponse.CODE_SUCCESS, "取消下载任务", "SUCCESS", null,
                     AuditLogUtil.getClientIp(request), false);
@@ -132,6 +148,49 @@ public class DownloadEngineController {
             return ApiResponse.success(data);
         } catch (Exception e) {
             return ApiResponse.error("恢复下载任务失败: " + e.getMessage());
+        }
+    }
+
+    /** Retry a failed task while retaining verified chunks already stored locally. */
+    @RequestMapping(value = "/retry", method = RequestMethod.POST)
+    public HashMap<String, Object> retry(HttpServletRequest request,
+                                         @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            String sessionId = ControllerUtil.getRequiredStringParam(params, "sessionId");
+            FileCapable fileNode = ControllerUtil.requireCapability(sessionId, FileCapable.class);
+            Map<String, Object> data = downloadEngineService.retry(
+                    fileNode, user.getUserId(), sessionId, taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_RETRY", "重试下载任务",
+                    taskId, params, ApiResponse.CODE_SUCCESS, "重试下载任务",
+                    "SUCCESS", null, AuditLogUtil.getClientIp(request), false);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("重试下载任务失败: " + e.getMessage());
+        }
+    }
+
+    /** Remove task metadata and partial data; a committed download file is retained. */
+    @RequestMapping(value = "/remove", method = RequestMethod.POST)
+    public HashMap<String, Object> remove(HttpServletRequest request,
+                                          @RequestBody HashMap<String, Object> params) {
+        try {
+            User user = (User) request.getSession().getAttribute("user");
+            if (user == null) {
+                return ApiResponse.unauthorized("用户未登录");
+            }
+            String taskId = ControllerUtil.getRequiredStringParam(params, "taskId");
+            Map<String, Object> data = downloadEngineService.remove(user.getUserId(), taskId);
+            AuditLogUtil.logSystemOperation(user, "FILE_DOWNLOAD_REMOVE", "清理下载任务",
+                    taskId, params, ApiResponse.CODE_SUCCESS, "清理下载任务",
+                    "SUCCESS", null, AuditLogUtil.getClientIp(request), false);
+            return ApiResponse.success(data);
+        } catch (Exception e) {
+            return ApiResponse.error("清理下载任务失败: " + e.getMessage());
         }
     }
 

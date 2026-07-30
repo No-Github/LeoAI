@@ -308,7 +308,7 @@ public class PuppetManageController {
         }
         boolean result = puppetService.deletePuppetById(puppetId);
         if (result) {
-            // 联动清理 puppet 级工作目录（basic-info、catalina-info 等）
+            // 联动清理 puppet 级工作目录（basic-info、web-runtime-info 等）
             try {
                 PuppetNodeSessionWorkDirUtil.deletePuppetWorkDir(puppet.getCreateByUserId(), puppetId);
             } catch (Exception ex) {

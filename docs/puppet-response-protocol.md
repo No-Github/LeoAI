@@ -269,13 +269,18 @@ Java组件必须自行写入 `code`；Core不会像 PHP Core 一样自动补充�
 | BasicInfoComponent | 无 | `code, BasicInfo, msg?` |
 | ClipboardComponent | action=`read/write/monitor` | `code, data?, msg?` |
 | ScreenComponent | 无；参数 `format,quality,delay` | `code, screenBytes, format, width, height, imageSize, captureTime, timestamp, errorType?, msg?` |
-| SpringFrameworkManageComponent | methodName=`getFrameworkInfo/unLoadController/unLoadInterceptor` | `code, frameworkInfo?, msg?` |
-| TomcatCatalinaManageComponent | methodName=`getCatalinaInfo/unLoadFilter/unLoadServlet/unLoadValve/unLoadListener` | `code, catalinaInfo?, msg?` |
-| WeblogicCatalinaManageComponent | methodName=`getCatalinaInfo/unLoadFilter/unLoadServlet` | `code, catalinaInfo?, msg?` |
+| SpringFrameworkManageComponent | methodName=`getFrameworkInfo/unLoadController/unLoadInterceptor` | 查询返回 `code, frameworkInfo`；修改返回 `status, removed, verified, code` |
+| TomcatContainerManageComponent | methodName=`inspectRuntime/unLoadFilter/unLoadServlet/unLoadValve/unLoadListener` | 查询返回 `code, contexts, features`；修改返回 `status, removed, verified, code` |
+| WeblogicContainerManageComponent | methodName=`inspectRuntime/unLoadFilter/unLoadServlet/unLoadListener` | 查询返回 `code, contexts`；修改返回 `status, removed, verified, code` |
+| GenericServletContainerManageComponent | methodName=`inspectRuntime` | `code, contexts`；通用适配器严格只读 |
 
 Java `BasicInfo` 的主要子对象：`OSInfo, UserInfo, MiddlewareInfo, JavaRuntimeInfo, ProcessInfo, EnvironmentInfo, HardwareInfo, NetworkInfo[], FileSystemInfo[]`。
 
-容器返回中的主要集合：
+Web Runtime HTTP API 使用 schemaVersion=2，顶层为 `scanId, runtimes[], diagnostics[]`。
+每个 runtime 包含 `runtimeId, family, productVersion, profileId, strategyId,
+servletApiVersion, namespace, features, capabilities, contexts[], frameworks[]`。
+
+容器 payload 返回中的主要集合：
 
 - Tomcat：`allFilter, allServlet, allValve, allListener`。
 - WebLogic：`allFilter, allServlet, allListener`。

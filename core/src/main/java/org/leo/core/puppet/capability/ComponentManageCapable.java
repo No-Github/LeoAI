@@ -17,4 +17,12 @@ public interface ComponentManageCapable extends ComponentInvokeCapable {
     }
 
     Map<String, Object> loadComponent(String componentId) throws Exception;
+
+    /**
+     * Deploy the current artifact again even when the logical component is already loaded.
+     * Runtimes without a distinct reload mechanism may overwrite through their normal loader.
+     */
+    default Map<String, Object> reloadComponent(String componentId) throws Exception {
+        return loadComponent(componentId);
+    }
 }

@@ -110,6 +110,18 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
+    public synchronized Map<String, Object> reloadComponent(String componentId) throws Exception {
+        loadedComponents.remove(componentId);
+        Map<String, Object> result = loadComponent(componentId);
+        if (success(result)) {
+            result.put("cached", Boolean.FALSE);
+            result.put("reloaded", Boolean.TRUE);
+            result.put("msg", "组件重新加载成功");
+        }
+        return result;
+    }
+
+    @Override
     public Map<String, Object> invokeComponent(String componentId, Map<String, Object> params) throws Exception {
         ComponentArtifact artifact = componentArtifact(componentId);
         Map<String, Object> result = rpcClient.invokeComponent(artifact.getComponentId(), artifact.getDigest(),
@@ -562,13 +574,13 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     }
 
     @Override
-    public Map<String, Object> getFileList(String path) throws Exception {
-        return invoke("FileComponent", "list", Map.of("path", path));
+    public Map<String, Object> getFileSystemProfile() throws Exception {
+        return invoke("FileComponent", "profile", Map.of());
     }
 
     @Override
-    public Map<String, Object> getRootList() throws Exception {
-        return invoke("FileComponent", "roots", Map.of());
+    public Map<String, Object> getFileList(String path) throws Exception {
+        return invoke("FileComponent", "list", Map.of("path", path));
     }
 
     @Override
@@ -585,12 +597,12 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
 
     @Override
     public Map<String, Object> getFileMD5(String path) throws Exception {
-        return invoke("FileComponent", "md5", Map.of("path", path));
+        return invoke("FileComponent", "checksum", Map.of("path", path));
     }
 
     @Override
     public Map<String, Object> createDir(String dirName) throws Exception {
-        return invoke("FileComponent", "mkdir", Map.of("path", dirName));
+        return invoke("FileComponent", "createDirectory", Map.of("path", dirName));
     }
 
     @Override
@@ -610,7 +622,7 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
 
     @Override
     public Map<String, Object> createFile(String path, String content) throws Exception {
-        return invoke("FileComponent", "create", Map.of("path", path, "content", content));
+        return invoke("FileComponent", "createFile", Map.of("path", path, "content", content));
     }
 
     @Override

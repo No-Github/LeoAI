@@ -273,11 +273,34 @@ public class BasicInfoComponent implements Runnable {
                 info.put("Version", Class.forName("com.caucho.Version", false, currentThreadClassLoader)
                         .getField("FULL_VERSION").get(null));
                 info.put("Home", System.getProperty("APP_SERVER_HOME"));
+            } else if ("Jetty".equals(middlewareType)) {
+                info.put("Version", Class.forName("org.eclipse.jetty.util.Jetty", false,
+                        currentThreadClassLoader).getField("VERSION").get(null));
+                info.put("Home", firstProperty("jetty.base", "jetty.home"));
+            } else if ("Undertow".equals(middlewareType)) {
+                Class<?> version = Class.forName("io.undertow.Version", false, currentThreadClassLoader);
+                info.put("Version", version.getMethod("getFullVersionString").invoke(null));
+                info.put("Home", firstProperty("user.dir", "java.io.tmpdir"));
+            } else if ("WildFly/JBoss".equals(middlewareType)) {
+                info.put("Version", firstProperty("jboss.product.version", "jboss.as.version"));
+                info.put("Home", firstProperty("jboss.server.base.dir", "jboss.home.dir"));
+            } else if ("WebSphere Liberty".equals(middlewareType)) {
+                info.put("Version", firstProperty("wlp.product.version", "java.runtime.version"));
+                info.put("Home", firstProperty("wlp.install.dir", "server.config.dir"));
+            } else if ("GlassFish/Payara".equals(middlewareType)) {
+                info.put("Version", firstProperty("product.name", "glassfish.version"));
+                info.put("Home", firstProperty("com.sun.aas.installRoot", "com.sun.aas.instanceRoot"));
+            } else if ("TongWeb".equals(middlewareType)) {
+                info.put("Version", firstProperty("tongweb.version", "server.version"));
+                info.put("Home", firstProperty("tongweb.home", "server.home"));
+            } else if ("BES".equals(middlewareType)) {
+                info.put("Version", firstProperty("bes.version", "server.version"));
+                info.put("Home", firstProperty("bes.home", "server.home"));
             } else {
                 info.put("Version", "unknown");
             }
         } catch (Exception e) {
-            info.put("MiddlewareType", "Unknown");
+            info.put("Version", "unknown");
             info.put("Error", e.getMessage());
         }
 
@@ -928,8 +951,16 @@ public class BasicInfoComponent implements Runnable {
         try {
             Class<?> serverInfoClass = Class.forName("org.apache.catalina.util.ServerInfo",
                     false, currentThreadClassLoader);
-            Method getServerInfoMethod = serverInfoClass.getMethod("getServerInfo");
-            return (String) getServerInfoMethod.invoke(null);
+            try {
+                Method getServerNumber = serverInfoClass.getMethod("getServerNumber");
+                Object version = getServerNumber.invoke(null);
+                if (version != null && String.valueOf(version).length() > 0) {
+                    return String.valueOf(version);
+                }
+            } catch (Exception ignored) {
+            }
+            Method getServerInfo = serverInfoClass.getMethod("getServerInfo");
+            return (String) getServerInfo.invoke(null);
         } catch (Exception e) {
             return "unknown";
         }
@@ -962,8 +993,32 @@ public class BasicInfoComponent implements Runnable {
         if (exists("org.apache.struts2.dispatcher.filter.StrutsPrepareAndExecuteFilter")) {
             return "Struts2";
         }
+        if (exists("jakarta.faces.webapp.FacesServlet")) {
+            return "Jakarta Faces";
+        }
         if (exists("javax.faces.webapp.FacesServlet")) {
             return "JSF";
+        }
+        if (exists("org.jboss.resteasy.plugins.server.servlet.HttpServletDispatcher")) {
+            return "RESTEasy (JAX-RS)";
+        }
+        if (exists("org.glassfish.jersey.servlet.ServletContainer")) {
+            return "Jersey (JAX-RS)";
+        }
+        if (exists("io.quarkus.runtime.Application")) {
+            return "Quarkus";
+        }
+        if (exists("io.micronaut.runtime.Micronaut")) {
+            return "Micronaut";
+        }
+        if (exists("org.apache.wicket.Application")) {
+            return "Apache Wicket";
+        }
+        if (exists("play.Application")) {
+            return "Play Framework";
+        }
+        if (exists("jakarta.ws.rs.core.Application") || exists("javax.ws.rs.core.Application")) {
+            return "JAX-RS";
         }
         if (exists("javax.servlet.Servlet") || exists("jakarta.servlet.Servlet")) {
             return "Servlet";
@@ -972,6 +1027,16 @@ public class BasicInfoComponent implements Runnable {
     }
 
     private String detectMiddleware() {
+        if (exists("org.jboss.as.server.Main") || System.getProperty("jboss.server.base.dir") != null) {
+            return "WildFly/JBoss";
+        }
+        if (exists("com.ibm.ws.kernel.boot.Launcher")) {
+            return "WebSphere Liberty";
+        }
+        if (exists("fish.payara.micro.PayaraMicro")
+                || exists("com.sun.enterprise.glassfish.bootstrap.ASMain")) {
+            return "GlassFish/Payara";
+        }
         if (exists("com.caucho.Version")) {
             return "Resin";
         }
@@ -984,10 +1049,31 @@ public class BasicInfoComponent implements Runnable {
         if (exists("weblogic.version")) {
             return "WebLogic";
         }
+        if (exists("com.tongweb.web.thor.core.ContainerBase")
+                || System.getProperty("tongweb.home") != null) {
+            return "TongWeb";
+        }
+        if (exists("com.bes.enterprise.webtier.core.Container")
+                || System.getProperty("bes.home") != null) {
+            return "BES";
+        }
         if (exists("org.apache.catalina.Server")) {
             return "Tomcat";
         }
+        if (exists("org.eclipse.jetty.server.Server")) {
+            return "Jetty";
+        }
+        if (exists("io.undertow.Undertow")
+                || exists("io.undertow.servlet.spec.ServletContextImpl")) {
+            return "Undertow";
+        }
         return "Unknown";
+    }
+
+    private String firstProperty(String first, String second) {
+        String value = System.getProperty(first);
+        if (value == null || value.length() == 0) value = System.getProperty(second);
+        return value == null || value.length() == 0 ? "unknown" : value;
     }
 
 }

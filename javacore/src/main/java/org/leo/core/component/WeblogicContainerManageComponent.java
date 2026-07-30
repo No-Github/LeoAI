@@ -6,12 +6,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
 
-public class WeblogicCatalinaManageComponent implements Runnable {
+public class WeblogicContainerManageComponent implements Runnable {
     private HashMap params;
     private HashMap results;
     // 注意：曾经这里把 contexts 用 static 缓存（`static HashSet contexts = getContext()`），
     // 类加载时执行一次，第一次扫描到空就永远空。现在改为每次现扫。
-    private static ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
 
 
     public void run() {
@@ -40,27 +39,38 @@ public class WeblogicCatalinaManageComponent implements Runnable {
             return;
         }
         String methodName = (String) methodObj;
-        if ("getCatalinaInfo".equals(methodName)) {
-            results.put("catalinaInfo",getCatalinaInfo());
+        if ("inspectRuntime".equals(methodName)) {
+            results.put("contexts",inspectRuntime());
+            results.put("code", Integer.valueOf(200));
+            return;
         } else if ("unLoadFilter".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("filterName");
-            unLoadFilter(contextName,filterName);
+            putOperationResult(unLoadFilter(contextName,filterName));
         } else if ("unLoadServlet".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("servletPattern");
-            unLoadServlet(contextName,filterName);
+            putOperationResult(unLoadServlet(contextName,filterName));
+        } else if ("unLoadListener".equals(methodName)) {
+            putOperationResult(unLoadListener((String) params.get("listenerId")));
         } else {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
             return;
         }
-        results.put("code", 200);
     }
 
-    public ArrayList getCatalinaInfo() {
+    private void putOperationResult(Boolean changed) {
+        boolean removed = Boolean.TRUE.equals(changed);
+        results.put("removed", Boolean.valueOf(removed));
+        results.put("verified", Boolean.TRUE);
+        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(removed ? 200 : 404));
+    }
+
+    public ArrayList inspectRuntime() {
         HashSet contexts = getContext();
-        ArrayList catalinaInfo=new ArrayList();
+        ArrayList runtimeContexts=new ArrayList();
         for (Object context:contexts) {
             try {
                 HashMap contextInfo=new HashMap();
@@ -70,12 +80,12 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                 contextInfo.put("allFilter",getAllFilter(context));
                 contextInfo.put("allServlet",getAllServlet(context));
                 contextInfo.put("allListener",getAllListener(context));
-                catalinaInfo.add(contextInfo);
+                runtimeContexts.add(contextInfo);
             } catch (Exception ignored) {
                 // 单个 Context 解析失败不影响其余上下文，也不向目标日志泄漏堆栈。
             }
         }
-        return catalinaInfo;
+        return runtimeContexts;
     }
 
     public ArrayList getAllFilter(Object standardContext) {
@@ -182,7 +192,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
             for (int fi = 0; fi < fieldDefs.length; fi++) {
                 Object listObj = tryGetField(holder, fieldDefs[fi][0]);
                 if (listObj == null) continue;
-                collectWeblogicListeners(listObj, fieldDefs[fi][1], listeners, seen);
+                collectWeblogicListeners(listObj, holder, fieldDefs[fi][0],
+                        fieldDefs[fi][1], listeners, seen);
             }
         }
         return listeners;
@@ -196,7 +207,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         }
     }
 
-    private static void collectWeblogicListeners(Object listObj, String category, ArrayList sink, Set<String> seen) {
+    private static void collectWeblogicListeners(Object listObj, Object holder, String fieldName,
+                                                 String category, ArrayList sink, Set<String> seen) {
         List<Object> list;
         if (listObj instanceof List) {
             list = (List<Object>) listObj;
@@ -222,25 +234,91 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         }
     }
 
+    public Boolean unLoadListener(String listenerId) throws Exception {
+        String[] fieldNames = new String[]{
+                "_servletContextListeners", "servletContextListeners",
+                "_servletContextAttListeners", "servletContextAttListeners",
+                "_sessionListeners", "sessionListeners",
+                "_sessionAttListeners", "sessionAttListeners",
+                "_sessionIdListeners", "sessionIdListeners",
+                "_requestListeners", "requestListeners",
+                "_requestAttListeners", "requestAttListeners",
+                "_asyncListeners", "asyncListeners"
+        };
+        Iterator contexts = getContext().iterator();
+        while (contexts.hasNext()) {
+            Object context = contexts.next();
+            Object[] holders = new Object[]{context, tryGetField(context, "eventsManager"),
+                    tryGetField(context, "_eventsManager")};
+            for (int hi = 0; hi < holders.length; hi++) {
+                Object holder = holders[hi];
+                if (holder == null) continue;
+                for (int fi = 0; fi < fieldNames.length; fi++) {
+                    if (removeListenerById(holder, fieldNames[fi], listenerId)) {
+                        return Boolean.TRUE;
+                    }
+                }
+            }
+        }
+        return Boolean.FALSE;
+    }
+
+    private boolean removeListenerById(Object holder, String fieldName, String listenerId)
+            throws Exception {
+        Object collection = tryGetField(holder, fieldName);
+        if (collection instanceof List) {
+            List listeners = (List) collection;
+            for (int i = 0; i < listeners.size(); i++) {
+                Object listener = listeners.get(i);
+                if (listener != null && listenerId.equals(
+                        Integer.toHexString(System.identityHashCode(listener)))) {
+                    return listeners.remove(listener);
+                }
+            }
+            return false;
+        }
+        if (collection == null || !collection.getClass().isArray()) return false;
+        int length = Array.getLength(collection);
+        ArrayList kept = new ArrayList();
+        boolean removed = false;
+        for (int i = 0; i < length; i++) {
+            Object value = Array.get(collection, i);
+            if (value != null && listenerId.equals(
+                    Integer.toHexString(System.identityHashCode(value)))) removed = true;
+            else kept.add(value);
+        }
+        if (!removed) return false;
+        Object replacement = Array.newInstance(collection.getClass().getComponentType(), kept.size());
+        for (int i = 0; i < kept.size(); i++) Array.set(replacement, i, kept.get(i));
+        Field field = getF(holder, fieldName);
+        field.setAccessible(true);
+        field.set(holder, replacement);
+        return true;
+    }
+
     public Boolean unLoadFilter(String contextName,String filterName) throws Exception {
         for (Object standardContext:getContext()){
             if (contextName.equals(getFV(standardContext,"contextName"))){
                 Object filterManager = invokeMethod(standardContext, "getFilterManager");
-                removeFilter(filterManager, filterName);
+                return Boolean.valueOf(removeFilter(filterManager, filterName));
             }
         }
-        return true;
+        return Boolean.FALSE;
     }
 
-    private void removeFilter(Object filterManager, String filterName) throws Exception {
+    private boolean removeFilter(Object filterManager, String filterName) throws Exception {
         HashMap filters = (HashMap) getFV(filterManager,"filters");
         ArrayList filterPatternList = (ArrayList) getFV(filterManager,"filterPatternList");
-        filters.remove(filterName);
+        boolean removed = filters.remove(filterName) != null;
         Iterator iterator = filterPatternList.iterator();
         while (iterator.hasNext()) {
             Object filterPattern = iterator.next();
-            if (filterName.equals(invokeMethod(filterPattern,"getFilterName"))) iterator.remove();
+            if (filterName.equals(invokeMethod(filterPattern,"getFilterName"))) {
+                iterator.remove();
+                removed = true;
+            }
         }
+        return removed && !filters.containsKey(filterName);
     }
 
     public Boolean unLoadServlet(String contextName,String servletPattern) throws Exception {
@@ -249,13 +327,17 @@ public class WeblogicCatalinaManageComponent implements Runnable {
                 Object servletMapping=getFV(standardContext,"servletMapping");
                 Map matchMap = (Map)getFV(servletMapping, "matchMap");
                 Object fullMatchNode=matchMap.get(servletPattern);
+                if (fullMatchNode == null) continue;
                 Object exactValue=getFV(fullMatchNode,"exactValue");
+                if (exactValue == null) exactValue = getFV(fullMatchNode, "patternValue");
+                if (exactValue == null) continue;
                 Object servletStub=invokeMethod(exactValue,"getServletStub");
                 invokeMethod(standardContext,"removeServletStub",new Class[]{servletStub.getClass(),boolean.class},new Object[]{servletStub,false});
                 invokeMethod(servletMapping,"removePattern",new Class[]{String.class},new Object[]{servletPattern});
+                return Boolean.valueOf(!matchMap.containsKey(servletPattern));
             }
         }
-        return true;
+        return Boolean.FALSE;
     }
 
 
@@ -263,7 +345,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         HashSet webappContexts = new HashSet();
         // 优先用类加载时记录的 CL（puppet 注入时拿到的 CL，通常是 weblogic.utils.classloaders.* 之一），
         // 不行就 fallback 到 system classloader 再试一次（覆盖 puppet 在执行线程上 CL 被替换的情况）
-        ClassLoader[] candidates = new ClassLoader[]{classLoader, ClassLoader.getSystemClassLoader()};
+        ClassLoader[] candidates = new ClassLoader[]{
+                Thread.currentThread().getContextClassLoader(), ClassLoader.getSystemClassLoader()};
         Class serverRuntimeClass = null;
         Class webAppServletContextClass = null;
         for (int i = 0; i < candidates.length; i++) {
@@ -400,7 +483,8 @@ public class WeblogicCatalinaManageComponent implements Runnable {
         HashSet webappContexts = new HashSet();
 
         // 选 ClassLoader：先用 puppet 注入时记录的 CL，失败就走 system CL
-        ClassLoader[] candidates = new ClassLoader[]{classLoader, ClassLoader.getSystemClassLoader()};
+        ClassLoader[] candidates = new ClassLoader[]{
+                Thread.currentThread().getContextClassLoader(), ClassLoader.getSystemClassLoader()};
         Class webAppServletContextClass = null;
         for (int i = 0; i < candidates.length; i++) {
             if (candidates[i] == null) continue;

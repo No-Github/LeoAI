@@ -6,7 +6,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
 
-public class TomcatCatalinaManageComponent implements Runnable {
+public class TomcatContainerManageComponent implements Runnable {
     // 注意：曾经这里有个 `private static HashSet contexts` 缓存，
     // 第一次扫描如果命中失败就把空集合缓存住，之后永远返回空。
     // 现在每次都重新扫描线程列表。
@@ -16,10 +16,6 @@ public class TomcatCatalinaManageComponent implements Runnable {
     private static HashSet getContexts() {
         return getContext();
     }
-
-    private static Map valveMap = Collections.synchronizedMap(new HashMap());
-    private static Map pipelineMap = Collections.synchronizedMap(new HashMap());
-    private static Map listenerMap = Collections.synchronizedMap(new HashMap());
 
     public static HashSet getContext() {
         HashSet contexts = new HashSet();
@@ -242,39 +238,47 @@ public class TomcatCatalinaManageComponent implements Runnable {
             return;
         }
         String methodName = (String) methodObj;
-        if ("getCatalinaInfo".equals(methodName)) {
-            results.put("catalinaInfo", getCatalinaInfo());
+        if ("inspectRuntime".equals(methodName)) {
+            results.put("contexts", inspectRuntime());
+            results.put("features", inspectRuntimeFeatures());
+            results.put("code", Integer.valueOf(200));
+            return;
         } else if ("unLoadFilter".equals(methodName)) {
-            // Filter 卸载通常基于 contextName + filterName (因为同名 Filter 在一个 Context 下唯一)
             String contextName = (String) params.get("contextName");
             String filterName = (String) params.get("filterName");
-            unLoadFilter(contextName, filterName);
+            putOperationResult(unLoadFilter(contextName, filterName));
         } else if ("unLoadServlet".equals(methodName)) {
             String contextName = (String) params.get("contextName");
             String servletPattern = (String) params.get("servletPattern");
-            unLoadServlet(contextName, servletPattern);
+            putOperationResult(unLoadServlet(contextName, servletPattern));
         } else if ("unLoadValve".equals(methodName)) {
             String valveId = (String) params.get("valveId");
-            unLoadValve(valveId);
+            putOperationResult(unLoadValve(valveId));
         } else if ("unLoadListener".equals(methodName)) {
             String listenerId = (String) params.get("listenerId");
-            unLoadListener(listenerId);
+            putOperationResult(unLoadListener(listenerId));
         } else {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
             return;
         }
-
-        results.put("code", 200);
     }
 
-    public ArrayList getCatalinaInfo() {
-        // 1. 刷新列表前清空所有组件缓存，防止内存泄漏
-        valveMap.clear();
-        pipelineMap.clear();
-        listenerMap.clear(); // 新增：清理监听器缓存
+    private void putOperationResult(Boolean changed) {
+        boolean removed = Boolean.TRUE.equals(changed);
+        results.put("removed", Boolean.valueOf(removed));
+        results.put("matched", Integer.valueOf(removed ? 1 : 0));
+        results.put("changed", Integer.valueOf(removed ? 1 : 0));
+        results.put("verified", Boolean.TRUE);
+        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(removed ? 200 : 404));
+        if (!removed && results.get("msg") == null) {
+            results.put("msg", "Component not found");
+        }
+    }
 
-        ArrayList catalinaInfo = new ArrayList();
+    public ArrayList inspectRuntime() {
+        ArrayList runtimeContexts = new ArrayList();
         for (Object context : getContexts()) {
             try {
                 HashMap contextInfo = new HashMap();
@@ -287,12 +291,64 @@ public class TomcatCatalinaManageComponent implements Runnable {
                 contextInfo.put("allValve", getAllValve(context));
                 contextInfo.put("allListener", getAllListener(context)); // 新增：获取监听器
 
-                catalinaInfo.add(contextInfo);
+                runtimeContexts.add(contextInfo);
             } catch (Exception e) {
                 // 忽略单个 Context 的异常，继续处理下一个
             }
         }
-        return catalinaInfo;
+        return runtimeContexts;
+    }
+
+    public HashMap inspectRuntimeFeatures() {
+        HashMap features = new HashMap();
+        Iterator iterator = getContexts().iterator();
+        if (!iterator.hasNext()) return features;
+        Object context = iterator.next();
+        ClassLoader loader = context.getClass().getClassLoader();
+        features.put("namespace", classExists("jakarta.servlet.Servlet", loader) ? "JAKARTA" : "JAVAX");
+        features.put("filterMapPackage", classExists("org.apache.tomcat.util.descriptor.web.FilterMap", loader)
+                ? "org.apache.tomcat.util.descriptor.web"
+                : classExists("org.apache.catalina.deploy.FilterMap", loader)
+                ? "org.apache.catalina.deploy" : "UNKNOWN");
+        features.put("contextClass", context.getClass().getName());
+        features.put("embedded", Boolean.valueOf(
+                context.getClass().getName().indexOf("Embedded") >= 0));
+        features.put("servletMappingApi", Boolean.valueOf(
+                hasMethod(context.getClass(), "findServletMappings")));
+        String[] listenerFields = new String[]{
+                "applicationEventListenersList",
+                "applicationEventListenersObjects",
+                "applicationEventListeners"
+        };
+        for (int i = 0; i < listenerFields.length; i++) {
+            try {
+                getF(context, listenerFields[i]);
+                features.put("listenerStorage", listenerFields[i]);
+                break;
+            } catch (Throwable ignored) {
+            }
+        }
+        return features;
+    }
+
+    private boolean classExists(String name, ClassLoader loader) {
+        try {
+            Class.forName(name, false, loader);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private boolean hasMethod(Class type, String name) {
+        while (type != null) {
+            Method[] methods = type.getDeclaredMethods();
+            for (int i = 0; i < methods.length; i++) {
+                if (name.equals(methods[i].getName())) return true;
+            }
+            type = type.getSuperclass();
+        }
+        return false;
     }
 
     public ArrayList getAllValve(Object standardContext) {
@@ -327,9 +383,6 @@ public class TomcatCatalinaManageComponent implements Runnable {
         for (Object v : valves) {
             // 使用 hex 格式的 identityHashCode 作为唯一 ID
             String valveId = Integer.toHexString(System.identityHashCode(v));
-            valveMap.put(valveId, v);
-            pipelineMap.put(valveId, pipeline);
-
             HashMap valveInfo = new HashMap();
             valveInfo.put("valveClassName", v.getClass().getName());
             valveInfo.put("valveId", valveId);
@@ -375,30 +428,41 @@ public class TomcatCatalinaManageComponent implements Runnable {
     }
 
     public ArrayList getAllServlet(Object standardContext) {
+        ArrayList servlets = new ArrayList();
         try {
-            HashMap servletMappings = (HashMap) getFV(standardContext, "servletMappings");
-            Iterator s = servletMappings.keySet().iterator();
-            ArrayList servlets = new ArrayList();
-            while (s.hasNext()) {
+            String[] patterns;
+            try {
+                patterns = (String[]) invokeMethod(standardContext, "findServletMappings");
+            } catch (Exception ignored) {
+                Map servletMappings = (Map) getFV(standardContext, "servletMappings");
+                patterns = (String[]) servletMappings.keySet().toArray(new String[servletMappings.size()]);
+            }
+            for (int i = 0; i < patterns.length; i++) {
                 try {
-                    String url = (String) s.next();
-                    String wrapperName = (String) servletMappings.get(url);
+                    String url = patterns[i];
+                    String wrapperName;
+                    try {
+                        wrapperName = (String) invokeMethod(standardContext, "findServletMapping",
+                                new Class[]{String.class}, new Object[]{url});
+                    } catch (Exception ignored) {
+                        Map servletMappings = (Map) getFV(standardContext, "servletMappings");
+                        wrapperName = (String) servletMappings.get(url);
+                    }
                     Object wrapper = invokeMethod(standardContext, "findChild", new Class[]{String.class}, new Object[]{wrapperName});
-                    Object servlet =invokeMethod(wrapper,"loadServlet");
                     HashMap servletInfo = new HashMap();
                     servletInfo.put("url", url);
                     servletInfo.put("wrapperName", wrapperName);
-                    servletInfo.put("servletClass", invokeMethod(wrapper, "getServletClass"));
-                    ClassLoader loader = servlet.getClass().getClassLoader();
-                    servletInfo.put("servletClassLoaderClassName",
-                            loader == null ? "<bootstrap>" : loader.getClass().getName());
+                    servletInfo.put("servletClass", wrapper == null ? null : invokeMethod(wrapper, "getServletClass"));
+                    ClassLoader loader = wrapper == null ? null : wrapper.getClass().getClassLoader();
+                    servletInfo.put("servletClassLoaderClassName", loader == null
+                            ? "<bootstrap>" : loader.getClass().getName());
                     servlets.add(servletInfo);
-                } catch (Exception var9) {
+                } catch (Exception ignored) {
                 }
             }
             return servlets;
-        } catch (Exception var10) {
-            return null;
+        } catch (Exception ignored) {
+            return servlets;
         }
     }
     public ArrayList getAllListener(Object standardContext) {
@@ -429,8 +493,6 @@ public class TomcatCatalinaManageComponent implements Runnable {
             for (Object l : listenerList) {
                 if (l == null) continue;
                 String lid = Integer.toHexString(System.identityHashCode(l));
-                // 存入缓存供卸载使用
-                listenerMap.put(lid, l);
                 HashMap info = new HashMap();
                 info.put("listenerId", lid);
                 info.put("className", l.getClass().getName());
@@ -448,8 +510,15 @@ public class TomcatCatalinaManageComponent implements Runnable {
     public Boolean unLoadServlet(String contextName, String servletPattern) throws Exception {
         for (Object standardContext : getContexts()) {
             if (getFV(standardContext, "name").equals(contextName)) {
-                HashMap servletMappings = (HashMap) getFV(standardContext, "servletMappings");
-                String wrapperName = (String) servletMappings.get(servletPattern);
+                String wrapperName;
+                try {
+                    wrapperName = (String) invokeMethod(standardContext, "findServletMapping",
+                            new Class[]{String.class}, new Object[]{servletPattern});
+                } catch (Exception ignored) {
+                    Map servletMappings = (Map) getFV(standardContext, "servletMappings");
+                    wrapperName = (String) servletMappings.get(servletPattern);
+                }
+                if (wrapperName == null) continue;
 
                 Object wrapper = this.invokeMethod(standardContext, "findChild", new Class[]{String.class}, new Object[]{wrapperName});
                 Class containerClass = Class.forName("org.apache.catalina.Container", false, standardContext.getClass().getClassLoader());
@@ -457,9 +526,10 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     standardContext.getClass().getDeclaredMethod("removeChild", containerClass).invoke(standardContext, wrapper);
                 }
                 this.invokeMethod(standardContext, "removeServletMapping", new Class[]{String.class}, new Object[]{servletPattern});
+                return Boolean.valueOf(!hasServletMapping(standardContext, servletPattern));
             }
         }
-        return true;
+        return Boolean.FALSE;
     }
 
     public Boolean unLoadFilter(String contextName, String filterName) throws Exception {
@@ -478,6 +548,7 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     kept.add(fm);
                 }
             }
+            if (toRemove.isEmpty()) continue;
 
             // 2) 优先走公开 API removeFilterMap(FilterMap)，能同步刷掉内部 filterMaps + filterMapsArray 缓存
             boolean publicApiUsed = false;
@@ -546,43 +617,78 @@ public class TomcatCatalinaManageComponent implements Runnable {
                 }
             } catch (Throwable ignored) {
             }
+            return Boolean.valueOf(!hasFilter(standardContext, filterName));
         }
-        return true;
+        return Boolean.FALSE;
+    }
+
+    private boolean hasServletMapping(Object standardContext, String pattern) {
+        try {
+            Object name = invokeMethod(standardContext, "findServletMapping",
+                    new Class[]{String.class}, new Object[]{pattern});
+            return name != null;
+        } catch (Throwable ignored) {
+            try {
+                Map mappings = (Map) getFV(standardContext, "servletMappings");
+                return mappings != null && mappings.containsKey(pattern);
+            } catch (Throwable ignoredAgain) {
+                return true;
+            }
+        }
+    }
+
+    private boolean hasFilter(Object standardContext, String filterName) {
+        try {
+            Object[] maps = (Object[]) invokeMethod(standardContext, "findFilterMaps");
+            for (int i = 0; i < maps.length; i++) {
+                if (filterName.equals(getFV(maps[i], "filterName"))) return true;
+            }
+            Object definition = invokeMethod(standardContext, "findFilterDef",
+                    new Class[]{String.class}, new Object[]{filterName});
+            return definition != null;
+        } catch (Throwable ignored) {
+            return true;
+        }
     }
 
     public Boolean unLoadValve(String valveId) throws Exception {
-        Object pipeline = pipelineMap.get(valveId);
-        Object valve = valveMap.get(valveId);
-
-        if (pipeline == null || valve == null) {
-            results.put("msg", "Valve not found in cache");
-            return false;
+        Iterator contexts = getContexts().iterator();
+        while (contexts.hasNext()) {
+            Object container = contexts.next();
+            while (container != null) {
+                Object pipeline;
+                try {
+                    pipeline = invokeMethod(container, "getPipeline");
+                } catch (Throwable ignored) {
+                    pipeline = null;
+                }
+                if (pipeline != null) {
+                    Object[] valves = (Object[]) invokeMethod(pipeline, "getValves");
+                    for (int i = 0; i < valves.length; i++) {
+                        Object valve = valves[i];
+                        if (!valveId.equals(Integer.toHexString(System.identityHashCode(valve)))) continue;
+                        ClassLoader loader = pipeline.getClass().getClassLoader();
+                        Class valveClass = Class.forName("org.apache.catalina.Valve", false, loader);
+                        Method removeMethod = pipeline.getClass().getMethod("removeValve", valveClass);
+                        removeMethod.setAccessible(true);
+                        removeMethod.invoke(pipeline, valve);
+                        Object[] remaining = (Object[]) invokeMethod(pipeline, "getValves");
+                        for (int j = 0; j < remaining.length; j++) {
+                            if (remaining[j] == valve) return Boolean.FALSE;
+                        }
+                        return Boolean.TRUE;
+                    }
+                }
+                try {
+                    container = invokeMethod(container, "getParent");
+                } catch (Throwable ignored) {
+                    container = null;
+                }
+            }
         }
-
-        // 重点：跨类加载器反射调用。必须使用 Pipeline 所在的 ClassLoader 加载 Valve 接口
-        ClassLoader loader = pipeline.getClass().getClassLoader();
-        Class<?> valveClass = Class.forName("org.apache.catalina.Valve", false, loader);
-
-        // 找到 removeValve(org.apache.catalina.Valve) 方法
-        Method removeMethod = pipeline.getClass().getMethod("removeValve", valveClass);
-        removeMethod.setAccessible(true);
-        removeMethod.invoke(pipeline, valve);
-
-        // 清理已移除的缓存
-        valveMap.remove(valveId);
-        pipelineMap.remove(valveId);
-        return true;
+        return Boolean.FALSE;
     }
     public Boolean unLoadListener(String listenerId) throws Exception {
-        // 1. 从缓存中找到具体的 Listener 实例
-        Object targetListener = listenerMap.get(listenerId);
-        if (targetListener == null) {
-            results.put("msg", "Listener instance not found, please refresh list.");
-            return false;
-        }
-
-        String className = targetListener.getClass().getName();
-
         // Tomcat 在不同版本里运行时 listener 列表字段名不一致，且 event / lifecycle 是两套字段：
         //   event listeners
         //     - Tomcat 8.5/9/10/11：applicationEventListenersList（CopyOnWriteArrayList）
@@ -605,10 +711,30 @@ public class TomcatCatalinaManageComponent implements Runnable {
         Iterator contextIt = getContexts().iterator();
         while (contextIt.hasNext()) {
             Object standardContext = contextIt.next();
+            Object targetListener = null;
+            String className = null;
+            for (int fi = 0; fi < candidateFields.length && targetListener == null; fi++) {
+                Object source;
+                try {
+                    source = getFV(standardContext, candidateFields[fi]);
+                } catch (Throwable ignored) {
+                    continue;
+                }
+                if (source == null) continue;
+                int length = source instanceof List ? ((List) source).size()
+                        : source.getClass().isArray() ? Array.getLength(source) : 0;
+                for (int i = 0; i < length; i++) {
+                    Object value = source instanceof List ? ((List) source).get(i) : Array.get(source, i);
+                    if (value != null && listenerId.equals(
+                            Integer.toHexString(System.identityHashCode(value)))) {
+                        targetListener = value;
+                        className = value.getClass().getName();
+                        break;
+                    }
+                }
+            }
+            if (targetListener == null) continue;
 
-            // 注意：同一个 Listener 实例如果同时实现了 Lifecycle + Event 两类接口，
-            // Tomcat 会同时塞进两个列表（应用层 register 时是一次，但内部分发到两条链）。
-            // 这里必须遍历完所有候选字段，逐个 remove，不能命中即 break，否则会留一份「半挂载」状态继续触发。
             boolean anyHit = false;
             for (int fi = 0; fi < candidateFields.length; fi++) {
                 String fieldName = candidateFields[fi];
@@ -659,12 +785,11 @@ public class TomcatCatalinaManageComponent implements Runnable {
                     // 老版本可能没有这个方法，忽略
                 }
 
-                listenerMap.remove(listenerId);
                 results.put("msg", "Successfully uninstalled Listener: " + className);
-                return true;
+                return Boolean.TRUE;
             }
         }
-        return false;
+        return Boolean.FALSE;
     }
 
 

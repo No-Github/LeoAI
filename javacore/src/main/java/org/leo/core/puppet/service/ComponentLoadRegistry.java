@@ -140,6 +140,22 @@ public final class ComponentLoadRegistry {
         flights.clear();
     }
 
+    /**
+     * Invalidates one logical component so an explicit reload reaches the puppet instead of
+     * returning the regular load cache hit.
+     */
+    public synchronized void invalidate(String hostId, String componentName) {
+        String host = hostKey(hostId);
+        String component = componentKey(componentName);
+        HostState state = state(host, clock.getAsLong(), false);
+        if (state != null) {
+            state.components.remove(component);
+            state.failures.remove(component);
+        }
+        generation++;
+        flights.remove(host + '\u0000' + component);
+    }
+
     private Map<String, Object> await(Flight flight) throws Exception {
         try {
             flight.done.await();

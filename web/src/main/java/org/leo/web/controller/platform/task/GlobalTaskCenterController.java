@@ -132,14 +132,14 @@ public class GlobalTaskCenterController {
                 PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sid);
                 String ownerId = taskOwnerId(session, user);
                 requireTaskOwnership(downloadEngineService.listBySessionId(ownerId, sid), taskId);
-                result = downloadEngineService.cancel(taskId);
+                result = downloadEngineService.cancel(ownerId, taskId);
             }
             case "upload" -> {
                 String sid = requireText(sessionId, "sessionId");
                 PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sid);
                 String ownerId = taskOwnerId(session, user);
                 requireTaskOwnership(uploadEngineService.listBySessionId(ownerId, sid), taskId);
-                result = uploadEngineService.cancel(taskId);
+                result = uploadEngineService.cancel(ownerId, taskId);
             }
             case "db_export" -> {
                 String sid = requireText(sessionId, "sessionId");
@@ -242,12 +242,14 @@ public class GlobalTaskCenterController {
             }
             LinkedHashMap<String, Object> item = baseTask(
                     kind, sessionId, puppetName, connLink, taskId, title, status);
-            item.put("startedAt", firstLong(flattened, "startTime", "startAtMs", "createdTime", "createdAt", "createAtMs"));
-            item.put("finishedAt", firstLong(flattened, "endTime", "endAtMs"));
-            item.put("updatedAt", firstLong(flattened, "updatedAt", "endTime", "endAtMs", "startTime", "startAtMs", "createdTime", "createdAt", "createAtMs"));
+            item.put("startedAt", firstLong(flattened, "startTime", "startedAt", "startAtMs", "createdTime", "createdAt", "createAtMs"));
+            item.put("finishedAt", firstLong(flattened, "endTime", "endAt", "endAtMs"));
+            item.put("updatedAt", firstLong(flattened, "updatedAt", "updatedAtMs", "endTime", "endAt", "endAtMs", "startTime", "startedAt", "startAtMs", "createdTime", "createdAt", "createAtMs"));
             item.put("progress", resolveProgress(kind, flattened, status));
             item.put("detail", firstText(flattened, "filePath", "downloadPath", "database"));
             item.put("error", firstText(flattened, "error", "lastError", "errorMessage"));
+            item.put("currentStage", firstText(flattened, "currentStage"));
+            item.put("errorStage", firstText(flattened, "errorStage"));
             item.put("fileSize", firstLong(flattened, "fileSize", "expectedLength", "totalBytes"));
             item.put("transferredBytes", firstLong(flattened, "uploadedBytes", "downloadedBytes"));
             item.put("cancellable", active(status));

@@ -2,16 +2,21 @@ package org.leo.service.downloadengine;
 
 import org.leo.core.config.LeoConfig;
 import org.leo.core.util.json.JsonUtil;
+import org.leo.service.transfer.TransferTaskState;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
 
 public class DownloadStore {
+    private static final long MIN_FREE_SPACE_RESERVE_BYTES = 64L * 1024L * 1024L;
     private static final String META_JSON = "meta.json";
     private static final String CHUNKS_BITMAP = "chunks.bitmap";
     private static final String TEMP_FILE = "target.part";
@@ -34,6 +39,7 @@ public class DownloadStore {
     }
 
     public File getTempFile() {
+        validateTaskPath();
         return new File(taskDir, TEMP_FILE);
     }
 
@@ -47,15 +53,12 @@ public class DownloadStore {
 
     public static File getTasksRootDir(String userId) {
         File userDownloadsDir = computeUserRootDir(userId);
-        File tasksRoot = new File(userDownloadsDir, ".tasks");
-        if (!tasksRoot.exists()) {
-            tasksRoot.mkdirs();
-        }
-        return tasksRoot;
+        return new File(userDownloadsDir, ".tasks");
     }
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> readMeta() throws Exception {
+        validateTaskPath();
         File meta = getMetaFile();
         if (!meta.exists()) {
             return null;
@@ -73,11 +76,13 @@ public class DownloadStore {
         }
         String json = JsonUtil.toJsonString(meta);
         Path p = getMetaFile().toPath();
+        ensureTaskDirectory();
         Files.write(p, json.getBytes(StandardCharsets.UTF_8),
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
     public byte[] readChunksBitmap() throws Exception {
+        validateTaskPath();
         File f = getChunksFile();
         if (!f.exists()) {
             return null;
@@ -90,20 +95,47 @@ public class DownloadStore {
             return;
         }
         Path p = getChunksFile().toPath();
+        ensureTaskDirectory();
         Files.write(p, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    /**
+     * Ensures the local VFS has enough room for the remaining download while
+     * preserving a small operational reserve for metadata and application logs.
+     */
+    public void requireUsableSpace(long requiredBytes) throws Exception {
+        ensureTaskDirectory();
+        long usable = Files.getFileStore(taskDir.toPath()).getUsableSpace();
+        long required = Math.max(0L, requiredBytes);
+        if (required > Math.max(0L, usable - MIN_FREE_SPACE_RESERVE_BYTES)) {
+            throw new IllegalStateException(
+                    "平台存储空间不足: required=" + required + ", usable=" + usable);
+        }
+    }
+
+    /** Removes resumable metadata and partial data, leaving a committed download untouched. */
+    public boolean deleteTaskArtifacts() {
+        validateTaskPath();
+        return deleteRecursively(taskDir);
     }
 
     private static File computeUserRootDir(String userId) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId不能为空");
         }
+        if (userId.indexOf('/') >= 0 || userId.indexOf('\\') >= 0) {
+            throw new IllegalArgumentException("userId格式无效");
+        }
         String vfsPath = LeoConfig.getVfsPath();
         if (vfsPath == null || vfsPath.isBlank()) {
             vfsPath = "root";
         }
-        File root = new File(vfsPath);
-        File usersDir = new File(root, "users");
-        File userDir = new File(usersDir, userId.trim());
+        Path usersDir = new File(vfsPath, "users").toPath().toAbsolutePath().normalize();
+        Path userPath = usersDir.resolve(userId.trim()).normalize();
+        if (userPath.equals(usersDir) || !userPath.startsWith(usersDir)) {
+            throw new IllegalArgumentException("userId格式无效");
+        }
+        File userDir = userPath.toFile();
         File downloadsDir = new File(userDir, "downloads");
         if (!downloadsDir.exists()) {
             downloadsDir.mkdirs();
@@ -118,15 +150,123 @@ public class DownloadStore {
         if (taskId == null || taskId.isBlank()) {
             throw new IllegalArgumentException("taskId不能为空");
         }
+        if (!taskId.matches("[A-Za-z0-9_-]{1,128}")) {
+            throw new IllegalArgumentException("taskId格式无效");
+        }
         File tasksRoot = new File(userDownloadsDir, ".tasks");
-        if (!tasksRoot.exists()) {
-            tasksRoot.mkdirs();
+        return new File(tasksRoot, taskId.trim());
+    }
+
+    private void ensureTaskDirectory() throws Exception {
+        validateTaskPath();
+        Path path = taskDir.toPath();
+        if (Files.isSymbolicLink(path)) {
+            throw new IllegalStateException("下载任务目录格式无效");
         }
-        File taskDir = new File(tasksRoot, taskId.trim());
-        if (!taskDir.exists()) {
-            taskDir.mkdirs();
+        Files.createDirectories(path);
+        if (Files.isSymbolicLink(path)) {
+            throw new IllegalStateException("下载任务目录格式无效");
         }
-        return taskDir;
+    }
+
+    private void validateTaskPath() {
+        Path tasksRoot = new File(userRootDir, ".tasks").toPath().toAbsolutePath().normalize();
+        Path path = taskDir.toPath().toAbsolutePath().normalize();
+        if (path.equals(tasksRoot) || !path.startsWith(tasksRoot)) {
+            throw new IllegalStateException("下载任务路径越界");
+        }
+        if (Files.isSymbolicLink(path)) {
+            throw new IllegalStateException("下载任务目录格式无效");
+        }
+    }
+
+    /** Cleans terminal task directories left on disk, including records from an earlier process. */
+    @SuppressWarnings("unchecked")
+    public static int evictExpiredTaskArtifacts(long expireBeforeMs) {
+        String vfsPath = LeoConfig.getVfsPath();
+        if (vfsPath == null || vfsPath.isBlank()) {
+            vfsPath = "root";
+        }
+        File usersRoot = new File(new File(vfsPath), "users");
+        File[] users = usersRoot.listFiles(File::isDirectory);
+        if (users == null) {
+            return 0;
+        }
+        int removed = 0;
+        for (File userDir : users) {
+            File tasksRoot = new File(new File(userDir, "downloads"), ".tasks");
+            File[] taskDirs = tasksRoot.listFiles(File::isDirectory);
+            if (taskDirs == null) {
+                continue;
+            }
+            for (File candidate : taskDirs) {
+                try {
+                    File metaFile = new File(candidate, META_JSON);
+                    if (!metaFile.isFile()) {
+                        continue;
+                    }
+                    String json = new String(
+                            Files.readAllBytes(metaFile.toPath()), StandardCharsets.UTF_8);
+                    Map<String, Object> meta =
+                            (Map<String, Object>) JsonUtil.fromJsonString(json, HashMap.class);
+                    TransferTaskState state = TransferTaskState.valueOf(
+                            String.valueOf(meta.get("state")));
+                    long endAt = numberValue(meta.get("endAtMs"));
+                    long updatedAt = numberValue(meta.get("updatedAtMs"));
+                    long terminalAt = Math.max(endAt, updatedAt);
+                    if (state.isTerminal() && terminalAt > 0L && terminalAt < expireBeforeMs
+                            && deleteRecursively(candidate)) {
+                        removed++;
+                    }
+                } catch (Exception ignored) {
+                    // A malformed or active task directory is retained for explicit inspection.
+                }
+            }
+        }
+        return removed;
+    }
+
+    private static long numberValue(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value == null) {
+            return 0L;
+        }
+        return Long.parseLong(String.valueOf(value));
+    }
+
+    private static boolean deleteRecursively(File target) {
+        if (target == null) {
+            return true;
+        }
+        Path targetPath = target.toPath();
+        if (!Files.exists(targetPath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return true;
+        }
+        try {
+            Files.walkFileTree(targetPath, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                        throws java.io.IOException {
+                    Files.deleteIfExists(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, java.io.IOException error)
+                        throws java.io.IOException {
+                    if (error != null) {
+                        throw error;
+                    }
+                    Files.deleteIfExists(dir);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
     }
 
     public File resolveUniqueFinalFile(String remoteFilePath) {
@@ -189,9 +329,23 @@ public class DownloadStore {
         if (name.isBlank()) {
             return "downloaded.bin";
         }
-        // Basic sanitization for filesystem.
-        name = name.replaceAll("[\\r\\n\\t\\\\/]+", "_");
+        // Produce a filename accepted by both POSIX and Windows platform servers.
+        name = name.replaceAll("[\\x00-\\x1f\\\\/:*?\"<>|]+", "_");
+        name = name.replaceAll("[ .]+$", "");
+        if (name.isBlank()) {
+            return "downloaded.bin";
+        }
+        String stem = name;
+        int dot = stem.indexOf('.');
+        if (dot >= 0) {
+            stem = stem.substring(0, dot);
+        }
+        String upperStem = stem.toUpperCase(java.util.Locale.ROOT);
+        if (upperStem.equals("CON") || upperStem.equals("PRN")
+                || upperStem.equals("AUX") || upperStem.equals("NUL")
+                || upperStem.matches("COM[1-9]") || upperStem.matches("LPT[1-9]")) {
+            name = "_" + name;
+        }
         return name;
     }
 }
-

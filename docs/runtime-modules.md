@@ -82,7 +82,7 @@ Java `ComponentService` 同样以 endpoint 地址和 hostId 派生会话级传�
 
 | 类别 | 位置 | 当前规模 | 加载方式 |
 | --- | --- | ---: | --- |
-| Java component | `javacore/src/main/java/org/leo/core/component` | 26 个单类组件 | 编译为同名 `.payload`，由 Java Core 按需加载 |
+| Java component | `javacore/src/main/java/org/leo/core/component` | 28 个单类组件 | 编译为同名 `.payload`，由 Java Core 按需加载 |
 | PHP component | `phpcore/src/main/resources/components` | 25 个独立 PHP 文件 | 按内容 digest 写入目标临时目录并按需加载 |
 | 启动与协议模板 | `jmg` 的 `LeoCore`/shell 模板、`phpcore/src/main/resources/templates` | 按运行时生成 | 生成单文件入口，负责握手、转发、组件加载与调用 |
 
@@ -94,10 +94,55 @@ Java 平台侧已加载 Component 状态采用 host LRU、单 host 数量上限�
 
 `JavaPuppetServiceRegistry` 统一维护 31 个 Java 平台服务实例的 hostId、请求/响应层、传输画像、最大请求次数和已加载组件状态广播，并集中执行关闭清理。`JavaPuppetNode` 继续直接实现 capability 委托，服务字段和调用路径保持扁平，避免为每类 capability 引入额外聚合层。
 
+## Web Runtime V2 版本策略
+
+容器管理以 `WebRuntimeManageCapable` 为唯一上层能力入口。平台先根据基础信息解析
+`runtime family + product version`，再由 `WebRuntimeProfileRegistry` 选择版本画像和目标侧
+adapter；目标侧结构探测结果继续细分为 `strategyId`。HTTP 层只暴露
+`/puppet-node/web-runtime/inspect` 和 `/puppet-node/web-runtime/components/remove`，
+不再为每类容器、每类组件维护独立路由。
+
+Tomcat 显式版本画像：
+
+| 产品线 | Servlet API | 命名空间 | 管理策略 |
+| --- | --- | --- | --- |
+| Tomcat 6 | 2.5 | `javax.*` | Tomcat adapter，版本画像内结构探测 |
+| Tomcat 7 | 3.0 | `javax.*` | Tomcat adapter，版本画像内结构探测 |
+| Tomcat 8.0 / 8.5 | 3.1 | `javax.*` | 独立 profile，版本画像内结构探测 |
+| Tomcat 9 | 4.0 | `javax.*` | Tomcat adapter，版本画像内结构探测 |
+| Tomcat 10.0 | 5.0 | `jakarta.*` | 独立 profile，版本画像内结构探测 |
+| Tomcat 10.1 | 6.0 | `jakarta.*` | 独立 profile，版本画像内结构探测 |
+| Tomcat 11 | 6.1 | `jakarta.*` | Tomcat adapter，版本画像内结构探测 |
+| 未识别或更新主版本 | 探测值 | 探测值 | 只读，等待回归矩阵确认后开放修改 |
+
+Tomcat adapter 通过 feature probe 区分 listener 的 modern-list、legacy-objects、
+legacy-array 等存储结构，不用版本号直接猜测私有字段。修改操作每次重新扫描活动
+Context，完成后再次读取注册表验证结果；静态 listener/valve 对象缓存已移除。
+
+其他中间件：
+
+| Runtime family | Adapter | 当前能力 |
+| --- | --- | --- |
+| WebLogic 10 / 12 / 14 | `WeblogicContainerManageComponent` | Servlet、Filter、Listener 检查与验证式移除 |
+| Jetty、WildFly/JBoss、Undertow | `GenericServletContainerManageComponent` | 标准 Servlet Registration API 只读检查 |
+| WebSphere Traditional / Liberty | `GenericServletContainerManageComponent` | 标准 Servlet Registration API 只读检查 |
+| GlassFish/Payara、Resin | `GenericServletContainerManageComponent` | 标准 Servlet Registration API 只读检查 |
+| Apusic、TongWeb、BES | `GenericServletContainerManageComponent` | 标准 Servlet Registration API 只读检查 |
+
+框架 adapter 目前覆盖 Spring MVC / Spring Boot MVC、Spring WebFlux、Struts2、
+JSF/Jakarta Faces、JAX-RS/Jersey/RESTEasy、Wicket、Play、Micronaut 和 Quarkus。
+Spring MVC 与 Struts2 开放控制器/拦截器验证式移除，JSF/Faces 仅开放
+PhaseListener 移除；WebFlux 与其余框架保留检测或只读运行时视图。
+
+Web Runtime V2 返回稳定的 `runtimeId/contextId/componentId`，并把
+`capabilities.detect/inspect/remove` 随 runtime 下发。前端只根据 capability 渲染
+操作入口，并且仅把 `status=CHANGED && verified=true` 视为修改成功。未知版本默认
+停留在只读画像，避免把相邻大版本的私有结构当作兼容合同。
+
 完整制品分组如下：
 
 - Java/PHP 共有的基础能力：`BasicInfo`、`Compress`、`Database`、`Decompress`、`ExecCommand`、`ExecCommandSimple`、`ExecScript`、`File`、`FileDownload`、`FileUpload`、`HttpRequest`、`Plugin`、`ProxyForward`、`ReverseTunnel`；PHP 另外以独立 component 交付 `Process`、`NetworkInfo`、`Disk`、`NetworkConnection`、`Scan`、`Service`、`ScheduledTask`、`Registry`、`EventLog`、`Firewall`、`UserAccount`，Java 则通过运行时服务或专用 payload 实现同名 capability。
-- Java 专有的 12 项能力：`Clipboard`、`CredentialHarvest`、`FileEnhance`、`Fingerprint`、`HostIsReachable`、`PortScan`、`ReconScan`、`Resource`、`Screen`、`SpringFrameworkManage`、`TomcatCatalinaManage`、`WeblogicCatalinaManage`。
+- Java 专有的容器与系统能力：`Clipboard`、`CredentialHarvest`、`FileEnhance`、`Fingerprint`、`HostIsReachable`、`PortScan`、`ReconScan`、`Resource`、`Screen`、`SpringFrameworkManage`、`JavaWebFrameworkManage`、`GenericServletContainerManage`、`TomcatContainerManage`、`WeblogicContainerManage`。
 - Java 启动制品：`LeoCore` 动态生成 Core 字节码，配合 7 个 HTTP shell 模板和 9 个格式化/加载模板。旧的静态 `core-template/core.class` 和只被测试引用的 `XXL-Job-DefineClass.java.txt` 已删除。各模板按目标容器、入口格式和 JDK 边界分别生成，不在 Puppet 启动后形成连续降级链。
 - PHP 启动制品：`php-core.php.txt` 与 `php-puppet.php.txt`，分别承载 RPC 内核和单文件 HTTP 入口。
 

@@ -2,10 +2,14 @@ package org.leo.service.downloadengine;
 
 import org.leo.core.puppet.capability.FileCapable;
 import org.leo.service.concurrent.ServiceTaskExecutor;
+import org.leo.service.transfer.TransferStage;
+import org.leo.service.transfer.TransferTaskState;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -21,15 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class DownloadTask {
-    public enum State {
-        NEW,
-        RUNNING,
-        CANCELLED,
-        FAILED,
-        COMPLETED
-    }
-
     private final FileCapable fileNode;
+    private final String userId;
     private final String sessionId;
     private final String taskId;
     private final DownloadStore store;
@@ -58,17 +55,21 @@ public class DownloadTask {
     private final AtomicLong bytesAtStart = new AtomicLong(0);
     private final AtomicLong startAtForSpeedMs = new AtomicLong(0);
 
-    private volatile State state = State.NEW;
+    private volatile TransferTaskState state = TransferTaskState.NEW;
+    private volatile TransferStage currentStage = TransferStage.CREATED;
+    private volatile TransferStage errorStage;
     private volatile String lastError;
     private volatile long createAtMs;
     private volatile long startAtMs;
     private volatile long endAtMs;
+    private volatile long updatedAtMs;
 
     private final List<Future<?>> workerFutures =
             Collections.synchronizedList(new ArrayList<Future<?>>());
     private final Object writeLock = new Object();
 
     private DownloadTask(FileCapable fileNode,
+                         String userId,
                          String sessionId,
                          String taskId,
                          String filePath,
@@ -82,6 +83,7 @@ public class DownloadTask {
                          BitSet doneChunks,
                          int totalChunks) {
         this.fileNode = fileNode;
+        this.userId = userId;
         this.sessionId = sessionId;
         this.taskId = taskId;
         this.filePath = filePath;
@@ -98,9 +100,11 @@ public class DownloadTask {
         this.totalChunks = totalChunks;
         this.doneCount = new AtomicInteger(doneChunks.cardinality());
         this.createAtMs = System.currentTimeMillis();
+        this.updatedAtMs = this.createAtMs;
     }
 
     public static DownloadTask createNewOrLoad(FileCapable fileNode,
+                                               String userId,
                                                String sessionId,
                                                String taskId,
                                                String filePath,
@@ -116,25 +120,27 @@ public class DownloadTask {
             long metaLen = toLong(meta.get("expectedLength"));
             String metaPath = Objects.toString(meta.get("filePath"), null);
             if (Objects.equals(metaPath, filePath) && Objects.equals(metaMd5, expectedMd5) && metaLen == expectedLength) {
-                return loadFromDisk(fileNode, sessionId, taskId, store, taskExecutor);
+                return loadFromDisk(fileNode, userId, sessionId, taskId, store, taskExecutor);
             }
         }
 
         File finalFile = resolveFinalFile(store, filePath);
         int totalChunks = (int) ((expectedLength + chunkSize - 1) / (long) chunkSize);
         BitSet done = new BitSet(totalChunks);
+        store.requireUsableSpace(expectedLength);
 
         DownloadTask task = new DownloadTask(
-                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize,
+                fileNode, userId, sessionId, taskId, filePath, finalFile, threads, chunkSize,
                 expectedLength, expectedMd5, store, taskExecutor, done, totalChunks
         );
-        task.persistMeta(State.NEW);
+        task.persistMeta(TransferTaskState.NEW);
         task.persistChunks();
         task.prepareTempFile();
         return task;
     }
 
     public static DownloadTask loadFromDisk(FileCapable fileNode,
+                                            String userId,
                                             String sessionId,
                                             String taskId,
                                             DownloadStore store,
@@ -142,6 +148,10 @@ public class DownloadTask {
         Map<String, Object> meta = store.readMeta();
         if (meta == null) {
             throw new IllegalStateException("任务元数据缺失: " + taskId);
+        }
+        if (!Objects.equals(userId, Objects.toString(meta.get("userId"), null))
+                || !Objects.equals(sessionId, Objects.toString(meta.get("sessionId"), null))) {
+            throw new IllegalArgumentException("任务归属不匹配: " + taskId);
         }
         String filePath = Objects.toString(meta.get("filePath"), null);
         int threads = (int) toLong(meta.get("threads"));
@@ -159,41 +169,60 @@ public class DownloadTask {
         }
 
         DownloadTask task = new DownloadTask(
-                fileNode, sessionId, taskId, filePath, finalFile, threads, chunkSize,
+                fileNode, userId, sessionId, taskId, filePath, finalFile, threads, chunkSize,
                 expectedLength, expectedMd5, store, taskExecutor, done, totalChunks
         );
         task.createAtMs = toLong(meta.get("createAtMs"));
         task.lastError = Objects.toString(meta.get("lastError"), null);
         task.state = parseState(Objects.toString(meta.get("state"), "NEW"));
-        task.prepareTempFile();
+        if (task.state == TransferTaskState.RUNNING) {
+            task.state = TransferTaskState.PAUSED;
+        }
+        task.currentStage = parseStage(Objects.toString(meta.get("currentStage"), "CREATED"));
+        task.errorStage = parseNullableStage(Objects.toString(meta.get("errorStage"), null));
+        task.startAtMs = toLong(meta.get("startAtMs"));
+        task.endAtMs = toLong(meta.get("endAtMs"));
+        task.updatedAtMs = Math.max(task.createAtMs, toLong(meta.get("updatedAtMs")));
+        task.downloadedBytes.set(calculateDownloadedBytes(done, totalChunks, chunkSize, expectedLength));
+        if (!task.state.isTerminal() || task.state == TransferTaskState.FAILED) {
+            task.prepareTempFile();
+        }
+        if (Objects.toString(meta.get("state"), "NEW").equals(TransferTaskState.RUNNING.name())) {
+            task.persistMetaQuiet(TransferTaskState.PAUSED);
+        }
         return task;
     }
 
-    public void ensureStarted() {
-        if (cancelled.get()) {
+    public synchronized void ensureStarted() {
+        if (state == TransferTaskState.RUNNING) {
             return;
         }
+        if (!state.canStart()) {
+            return;
+        }
+        cancelled.set(false);
         if (!started.compareAndSet(false, true)) {
             return;
         }
-        if (state == State.COMPLETED) {
-            return;
-        }
-        this.state = State.RUNNING;
+        this.state = TransferTaskState.RUNNING;
+        this.currentStage = TransferStage.PREPARING;
         this.startAtMs = System.currentTimeMillis();
+        this.endAtMs = 0L;
+        touch();
         this.startAtForSpeedMs.set(this.startAtMs);
         this.bytesAtStart.set(this.downloadedBytes.get());
         try {
-            persistMeta(State.RUNNING);
+            store.requireUsableSpace(Math.max(0L, expectedLength - downloadedBytes.get()));
+            currentStage = TransferStage.TRANSFERRING;
+            persistMeta(TransferTaskState.RUNNING);
         } catch (Exception e) {
-            fail("写入任务元数据失败: " + e.getMessage());
+            fail("准备下载任务失败: " + e.getMessage());
             return;
         }
 
         try {
             workerFutures.addAll(taskExecutor.submitDownloadWorkers(threads, this::workerLoop));
-            if (cancelled.get() || state == State.COMPLETED
-                    || state == State.FAILED || state == State.CANCELLED) {
+            if (cancelled.get() || state.isTerminal()) {
                 cancelWorkers();
             }
         } catch (RejectedExecutionException error) {
@@ -202,11 +231,60 @@ public class DownloadTask {
         }
     }
 
-    public void cancel() {
+    public synchronized void pause() {
+        if (state != TransferTaskState.RUNNING) {
+            return;
+        }
         cancelled.set(true);
-        state = State.CANCELLED;
-        persistMetaQuiet(State.CANCELLED);
+        state = TransferTaskState.PAUSED;
+        touch();
         cancelWorkers();
+        persistChunksQuiet();
+        persistMetaQuiet(TransferTaskState.PAUSED);
+        started.set(false);
+    }
+
+    public synchronized void cancel() {
+        if (state.isTerminal()) {
+            return;
+        }
+        cancelled.set(true);
+        state = TransferTaskState.CANCELLED;
+        currentStage = TransferStage.FINISHED;
+        endAtMs = System.currentTimeMillis();
+        touch();
+        persistMetaQuiet(TransferTaskState.CANCELLED);
+        cancelWorkers();
+        started.set(false);
+    }
+
+    public synchronized void suspendForShutdown() {
+        if (state != TransferTaskState.RUNNING) {
+            return;
+        }
+        cancelled.set(true);
+        state = TransferTaskState.PAUSED;
+        touch();
+        cancelWorkers();
+        persistChunksQuiet();
+        persistMetaQuiet(TransferTaskState.PAUSED);
+        started.set(false);
+    }
+
+    public synchronized boolean resetFailedForRetry() {
+        if (state != TransferTaskState.FAILED) {
+            return false;
+        }
+        state = TransferTaskState.PAUSED;
+        currentStage = TransferStage.PREPARING;
+        errorStage = null;
+        lastError = null;
+        endAtMs = 0L;
+        cancelled.set(false);
+        started.set(false);
+        touch();
+        persistMetaQuiet(TransferTaskState.PAUSED);
+        return true;
     }
 
     public Map<String, Object> snapshot() {
@@ -215,6 +293,7 @@ public class DownloadTask {
         m.put("sessionId", sessionId);
         m.put("filePath", filePath);
         m.put("state", state.name());
+        m.put("currentStage", currentStage.name());
         m.put("threads", threads);
         m.put("chunkSize", chunkSize);
         m.put("expectedLength", expectedLength);
@@ -235,9 +314,13 @@ public class DownloadTask {
         if (lastError != null) {
             m.put("lastError", lastError);
         }
+        if (errorStage != null) {
+            m.put("errorStage", errorStage.name());
+        }
         m.put("createAtMs", createAtMs);
         m.put("startAtMs", startAtMs);
         m.put("endAtMs", endAtMs);
+        m.put("updatedAtMs", updatedAtMs);
         return m;
     }
 
@@ -276,6 +359,10 @@ public class DownloadTask {
                 }
             }
         } catch (Throwable t) {
+            if (cancelled.get() || state == TransferTaskState.PAUSED
+                    || state == TransferTaskState.CANCELLED) {
+                return;
+            }
             fail("worker异常: " + t.getMessage());
         }
     }
@@ -340,6 +427,7 @@ public class DownloadTask {
                 inProgressChunks.clear(chunkIndex);
                 doneCount.incrementAndGet();
                 downloadedBytes.addAndGet(bytes);
+                touch();
             }
         }
     }
@@ -378,24 +466,42 @@ public class DownloadTask {
 
     private void completeIfNeeded() {
         synchronized (this) {
-            if (state == State.COMPLETED || state == State.FAILED || state == State.CANCELLED) {
+            if (state.isTerminal() || state == TransferTaskState.PAUSED) {
                 return;
             }
             if (doneCount.get() < totalChunks) {
                 return;
             }
             try {
+                currentStage = TransferStage.VERIFYING_REMOTE;
+                touch();
                 @SuppressWarnings("unchecked")
                 Map<String, Object> md5Res = fileNode.getFileMD5(filePath);
+                if (toLong(md5Res.get("code")) != 200L) {
+                    throw new IllegalStateException(Objects.toString(
+                            md5Res.get("msg"), "远端校验未返回成功状态"));
+                }
                 String remoteMd5 = Objects.toString(md5Res.get("md5"), Objects.toString(md5Res.get("data"), null));
                 if (remoteMd5 == null || !remoteMd5.equalsIgnoreCase(expectedMd5)) {
                     fail("远端文件MD5不一致，可能发生变更，expected=" + expectedMd5 + ", actual=" + remoteMd5);
                     return;
                 }
+                currentStage = TransferStage.VERIFYING_LOCAL;
+                touch();
+                String localMd5 = md5Hex(tempFile);
+                if (!localMd5.equalsIgnoreCase(expectedMd5)) {
+                    fail("本地临时文件MD5不一致，expected=" + expectedMd5 + ", actual=" + localMd5);
+                    return;
+                }
+                currentStage = TransferStage.COMMITTING;
+                touch();
                 finalizeFile();
-                state = State.COMPLETED;
+                state = TransferTaskState.COMPLETED;
+                currentStage = TransferStage.FINISHED;
                 endAtMs = System.currentTimeMillis();
-                persistMeta(State.COMPLETED);
+                touch();
+                persistMeta(TransferTaskState.COMPLETED);
+                started.set(false);
                 cancelWorkers();
             } catch (Exception e) {
                 fail("完成阶段失败: " + e.getMessage());
@@ -412,10 +518,17 @@ public class DownloadTask {
     }
 
     private void fail(String msg) {
+        if (state == TransferTaskState.PAUSED || state == TransferTaskState.CANCELLED
+                || state == TransferTaskState.COMPLETED) {
+            return;
+        }
         lastError = msg;
-        state = State.FAILED;
+        errorStage = currentStage;
+        state = TransferTaskState.FAILED;
         endAtMs = System.currentTimeMillis();
-        persistMetaQuiet(State.FAILED);
+        touch();
+        persistMetaQuiet(TransferTaskState.FAILED);
+        started.set(false);
         cancelWorkers();
     }
 
@@ -454,9 +567,10 @@ public class DownloadTask {
         persistChunksQuiet();
     }
 
-    private void persistMeta(State newState) throws Exception {
+    private void persistMeta(TransferTaskState newState) throws Exception {
         Map<String, Object> meta = new HashMap<>();
         meta.put("taskId", taskId);
+        meta.put("userId", userId);
         meta.put("sessionId", sessionId);
         meta.put("filePath", filePath);
         meta.put("threads", threads);
@@ -469,17 +583,22 @@ public class DownloadTask {
         meta.put("doneChunks", doneCount.get());
         meta.put("downloadedBytes", downloadedBytes.get());
         meta.put("state", newState.name());
+        meta.put("currentStage", currentStage.name());
         meta.put("createAtMs", createAtMs);
         meta.put("startAtMs", startAtMs);
         meta.put("endAtMs", endAtMs);
+        meta.put("updatedAtMs", updatedAtMs);
         meta.put("lastUpdate", Instant.now().toString());
         if (lastError != null) {
             meta.put("lastError", lastError);
         }
+        if (errorStage != null) {
+            meta.put("errorStage", errorStage.name());
+        }
         store.writeMeta(meta);
     }
 
-    private void persistMetaQuiet(State s) {
+    private void persistMetaQuiet(TransferTaskState s) {
         try {
             persistMeta(s);
         } catch (Exception ignored) {
@@ -508,7 +627,7 @@ public class DownloadTask {
         return Long.parseLong(String.valueOf(obj));
     }
 
-    public State getState() {
+    public TransferTaskState getState() {
         return state;
     }
 
@@ -516,11 +635,85 @@ public class DownloadTask {
         return endAtMs;
     }
 
-    private static State parseState(String s) {
-        try {
-            return State.valueOf(s);
-        } catch (Exception e) {
-            return State.NEW;
+    public boolean belongsTo(String expectedUserId, String expectedSessionId) {
+        return Objects.equals(userId, expectedUserId) && Objects.equals(sessionId, expectedSessionId);
+    }
+
+    public void requireOwner(String expectedUserId, String expectedSessionId) {
+        if (!belongsTo(expectedUserId, expectedSessionId)) {
+            throw new IllegalArgumentException("任务归属不匹配: " + taskId);
         }
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public String getTaskId() {
+        return taskId;
+    }
+
+    public boolean isActive() {
+        return state.isActive();
+    }
+
+    private void touch() {
+        updatedAtMs = System.currentTimeMillis();
+    }
+
+    private static long calculateDownloadedBytes(BitSet done, int totalChunks,
+                                                 int chunkSize, long expectedLength) {
+        long total = 0L;
+        for (int index = done.nextSetBit(0); index >= 0 && index < totalChunks;
+             index = done.nextSetBit(index + 1)) {
+            long offset = (long) index * chunkSize;
+            total += Math.min(chunkSize, expectedLength - offset);
+        }
+        return total;
+    }
+
+    private static String md5Hex(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("MD5");
+        FileInputStream input = new FileInputStream(file);
+        try {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+        } finally {
+            input.close();
+        }
+        byte[] value = digest.digest();
+        StringBuilder hex = new StringBuilder(value.length * 2);
+        for (byte b : value) {
+            hex.append(String.format("%02x", b & 0xff));
+        }
+        return hex.toString();
+    }
+
+    private static TransferTaskState parseState(String s) {
+        try {
+            return TransferTaskState.valueOf(s);
+        } catch (Exception e) {
+            return TransferTaskState.NEW;
+        }
+    }
+
+    private static TransferStage parseStage(String value) {
+        try {
+            return TransferStage.valueOf(value);
+        } catch (Exception error) {
+            return TransferStage.CREATED;
+        }
+    }
+
+    private static TransferStage parseNullableStage(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return parseStage(value);
     }
 }

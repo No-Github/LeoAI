@@ -7,9 +7,9 @@ import java.util.Map;
  */
 public interface FileCapable {
 
-    Map<String, Object> getFileList(String path) throws Exception;
+    Map<String, Object> getFileSystemProfile() throws Exception;
 
-    Map<String, Object> getRootList() throws Exception;
+    Map<String, Object> getFileList(String path) throws Exception;
 
     Map<String, Object> fileDownloadChunk(String path, long size, long offset) throws Exception;
 

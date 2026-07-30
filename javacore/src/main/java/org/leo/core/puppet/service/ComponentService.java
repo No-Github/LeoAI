@@ -266,14 +266,36 @@ public class ComponentService {
                 () -> performLoadComponent(componentName));
     }
 
+    public Map<String, Object> reloadComponent(String componentName) throws Exception {
+        String revision = UUID.randomUUID().toString().replace("-", "");
+        componentLoadRegistry.invalidate(hostId, componentName);
+        Map<String, Object> result = componentLoadRegistry.loadOnce(hostId, componentName,
+                () -> performLoadComponent(componentName, revision));
+        if (result != null && Integer.valueOf(200).equals(result.get("code"))) {
+            result.put("cached", Boolean.FALSE);
+            result.put("reloaded", Boolean.TRUE);
+            result.put("msg", "组件重新加载成功");
+        }
+        return result;
+    }
+
     private Map<String, Object> performLoadComponent(String componentName) throws Exception {
+        return performLoadComponent(componentName, null);
+    }
+
+    private Map<String, Object> performLoadComponent(String componentName,
+                                                     String revision) throws Exception {
         Map<String, Object> results = new HashMap<>();
 
 
-        String componentSeed = transportSeed() + "|" + componentName;
+        String componentSeed = transportSeed() + "|" + componentName
+                + (revision == null ? "" : "|" + revision);
         String newClassName = componentClassNameStrategy == null
                 ? ClassNameGenerator.generateComponentClassName(transportSeed(), componentName)
                 : componentClassNameStrategy.resolve(transportSeed(), componentName);
+        if (revision != null && !revision.isEmpty()) {
+            newClassName = revisionClassName(newClassName, revision);
+        }
         byte[] bytecode = CloneWithJavassist.cloneClass(componentName, newClassName,
                 ClassNameGenerator.stableSeed(componentSeed));
 
@@ -295,6 +317,11 @@ public class ComponentService {
         }
 
         return results;
+    }
+
+    private String revisionClassName(String baseClassName, String revision) {
+        String suffix = revision.length() > 12 ? revision.substring(0, 12) : revision;
+        return baseClassName + "Revision" + suffix;
     }
 
     // ================= 核心执行 =================

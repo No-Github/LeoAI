@@ -77,7 +77,7 @@ public class ComponentController {
         try {
             ComponentManageCapable componentNode = ControllerUtil.requireCapability(params, ComponentManageCapable.class);
             String componentName = getComponentNameFromParams(params);
-            Map<String, Object> results = componentNode.loadComponent(componentName);
+            Map<String, Object> results = componentNode.reloadComponent(componentName);
             return ApiResponse.success(results != null ? results : Collections.emptyMap());
         } catch (IllegalArgumentException e) {
             return ApiResponse.badRequest(e.getMessage());

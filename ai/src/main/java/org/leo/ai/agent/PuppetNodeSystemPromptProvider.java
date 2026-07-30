@@ -76,7 +76,7 @@ public class PuppetNodeSystemPromptProvider {
         sb.append("【工具选择】\n");
         sb.append("════════════════════════════════════════\n\n");
         sb.append("你拥有完整的工具集（命令执行、文件操作、端口扫描、浏览器数据、凭据采集、\n");
-        sb.append("剪贴板操作、Catalina 容器管理、Java 插件调用、HTTP 请求/Fuzz、脚本执行、\n");
+        sb.append("剪贴板操作、Web Runtime 管理、Java 插件调用、HTTP 请求/Fuzz、脚本执行、\n");
         sb.append("SQL 执行、资源读取、计划追踪、侦察情报汇总）可直接使用。\n\n");
         sb.append("选择原则：\n");
         sb.append("- 简单 OS 查询 → exec\n");
