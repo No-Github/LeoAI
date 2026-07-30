@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class AiToolEventNormalizerTest {
 
@@ -39,5 +40,35 @@ class AiToolEventNormalizerTest {
 
         assertEquals(false, event.get("success"));
         assertEquals("failed", event.get("status"));
+    }
+
+    @Test
+    void redactsDatabaseCredentialsFromPersistedToolArguments() {
+        ToolExecution execution = ToolExecution.builder()
+                .request(ToolExecutionRequest.builder()
+                        .id("call-2")
+                        .name("createDatabaseConnection")
+                        .arguments("""
+                                {"config":{"connection":{"username":"app","password":"secret",
+                                "runtimeOptions":{"java":{"jdbcUrl":"jdbc:mysql://db/app?password=url-secret"}}}}}
+                                """)
+                        .build())
+                .result(ToolExecutionResult.builder()
+                        .resultText("{\"connectionId\":\"connection-1\"}")
+                        .isError(false)
+                        .build())
+                .startTime(LocalDateTime.now())
+                .finishTime(LocalDateTime.now())
+                .invocationContext(InvocationContext.builder()
+                        .chatMemoryId("memory-1")
+                        .build())
+                .build();
+
+        Map<String, Object> event = AiToolEventNormalizer.completed(execution);
+        String arguments = String.valueOf(event.get("arguments"));
+
+        assertFalse(arguments.contains("secret"));
+        assertFalse(arguments.contains("url-secret"));
+        assertEquals(true, arguments.contains("***"));
     }
 }

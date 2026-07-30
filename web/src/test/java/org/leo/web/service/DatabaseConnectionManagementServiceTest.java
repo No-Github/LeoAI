@@ -5,6 +5,7 @@ import org.leo.core.entity.PuppetDatabaseConnection;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.dao.mapper.PuppetDatabaseConnectionMapper;
+import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.PuppetDatabaseConnectionService;
 import org.leo.service.security.DatabaseCredentialCryptoService;
 import org.leo.web.exception.ApiException;
@@ -30,7 +31,7 @@ class DatabaseConnectionManagementServiceTest {
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
         PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
         DatabaseConnectionManagementService management =
-                new DatabaseConnectionManagementService(persistence);
+                management(persistence);
         doAnswer(invocation -> {
             PuppetDatabaseConnection saved = invocation.getArgument(0);
             assertEquals("puppet-1", saved.getPuppetId());
@@ -55,7 +56,7 @@ class DatabaseConnectionManagementServiceTest {
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
         PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
         DatabaseConnectionManagementService management =
-                new DatabaseConnectionManagementService(persistence);
+                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
         when(mapper.update(any(PuppetDatabaseConnection.class))).thenReturn(1);
@@ -73,7 +74,7 @@ class DatabaseConnectionManagementServiceTest {
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
         PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
         DatabaseConnectionManagementService management =
-                new DatabaseConnectionManagementService(persistence);
+                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
 
@@ -92,7 +93,7 @@ class DatabaseConnectionManagementServiceTest {
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("management-key", "unused");
         PuppetDatabaseConnectionService persistence = new PuppetDatabaseConnectionService(mapper, crypto);
         DatabaseConnectionManagementService management =
-                new DatabaseConnectionManagementService(persistence);
+                management(persistence);
         PuppetDatabaseConnection existing = existing(persistence, crypto);
         when(mapper.selectById("connection-1")).thenReturn(existing);
         when(mapper.updateStatusByPuppet("connection-1", "puppet-1", 0)).thenReturn(1);
@@ -141,5 +142,11 @@ class DatabaseConnectionManagementServiceTest {
         user.setUserId(id);
         user.setPrivilege("normal");
         return user;
+    }
+
+    private DatabaseConnectionManagementService management(
+            PuppetDatabaseConnectionService persistence) {
+        return new DatabaseConnectionManagementService(
+                new DatabaseConnectionProfileService(persistence));
     }
 }

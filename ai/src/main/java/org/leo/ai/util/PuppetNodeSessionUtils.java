@@ -2,6 +2,7 @@ package org.leo.ai.util;
 
 import org.leo.ai.agent.AiToolException;
 import org.leo.core.entity.AiRuntimeStats;
+import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
 import org.leo.core.runtime.CapabilityStatus;
@@ -23,6 +24,31 @@ public class PuppetNodeSessionUtils {
 
     public static AbstractPuppetNode getPuppetNode(String sessionId) {
         return getSession(sessionId).getPuppetNode();
+    }
+
+    public static String requirePuppetId(String sessionId) {
+        String puppetId = getSession(sessionId).resolvePuppetId();
+        if (puppetId == null || puppetId.isBlank()) {
+            throw AiToolException.userActionRequired(
+                    "PUPPET_ID_MISSING",
+                    "当前会话未绑定可持久化的 Puppet。",
+                    "请重新连接或选择已保存的 Puppet 后再调用数据库配置工具。");
+        }
+        return puppetId;
+    }
+
+    public static String requireUserId(String sessionId) {
+        PuppetNodeSession session = getSession(sessionId);
+        AbstractPuppetNode node = session.getPuppetNode();
+        User user = node != null ? node.getUser() : null;
+        String userId = user != null ? user.getUserId() : session.getCreateByUser();
+        if (userId == null || userId.isBlank()) {
+            throw AiToolException.userActionRequired(
+                    "USER_CONTEXT_MISSING",
+                    "当前 AI 会话缺少用户身份上下文。",
+                    "请重新进入节点会话后再调用数据库配置工具。");
+        }
+        return userId;
     }
 
     public static <T> T requireCapability(String sessionId, Class<T> capabilityType) {

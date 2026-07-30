@@ -15,11 +15,16 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 public class PuppetAuditService {
 
     private static final Logger logger = LoggerFactory.getLogger(PuppetAuditService.class);
+    private static final Pattern INLINE_SECRET = Pattern.compile(
+            "(?i)(^|[?&;])((?:password|passwd|pwd|token|access_token|secret|api_key)=)([^&;\\s]*)");
+    private static final Pattern AUTHORITY_PASSWORD =
+            Pattern.compile("(://[^:/?#\\s]+:)[^@/?#\\s]+(@)");
 
     private final AuditLogService auditLogService;
     private final AuditPolicyService auditPolicyService;
@@ -145,6 +150,10 @@ public class PuppetAuditService {
             return list.stream()
                     .map(item -> sanitizeValue(fieldName, item))
                     .toList();
+        }
+        if (value instanceof String text) {
+            String sanitized = INLINE_SECRET.matcher(text).replaceAll("$1$2***");
+            return AUTHORITY_PASSWORD.matcher(sanitized).replaceAll("$1***$2");
         }
         return value;
     }

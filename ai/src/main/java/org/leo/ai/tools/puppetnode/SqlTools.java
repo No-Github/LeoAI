@@ -1,10 +1,13 @@
 package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.service.DatabaseConnectionProfileException;
+import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.audit.PuppetAuditService;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
@@ -30,18 +33,27 @@ public class SqlTools {
     private static final Pattern STRING_LITERAL = Pattern.compile("'(?:[^'\\\\]|\\\\.)*'");
 
     private final PuppetAuditService auditService;
+    private final DatabaseConnectionProfileService profileService;
 
-    public SqlTools(PuppetAuditService auditService) {
+    public SqlTools(PuppetAuditService auditService,
+                    DatabaseConnectionProfileService profileService) {
         this.auditService = auditService;
+        this.profileService = profileService;
     }
 
-    @Tool("执行 SQL 语句（允许写入和结构变更）。验证连接、枚举库表、查询或提取证据。⚠️ 只读查询优先使用 querySql。")
+    @Tool("""
+            执行 SQL 语句（允许写入和结构变更）。connection 可直接提供完整连接字段，
+            也可传 {"connectionId":"已保存配置ID"} 使用当前 Puppet 已启用的数据库配置。
+            验证连接、枚举库表、查询或提取证据；只读查询优先使用 querySql。
+            """)
     public Map<String, Object> execSql(Map<String, Object> connection, String sqlScript) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
-        DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
-        Map<String, Object> auditParams = sqlAuditParams(sessionId, connectionSpec, sqlScript);
+        ResolvedConnection resolved = resolveConnection(sessionId, connection);
+        DatabaseConnectionSpec connectionSpec = resolved.spec();
+        Map<String, Object> auditParams = sqlAuditParams(
+                sessionId, resolved.connectionId(), connectionSpec, sqlScript);
         String operationPath = sqlOperationPath(connectionSpec, sqlScript);
         try {
             Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
@@ -55,7 +67,11 @@ public class SqlTools {
         }
     }
 
-    @Tool("执行只读 SQL 查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH）。拒绝写入或结构变更。")
+    @Tool("""
+            执行只读 SQL 查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH）。connection 可直接提供完整连接字段，
+            也可传 {"connectionId":"已保存配置ID"} 使用当前 Puppet 已启用的数据库配置。
+            写入或结构变更请使用 execSql。
+            """)
     public Map<String, Object> querySql(Map<String, Object> connection, String sqlScript) throws Exception {
         String violation = detectSqlViolation(sqlScript);
         if (violation != null) {
@@ -64,8 +80,10 @@ public class SqlTools {
         String sessionId = AiToolContext.requireSessionId();
         SqlCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, SqlCapable.class);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
-        DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
-        Map<String, Object> auditParams = sqlAuditParams(sessionId, connectionSpec, sqlScript);
+        ResolvedConnection resolved = resolveConnection(sessionId, connection);
+        DatabaseConnectionSpec connectionSpec = resolved.spec();
+        Map<String, Object> auditParams = sqlAuditParams(
+                sessionId, resolved.connectionId(), connectionSpec, sqlScript);
         String operationPath = sqlOperationPath(connectionSpec, sqlScript);
         try {
             Map<String, Object> result = node.executeSql(connectionSpec, sqlScript);
@@ -127,11 +145,42 @@ public class SqlTools {
         return null;
     }
 
+    private ResolvedConnection resolveConnection(String sessionId,
+                                                 Map<String, Object> connection) {
+        String connectionId = text(connection == null ? null : connection.get("connectionId"));
+        if (connectionId == null) {
+            return new ResolvedConnection(null, DatabaseConnectionSpec.fromMap(connection));
+        }
+        try {
+            DatabaseConnectionSpec spec = profileService.resolveActive(
+                    PuppetNodeSessionUtils.requireUserId(sessionId),
+                    PuppetNodeSessionUtils.requirePuppetId(sessionId),
+                    connectionId);
+            return new ResolvedConnection(connectionId, spec);
+        } catch (DatabaseConnectionProfileException error) {
+            throw switch (error.getKind()) {
+                case VALIDATION -> AiToolException.modelCorrectable(
+                        "DATABASE_PROFILE_INVALID", error.getMessage(),
+                        "检查配置是否已启用，或调用 listDatabaseConnections 查看状态。");
+                case NOT_FOUND -> AiToolException.modelCorrectable(
+                        "DATABASE_PROFILE_NOT_FOUND", error.getMessage(),
+                        "调用 listDatabaseConnections 获取有效 connectionId。");
+                case FORBIDDEN -> AiToolException.modelCorrectable(
+                        "DATABASE_PROFILE_PUPPET_MISMATCH", error.getMessage(),
+                        "只使用当前 Puppet 返回的 connectionId。");
+                case PERSISTENCE -> AiToolException.systemRetryable(
+                        "DATABASE_PROFILE_RESOLUTION_FAILED", error.getMessage(), error);
+            };
+        }
+    }
+
     private Map<String, Object> sqlAuditParams(String sessionId,
+                                               String connectionId,
                                                DatabaseConnectionSpec connection,
                                                String sqlScript) {
         HashMap<String, Object> params = new HashMap<>();
         params.put("sessionId", sessionId);
+        if (connectionId != null) params.put("connectionId", connectionId);
         Map<String, Object> safeConnection = new HashMap<>(connection.toMap());
         safeConnection.remove("password");
         params.put("connection", safeConnection);
@@ -157,4 +206,12 @@ public class SqlTools {
         }
         return trimmed.substring(0, maxLength) + "...";
     }
+
+    private String text(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private record ResolvedConnection(String connectionId, DatabaseConnectionSpec spec) {}
 }

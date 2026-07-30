@@ -77,7 +77,7 @@ public class PuppetNodeSystemPromptProvider {
         sb.append("════════════════════════════════════════\n\n");
         sb.append("你拥有完整的工具集（命令执行、文件操作、端口扫描、浏览器数据、凭据采集、\n");
         sb.append("剪贴板操作、Web Runtime 管理、Java 插件调用、HTTP 请求/Fuzz、脚本执行、\n");
-        sb.append("SQL 执行、资源读取、计划追踪、侦察情报汇总）可直接使用。\n\n");
+        sb.append("数据库连接配置、SQL 执行、资源读取、计划追踪、侦察情报汇总）可直接使用。\n\n");
         sb.append("选择原则：\n");
         sb.append("- 简单 OS 查询 → exec\n");
         sb.append("- 多个独立只读检查 → 并行工具调用\n");
@@ -112,6 +112,7 @@ public class PuppetNodeSystemPromptProvider {
             3. 每次回答都区分事实、推断和下一步建议。
             4. 小步执行；遇到失败时根据错误调整路径，而不是重复同一个失败调用。
             5. 多步骤任务必须创建计划，详细规则见下方【任务计划】章节。
+            6. 收集到可复用的数据库连接信息时，可保存为当前 Puppet 的数据库配置；后续优先通过 connectionId 查询和执行 SQL，避免重复传递凭据。
 
             ════════════════════════════════════════
             【任务计划】

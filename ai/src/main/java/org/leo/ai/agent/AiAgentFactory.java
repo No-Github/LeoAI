@@ -20,6 +20,7 @@ import org.leo.ai.tools.puppetnode.WebRuntimeTools;
 import org.leo.ai.tools.puppetnode.ClipboardTools;
 import org.leo.ai.tools.puppetnode.CommandTools;
 import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
+import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
 import org.leo.ai.tools.puppetnode.FileTools;
 import org.leo.ai.tools.puppetnode.HttpRequestTools;
 import org.leo.ai.tools.puppetnode.JavaPluginTools;
@@ -58,6 +59,7 @@ public class AiAgentFactory {
     private final ScanTools scanTools;
     private final BrowserDataTools browserDataTools;
     private final CredentialHarvestTools credentialHarvestTools;
+    private final DatabaseConnectionTools databaseConnectionTools;
     private final ClipboardTools clipboardTools;
     private final WebRuntimeTools webRuntimeTools;
     private final JavaPluginTools javaPluginTools;
@@ -93,6 +95,7 @@ public class AiAgentFactory {
                           ScanTools scanTools,
                           BrowserDataTools browserDataTools,
                           CredentialHarvestTools credentialHarvestTools,
+                          DatabaseConnectionTools databaseConnectionTools,
                           ClipboardTools clipboardTools,
                           WebRuntimeTools webRuntimeTools,
                           JavaPluginTools javaPluginTools,
@@ -127,6 +130,7 @@ public class AiAgentFactory {
         this.scanTools = scanTools;
         this.browserDataTools = browserDataTools;
         this.credentialHarvestTools = credentialHarvestTools;
+        this.databaseConnectionTools = databaseConnectionTools;
         this.clipboardTools = clipboardTools;
         this.webRuntimeTools = webRuntimeTools;
         this.javaPluginTools = javaPluginTools;
@@ -209,7 +213,8 @@ public class AiAgentFactory {
             builder.tools(commandTools, basicInfoTools,
                     reverseTunnelTools,
                     utilTools, fileTools,
-                    scanTools, browserDataTools, credentialHarvestTools, clipboardTools,
+                    scanTools, browserDataTools, credentialHarvestTools,
+                    databaseConnectionTools, clipboardTools,
                     webRuntimeTools, javaPluginTools,
                     httpRequestTools, scriptTools, sqlTools, resourceTools,
                     sessionTools, planTools, puppetNodeSkillActivationTools);
