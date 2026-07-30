@@ -31,9 +31,7 @@ public final class AiControllerUtil {
         }
     }
 
-    /**
-     * 发送结构化错误元数据和兼容旧前端的纯文本 error 事件。
-     */
+    /** 发送结构化错误元数据和终止流的 error 事件。 */
     public static void safeSendError(SseEmitter emitter, AiErrorClassifier.Classification classification) {
         if (emitter == null) return;
         String message = classification != null ? classification.message() : "未知错误";

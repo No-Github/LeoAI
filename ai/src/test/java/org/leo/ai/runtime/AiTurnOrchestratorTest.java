@@ -190,7 +190,7 @@ class AiTurnOrchestratorTest {
         AiConversationStoreService.PersistedTurn persistedTurn =
                 new AiConversationStoreService.PersistedTurn(
                         "turn-1", "run-1", "thread-1", "message-1",
-                        System.currentTimeMillis());
+                        "assistant-message-1", System.currentTimeMillis(), null);
         AiTurnTransaction transaction = new AiTurnTransaction(
                 store, failover, classifier, new AiTurnArtifacts(), memory);
         TestExecutionEngine engine = new TestExecutionEngine(mode);

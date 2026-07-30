@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,7 +55,7 @@ class ContainerManageComponentTest {
         assertEquals(1, filters.size());
         Map info = (Map) filters.get(0);
         assertEquals("targetServlet", info.get("servletName"));
-        assertEquals("example.Filter", info.get("filterClass"));
+        assertEquals("example.Filter", info.get("filterClassName"));
     }
 
     @Test
@@ -77,11 +78,9 @@ class ContainerManageComponentTest {
     }
 
     @Test
-    void genericServletAdapterRejectsMutationOperations() throws Exception {
-        Map<String, Object> response = invoke(new GenericServletContainerManageComponent(), "unLoadFilter");
-        assertEquals(409, code(response));
-        assertEquals("UNSUPPORTED", response.get("status"));
-        assertEquals(Boolean.FALSE, response.get("removed"));
+    void genericServletAdapterOnlyExposesInspection() throws Exception {
+        Map<String, Object> response = invoke(new GenericServletContainerManageComponent(), "removeFilter");
+        assertEquals(400, code(response));
     }
 
     @Test
@@ -103,6 +102,16 @@ class ContainerManageComponentTest {
         assertEquals(2, servlets.size());
         assertTrue(servlets.stream().map(item -> ((Map) item).get("url"))
                 .anyMatch("/health"::equals));
+    }
+
+    @Test
+    void frameworkMutationUsesV2OperationShape() throws Exception {
+        Map<String, Object> response = invoke(new JavaWebFrameworkManageComponent(), "removeController");
+        assertEquals("NOT_FOUND", response.get("status"));
+        assertEquals(0, response.get("matched"));
+        assertEquals(0, response.get("changed"));
+        assertEquals(Boolean.TRUE, response.get("verified"));
+        assertEquals(Set.of("status", "matched", "changed", "verified", "code"), response.keySet());
     }
 
     private Map<String, Object> invoke(Object component, Object methodName) throws Exception {

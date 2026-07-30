@@ -474,9 +474,6 @@ public class PuppetNodeFileController {
             }
             if (code == null || !acceptedCodes.contains(code)) {
                 Object message = resultMap.get("msg");
-                if (message == null) {
-                    message = resultMap.get("message");
-                }
                 throw ApiException.serverError(errorPrefix + ": "
                         + (message != null ? message : "节点返回状态异常(" + codeValue + ")"));
             }

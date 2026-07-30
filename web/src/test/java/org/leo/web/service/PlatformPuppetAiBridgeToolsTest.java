@@ -71,7 +71,8 @@ class PlatformPuppetAiBridgeToolsTest {
                     Consumer<AiSseEvent> sink = invocation.getArgument(6, Consumer.class);
                     sink.accept(new AiSseEvent(3L, System.currentTimeMillis(), "node",
                             Map.of("kind", "tool", "toolName", "exec"),
-                            String.valueOf((Object) invocation.getArgument(5))));
+                            String.valueOf((Object) invocation.getArgument(5)),
+                            null, null, null));
                     return Map.of("summary", "当前用户为 root");
                 });
 

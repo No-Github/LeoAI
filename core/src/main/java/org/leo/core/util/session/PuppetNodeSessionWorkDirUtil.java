@@ -159,8 +159,7 @@ public final class PuppetNodeSessionWorkDirUtil {
     /**
      * 将主机基础信息写入 puppet 工作目录（root/users/{userId}/puppets/{puppetId}/basic-info.json）。
      *
-     * <p>采用 last-write-wins 策略直接覆盖，不再 read-merge-write，避免并发写损坏文件。
-     * 若无法从 session 解析 puppetId，则降级写入 session 目录（兼容旧行为）。
+     * <p>采用 last-write-wins 策略直接覆盖，避免并发写损坏文件。
      *
      * @param sessionId 会话 ID
      * @param hostId    主机 ID（仅用于 JSON 中的 hostId 字段记录，不再作为 key 合并）
@@ -603,27 +602,23 @@ public final class PuppetNodeSessionWorkDirUtil {
 
     /**
      * 从 sessionId 解析 puppet 工作目录。
-     * 优先从通用 PuppetNode 取 puppetId；缓存模式下从 session.getPuppetId() 取；
-     * 均无法解析时降级返回 session 级目录（兼容）。
+     * 优先从通用 PuppetNode 取 puppetId；缓存模式下从 session.getPuppetId() 取。
      */
     private static File resolvePuppetDirFromSession(String sessionId) {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         if (session != null) {
-            // 正常模式：从通用 PuppetNode 取 puppetId
             if (session.getPuppetNode() != null) {
                 Puppet puppet = session.getPuppetNode().getPuppet();
                 if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
                     return getPuppetWorkDir(session.getCreateByUser(), puppet.getPuppetId());
                 }
             }
-            // 缓存模式：从 session.puppetId 取
             String pId = session.getPuppetId();
             if (pId != null && !pId.isBlank()) {
                 return getPuppetWorkDir(session.getCreateByUser(), pId);
             }
         }
-        // 降级：写到 session 目录（不应发生，仅作保底）
-        return getSessionWorkDir(sessionId);
+        throw new IllegalStateException("session 未绑定 puppetId: " + sessionId);
     }
 
     /**

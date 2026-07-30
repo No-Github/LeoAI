@@ -12,7 +12,7 @@ public class HeaderNoiseStrategy {
 
     /**
      * 是否启用 Header 噪声注入。
-     * false（默认）= 不注入额外 Header，向后兼容。
+     * false（默认）= 不注入额外 Header。
      */
     private boolean enabled = false;
 

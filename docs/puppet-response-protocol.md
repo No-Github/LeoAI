@@ -91,13 +91,9 @@ PHP Core 补充规则：
 - 未知 `M` 返回 `code:404`。
 - wrapper 捕获异常后返回 `code:500`。
 
-### 3.4 管理端归一化
+### 3.4 管理端映射
 
-PHP `PhpRpcClient.normalize()` 执行：
-
-1. 将数字型 `code` 统一为 Java `int`，缺少或非数字时设为 500。
-2. `msg` 缺失时接受 `message` 作为别名。
-3. 若 `data` 本身是对象，将其中字段平铺到顶层，但已有顶层字段优先。
+PHP `PhpRpcClient` 使用统一 Envelope 映射：成功响应的 `data` 对象字段映射到组件结果顶层，错误 Envelope 的 `error.message` 映射为组件结果的 `msg`。组件错误必须使用 `msg`。
 
 Java `ComponentService` 使用内部字段 `reqStatus/reqMsg` 表示编解码与通信状态；成功返回前会移除 `reqStatus`，重试耗尽后转换成 `code:500, msg`。
 
@@ -269,9 +265,9 @@ Java组件必须自行写入 `code`；Core不会像 PHP Core 一样自动补充�
 | BasicInfoComponent | 无 | `code, BasicInfo, msg?` |
 | ClipboardComponent | action=`read/write/monitor` | `code, data?, msg?` |
 | ScreenComponent | 无；参数 `format,quality,delay` | `code, screenBytes, format, width, height, imageSize, captureTime, timestamp, errorType?, msg?` |
-| SpringFrameworkManageComponent | methodName=`getFrameworkInfo/unLoadController/unLoadInterceptor` | 查询返回 `code, frameworkInfo`；修改返回 `status, removed, verified, code` |
-| TomcatContainerManageComponent | methodName=`inspectRuntime/unLoadFilter/unLoadServlet/unLoadValve/unLoadListener` | 查询返回 `code, contexts, features`；修改返回 `status, removed, verified, code` |
-| WeblogicContainerManageComponent | methodName=`inspectRuntime/unLoadFilter/unLoadServlet/unLoadListener` | 查询返回 `code, contexts`；修改返回 `status, removed, verified, code` |
+| SpringFrameworkManageComponent | methodName=`getFrameworkInfo/removeController/removeInterceptor` | 查询返回 `code, frameworkInfo`；修改返回 `status, matched, changed, verified, code` |
+| TomcatContainerManageComponent | methodName=`inspectRuntime/removeFilter/removeServlet/removeValve/removeListener` | 查询返回 `code, contexts, features`；修改返回 `status, matched, changed, verified, code` |
+| WeblogicContainerManageComponent | methodName=`inspectRuntime/removeFilter/removeServlet/removeListener` | 查询返回 `code, contexts`；修改返回 `status, matched, changed, verified, code` |
 | GenericServletContainerManageComponent | methodName=`inspectRuntime` | `code, contexts`；通用适配器严格只读 |
 
 Java `BasicInfo` 的主要子对象：`OSInfo, UserInfo, MiddlewareInfo, JavaRuntimeInfo, ProcessInfo, EnvironmentInfo, HardwareInfo, NetworkInfo[], FileSystemInfo[]`。
@@ -315,12 +311,11 @@ Java插件参数为 `pluginBytecode, pluginParam`；PHP插件则使用 `source, 
 | FileComponent | action 10 md5 | `code, md5, filePath, fileSize` |
 | FileDownloadComponent | 无 | `code, data, offset, length, bytesRead, nextOffset, isComplete, msg?` |
 | FileUploadComponent | 无 | `code, bytesWritten, nextOffset, msg?` |
-| ResourceComponent | 无 | puppet: `code, resourcePath, size, data, msg?`；server: 同时提供 `data, bytecode` |
+| ResourceComponent | 无 | `code, resourcePath, size, data, msg?` |
 | CompressComponent | 无 | `code, format, sourcePath, zipFile, msg` |
 | DecompressComponent | 无 | `code, format, fileCount, dirCount, totalSize` 加格式相关路径字段 |
 
-`ResourceComponent` 在 puppet 侧仅传输一份 `data`；`ResourceService` 在 server 侧将同一对象映射到
-`data` 与 `bytecode`，避免大字节数组重复序列化，同时保留历史调用兼容性。
+`ResourceComponent` 和 server 侧均使用 `data` 承载资源字节。
 
 FileEnhanceComponent 使用数字 action：
 
@@ -420,7 +415,7 @@ ReverseTunnelComponent：
 | 组件成功码 | 组件必须写 `code` | Core 自动补 `code:200` |
 | 文件下载进行中 | 通常依靠 `isComplete` | `code:100` + `isComplete:false` |
 | 文件上传字节数 | `bytesWritten` | `written` |
-| 一次性命令输出 | `data:byte[]` | `stdout/stderr/output:string` |
+| 一次性命令输出 | `data:byte[]` | `data:string` |
 | 终端操作选择 | 数字 `op` | 字符串 `action` |
 | 文件操作选择 | 数字 `action` | 字符串 `action` |
 | 压缩结果 | `sourcePath/zipFile/format/msg` | `success/path/size` |
@@ -434,7 +429,6 @@ ReverseTunnelComponent：
 2. 成功判断宜采用 `200 <= code < 300`；但 PHP 下载的 `code:100` 是正常中间状态。
 3. `204` 表示轮询暂时无数据，不等于连接关闭。
 4. `404` 在网络组件中可能表示 peer closed，而不只是资源从未存在。
-5. Java与PHP的同能力返回字段尚未完全统一，控制器应继续使用别名或 runtime 分支。
+5. Java与PHP的同能力通过统一能力接口暴露，控制器只读取规范字段；运行时差异由适配器内部处理。
 6. PHP插件返回属于动态协议，平台只能保证最终存在数值型 `code`。
-7. `bytecode` 与 `data`、`written` 与 `bytesWritten` 等历史别名暂时都属于兼容合同。
-8. Disguise 多层转发时，中间层响应固定嵌套在 `respData` 中，最内层才是业务对象。
+7. Disguise 多层转发时，中间层响应固定嵌套在 `respData` 中，最内层才是业务对象。

@@ -60,14 +60,6 @@ public class GenericServletContainerManageComponent implements Runnable {
             results.put("code", Integer.valueOf(200));
             return;
         }
-        if (methodName.startsWith("unLoad")) {
-            results.put("code", Integer.valueOf(409));
-            results.put("status", "UNSUPPORTED");
-            results.put("removed", Boolean.FALSE);
-            results.put("verified", Boolean.FALSE);
-            results.put("msg", "Generic Servlet adapter is read-only");
-            return;
-        }
         results.put("code", Integer.valueOf(400));
         results.put("msg", "未知 methodName: " + methodName);
     }
@@ -110,7 +102,6 @@ public class GenericServletContainerManageComponent implements Runnable {
             String className = stringValue(tryInvoke(registration, "getClassName"));
             info.put("filterName", name);
             info.put("filterClassName", className);
-            info.put("filterClass", className);
             info.put("urlPatterns", toArray(tryInvoke(registration, "getUrlPatternMappings")));
             info.put("servletNames", toArray(tryInvoke(registration, "getServletNameMappings")));
             filters.add(info);

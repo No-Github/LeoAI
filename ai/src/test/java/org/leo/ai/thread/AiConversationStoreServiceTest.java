@@ -222,7 +222,7 @@ class AiConversationStoreServiceTest {
     }
 
     @Test
-    void exposesTurnMetadataWithoutChangingLegacyMessageShape() {
+    void exposesTurnMetadataInMessageShape() {
         AiConversationMapper mapper = mock(AiConversationMapper.class);
         AiConversationStoreService service = new AiConversationStoreService(mapper);
         AiMessageRecord row = new AiMessageRecord();

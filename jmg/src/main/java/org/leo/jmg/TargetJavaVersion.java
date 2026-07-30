@@ -5,7 +5,7 @@ import java.util.Locale;
 /**
  * 生成物的目标 Java 运行时版本。
  *
- * <p>AUTO 保持向后兼容，不主动拦截 Packer；显式版本用于生成前兼容性校验。
+ * <p>AUTO 由生成器选择目标；显式版本用于生成前兼容性校验。
  * JDK_9_PLUS 表示模块化但尚未进入 JDK 17 强封装阶段的运行时。
  */
 public enum TargetJavaVersion {

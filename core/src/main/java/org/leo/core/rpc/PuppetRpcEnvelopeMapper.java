@@ -68,7 +68,6 @@ public final class PuppetRpcEnvelopeMapper {
         }
         Map<String, Object> error = new LinkedHashMap<>(source);
         Object message = error.remove("msg");
-        if (message == null) message = error.remove("message");
         if (message != null) error.put("message", message);
         return new PuppetRpcResponse(requestId, code, null, error);
     }

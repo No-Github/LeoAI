@@ -273,11 +273,11 @@ class PhpScriptGeneratorProviderTest {
     }
 
     @Test
-    void rejectsLegacyOrNonPhpDisguises() {
-        Disguise legacy = disguise("legacy");
-        legacy.setProtocolVersion(1);
+    void rejectsUnsupportedOrNonPhpDisguises() {
+        Disguise unsupported = disguise("unsupported");
+        unsupported.setProtocolVersion(1);
         PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
-        assertThrows(IllegalArgumentException.class, () -> generate(provider, legacy, disguise("response"), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> generate(provider, unsupported, disguise("response"), Map.of()));
 
         Disguise incomplete = disguise("incomplete");
         incomplete.setPhpEncodeBody(null);

@@ -411,9 +411,6 @@ public class ControllerUtil {
 
     private static String extractResponseMessage(Map<String, Object> result) {
         Object msgObj = result.get("msg");
-        if (msgObj == null) {
-            msgObj = result.get("message");
-        }
         return msgObj == null ? null : msgObj.toString();
     }
 

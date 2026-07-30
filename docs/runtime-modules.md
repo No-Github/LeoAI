@@ -99,8 +99,7 @@ Java 平台侧已加载 Component 状态采用 host LRU、单 host 数量上限�
 容器管理以 `WebRuntimeManageCapable` 为唯一上层能力入口。平台先根据基础信息解析
 `runtime family + product version`，再由 `WebRuntimeProfileRegistry` 选择版本画像和目标侧
 adapter；目标侧结构探测结果继续细分为 `strategyId`。HTTP 层只暴露
-`/puppet-node/web-runtime/inspect` 和 `/puppet-node/web-runtime/components/remove`，
-不再为每类容器、每类组件维护独立路由。
+`/puppet-node/web-runtime/inspect` 和 `/puppet-node/web-runtime/components/remove`。
 
 Tomcat 显式版本画像：
 
@@ -115,9 +114,9 @@ Tomcat 显式版本画像：
 | Tomcat 11 | 6.1 | `jakarta.*` | Tomcat adapter，版本画像内结构探测 |
 | 未识别或更新主版本 | 探测值 | 探测值 | 只读，等待回归矩阵确认后开放修改 |
 
-Tomcat adapter 通过 feature probe 区分 listener 的 modern-list、legacy-objects、
-legacy-array 等存储结构，不用版本号直接猜测私有字段。修改操作每次重新扫描活动
-Context，完成后再次读取注册表验证结果；静态 listener/valve 对象缓存已移除。
+Tomcat adapter 通过 feature probe 区分 listener 的 list-field、objects-field、
+array-field 等存储结构，不用版本号直接猜测私有字段。修改操作每次重新扫描活动
+Context，完成后再次读取注册表验证结果。
 
 其他中间件：
 
@@ -143,7 +142,7 @@ Web Runtime V2 返回稳定的 `runtimeId/contextId/componentId`，并把
 
 - Java/PHP 共有的基础能力：`BasicInfo`、`Compress`、`Database`、`Decompress`、`ExecCommand`、`ExecCommandSimple`、`ExecScript`、`File`、`FileDownload`、`FileUpload`、`HttpRequest`、`Plugin`、`ProxyForward`、`ReverseTunnel`；PHP 另外以独立 component 交付 `Process`、`NetworkInfo`、`Disk`、`NetworkConnection`、`Scan`、`Service`、`ScheduledTask`、`Registry`、`EventLog`、`Firewall`、`UserAccount`，Java 则通过运行时服务或专用 payload 实现同名 capability。
 - Java 专有的容器与系统能力：`Clipboard`、`CredentialHarvest`、`FileEnhance`、`Fingerprint`、`HostIsReachable`、`PortScan`、`ReconScan`、`Resource`、`Screen`、`SpringFrameworkManage`、`JavaWebFrameworkManage`、`GenericServletContainerManage`、`TomcatContainerManage`、`WeblogicContainerManage`。
-- Java 启动制品：`LeoCore` 动态生成 Core 字节码，配合 7 个 HTTP shell 模板和 9 个格式化/加载模板。旧的静态 `core-template/core.class` 和只被测试引用的 `XXL-Job-DefineClass.java.txt` 已删除。各模板按目标容器、入口格式和 JDK 边界分别生成，不在 Puppet 启动后形成连续降级链。
+- Java 启动制品：`LeoCore` 动态生成 Core 字节码，配合 7 个 HTTP shell 模板和 9 个格式化/加载模板。各模板按目标容器、入口格式和 JDK 边界分别生成。
 - PHP 启动制品：`php-core.php.txt` 与 `php-puppet.php.txt`，分别承载 RPC 内核和单文件 HTTP 入口。
 
 ## 兼容性与降级策略

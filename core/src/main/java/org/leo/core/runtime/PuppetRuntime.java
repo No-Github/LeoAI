@@ -25,7 +25,7 @@ public enum PuppetRuntime {
     @JsonCreator
     public static PuppetRuntime from(String value) {
         if (value == null || value.isBlank()) {
-            return JAVA;
+            return UNKNOWN;
         }
         String normalized = value.trim().toLowerCase(Locale.ROOT);
         for (PuppetRuntime runtime : values()) {

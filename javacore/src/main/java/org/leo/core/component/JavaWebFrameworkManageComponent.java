@@ -53,12 +53,10 @@ public class JavaWebFrameworkManageComponent implements Runnable {
             results.put("frameworkInfo", getFrameworkInfo(frameworkName));
             results.put("code", Integer.valueOf(200));
             return;
-        } else if ("unLoadController".equals(methodName)) {
-            unloadController(frameworkName, stringParam("mappingInfo"));
-            putOperationResult();
-        } else if ("unLoadInterceptor".equals(methodName)) {
-            unloadInterceptor(frameworkName, stringParam("interceptorId"));
-            putOperationResult();
+        } else if ("removeController".equals(methodName)) {
+            putOperationResult(removeController(frameworkName, stringParam("mappingInfo")));
+        } else if ("removeInterceptor".equals(methodName)) {
+            putOperationResult(removeInterceptor(frameworkName, stringParam("interceptorId")));
         } else {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
@@ -66,11 +64,12 @@ public class JavaWebFrameworkManageComponent implements Runnable {
         }
     }
 
-    private void putOperationResult() {
-        boolean removed = Boolean.TRUE.equals(results.get("removed"));
+    private void putOperationResult(boolean changed) {
+        results.put("matched", Integer.valueOf(changed ? 1 : 0));
+        results.put("changed", Integer.valueOf(changed ? 1 : 0));
         results.put("verified", Boolean.TRUE);
-        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
-        results.put("code", Integer.valueOf(removed ? 200 : 404));
+        results.put("status", changed ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(changed ? 200 : 404));
     }
 
     public HashMap getFrameworkInfo(String frameworkName) {
@@ -222,7 +221,7 @@ public class JavaWebFrameworkManageComponent implements Runnable {
         }
     }
 
-    private void unloadController(String frameworkName, String mappingInfo) throws Exception {
+    private boolean removeController(String frameworkName, String mappingInfo) throws Exception {
         boolean removed = false;
         if (frameworkName.indexOf("Struts") >= 0) {
             Object configuration = getStrutsConfiguration();
@@ -242,10 +241,10 @@ public class JavaWebFrameworkManageComponent implements Runnable {
                 }
             }
         }
-        results.put("removed", Boolean.valueOf(removed));
+        return removed;
     }
 
-    private void unloadInterceptor(String frameworkName, String interceptorId) throws Exception {
+    private boolean removeInterceptor(String frameworkName, String interceptorId) throws Exception {
         boolean removed = false;
         if (frameworkName.indexOf("Struts") >= 0) {
             Object configuration = getStrutsConfiguration();
@@ -276,7 +275,7 @@ public class JavaWebFrameworkManageComponent implements Runnable {
         } else if (frameworkName.indexOf("JSF") >= 0 || frameworkName.indexOf("Faces") >= 0) {
             removed = removeFacesPhaseListener(interceptorId);
         }
-        results.put("removed", Boolean.valueOf(removed));
+        return removed;
     }
 
     private boolean removeFacesPhaseListener(String interceptorId) {

@@ -136,8 +136,6 @@ public class AsyncShellService {
         Object data = result.get("data");
         if (data instanceof byte[]) return new String((byte[]) data).trim();
         if (data instanceof String)  return ((String) data).trim();
-        Object output = result.get("output");
-        if (output instanceof String) return ((String) output).trim();
         return "";
     }
 }

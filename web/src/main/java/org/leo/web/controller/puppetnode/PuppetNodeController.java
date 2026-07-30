@@ -173,7 +173,6 @@ public class PuppetNodeController {
         }
         if (node != null && node.getPuppet() != null) {
             result.put("puppetId", node.getPuppet().getPuppetId());
-            result.put("puppetType", node.getPuppet().getType());
         } else if (session.getPuppetId() != null) {
             result.put("puppetId", session.getPuppetId());
         }

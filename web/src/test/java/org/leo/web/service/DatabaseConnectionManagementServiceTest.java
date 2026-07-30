@@ -43,7 +43,7 @@ class DatabaseConnectionManagementServiceTest {
                 "puppet-1", params(null, "secret"));
 
         assertEquals("inventory", result.get("connectionName"));
-        assertEquals("mysql", result.get("dialect"));
+        assertEquals("mysql", connection(result).get("dialect"));
         assertFalse(result.containsKey("scope"));
         assertFalse(result.containsKey("canManage"));
         assertFalse(String.valueOf(result).contains("secret"));
@@ -64,7 +64,7 @@ class DatabaseConnectionManagementServiceTest {
                 "puppet-1", params("connection-1", ""));
 
         assertEquals("existing-secret", persistence.toConnectionSpec(existing).getPassword());
-        assertEquals("mysql", result.get("dialect"));
+        assertEquals("mysql", connection(result).get("dialect"));
     }
 
     @Test
@@ -103,6 +103,11 @@ class DatabaseConnectionManagementServiceTest {
 
         verify(mapper).updateStatusByPuppet("connection-1", "puppet-1", 0);
         verify(mapper).deleteByIdAndPuppet("connection-1", "puppet-1");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> connection(Map<String, Object> view) {
+        return (Map<String, Object>) view.get("connection");
     }
 
     private PuppetDatabaseConnection existing(PuppetDatabaseConnectionService persistence,

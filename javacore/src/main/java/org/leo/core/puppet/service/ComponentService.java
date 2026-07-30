@@ -727,10 +727,7 @@ public class ComponentService {
         return extractString(result);
     }
 
-    /**
-     * 从 invokeComponent 结果中提取字符串输出。
-     * 兼容 data(byte[])、data(String)、output(String) 三种格式。
-     */
+    /** 从 invokeComponent 结果的 data 字段中提取字符串输出。 */
     protected String extractString(Map<String, Object> results) {
         if (results == null) return "";
         Object data = results.get("data");
@@ -738,8 +735,6 @@ public class ComponentService {
             try { return new String((byte[]) data, "UTF-8"); } catch (Exception e) { return ""; }
         }
         if (data instanceof String) return (String) data;
-        Object output = results.get("output");
-        if (output instanceof String) return (String) output;
         return "";
     }
 }

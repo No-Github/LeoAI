@@ -56,8 +56,6 @@ v1.0.0 is LeoAI's first official open-source release and a major update spanning
 
 > **Installation baseline:** v1.0.0 is distributed as a fresh installation. Use a new data directory for the official release; database files, Component caches, and generated artifacts from development builds are not upgrade inputs.
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
-
 ---
 
 ## Java/PHP Dual Runtime
@@ -148,7 +146,7 @@ The exact PHP feature set depends on the target environment: database operations
 - **Scheduled Tasks**: Windows scheduled task management
 - **Service Manager**: Start, stop, restart Windows services
 - **Docker Manager**: List, start, stop, and inspect containers and images
-- **Application Manager**: Catalina applications (Tomcat 5/6/7/8/9+, WebLogic) and Spring Framework runtime management; tolerant to idle deployments and puppets injected into the global ClassLoader (thread-scan + JMX MBean dual fallback); supports immediate unloading of Filter / Servlet / Valve / Listener / Controller / Interceptor
+- **Application Manager**: runtime profiles for Tomcat 6–11, WebLogic 10/12/14, Jetty, Undertow, JBoss/WildFly, WebSphere, Spring MVC, and Spring WebFlux; supports removing Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### Security & Permissions
 - **Credential Harvesting**: System credentials, browser data, WiFi configurations
@@ -388,13 +386,6 @@ The simplest approach is to create a `.env` file in the project root — Docker 
 # Change the web port (if 8082 is already in use)
 LEOAI_PORT=9090
 
-# Configure OpenAI or a compatible API
-OPENAI_API_KEY=sk-xxxxx
-OPENAI_BASE_URL=https://api.openai.com/v1
-# Alternative providers:
-# OPENAI_BASE_URL=https://api.deepseek.com
-# OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-
 # For production, change this to a strong random string (16+ characters)
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
@@ -404,10 +395,10 @@ LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
 After editing `.env`, run `docker compose up -d` to apply changes. **Note**: changing `JAR_URL` requires `--build` to re-fetch the JAR.
 
-You can also pass overrides inline for a one-time run (non-persistent):
+You can also override the port inline:
 
 ```bash
-LEOAI_PORT=9090 OPENAI_API_KEY=sk-xxxxx docker compose up -d
+LEOAI_PORT=9090 docker compose up -d
 ```
 
 #### Troubleshooting
@@ -449,23 +440,12 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ### Configuring AI Models
 
-LeoAI's AI features require an LLM endpoint. Two configuration methods are available:
-
-#### Method 1: Web Interface (Recommended)
+LeoAI reads Provider and model settings from the admin interface:
 
 1. Log in and go to **Admin → AI Configuration**
 2. Click **Add Channel**
 3. Fill in the channel name, API key, base URL, and model name
 4. Click **Test Connection** to verify, then save
-
-#### Method 2: Environment Variables
-
-```bash
-export OPENAI_API_KEY=your-api-key
-export OPENAI_BASE_URL=https://api.openai.com/v1
-
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-1.0.0.jar
-```
 
 ### Supported AI Models
 
@@ -490,11 +470,6 @@ server.port=8082
 # Database (SQLite, path relative to working directory)
 spring.datasource.url=jdbc:sqlite:data.db
 
-# AI configuration (can also be managed via web interface)
-leo.ai.openai.api-key=${OPENAI_API_KEY:}
-leo.ai.openai.base-url=${OPENAI_BASE_URL:https://api.openai.com/v1}
-leo.ai.openai.model=gpt-4o
-leo.ai.openai.thinking-enabled=false
 ```
 
 ---

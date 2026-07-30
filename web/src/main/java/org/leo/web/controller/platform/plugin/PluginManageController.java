@@ -173,9 +173,11 @@ public class PluginManageController {
         }
     }
 
-    /** java 类型按字节码处理；空值视为 java（向后兼容旧数据）。 */
     private boolean isJavaPlugin(String pluginType) {
-        return pluginType == null || pluginType.isBlank() || PLUGIN_TYPE_JAVA.equalsIgnoreCase(pluginType.trim());
+        if (pluginType == null || pluginType.isBlank()) {
+            throw new IllegalArgumentException("pluginType 不能为空");
+        }
+        return PLUGIN_TYPE_JAVA.equalsIgnoreCase(pluginType.trim());
     }
 
     /** 解码并反编译校验 Java 字节码。 */
@@ -564,7 +566,7 @@ public class PluginManageController {
             plugin.setRequirements(requirements);
         }
         if (plugin.getRuntime() == null || plugin.getRuntime().isBlank()) {
-            plugin.setRuntime("php".equalsIgnoreCase(plugin.getPluginType()) ? "php" : "java");
+            throw new IllegalArgumentException("runtime 不能为空");
         }
         if (plugin.getLanguage() == null || plugin.getLanguage().isBlank()) {
             plugin.setLanguage(plugin.getPluginType());

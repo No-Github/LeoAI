@@ -229,14 +229,14 @@ class PhpPuppetNodeTest {
             if (operation == PuppetOperation.COMPONENT_INVOKE && invokes.getAndIncrement() == 1) {
                 return response(decoded, Map.of("code", 424));
             }
-            return response(decoded, Map.of("code", 200, "output", "ok"));
+            return response(decoded, Map.of("code", 200, "data", "ok"));
         };
         PhpPuppetNode node = node(communication, portable);
 
         node.execSimpleCommand("echo first");
         Map<String, Object> result = node.execSimpleCommand("echo second");
 
-        assertEquals("ok", result.get("output"));
+        assertEquals("ok", result.get("data"));
         assertEquals(List.of(PuppetOperation.COMPONENT_INVOKE, PuppetOperation.COMPONENT_INVOKE,
                 PuppetOperation.COMPONENT_LOAD, PuppetOperation.COMPONENT_INVOKE), methods);
     }

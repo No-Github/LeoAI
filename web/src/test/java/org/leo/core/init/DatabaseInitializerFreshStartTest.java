@@ -81,9 +81,9 @@ class DatabaseInitializerFreshStartTest {
     }
 
     @Test
-    void rejectsLegacyAiSchemaWithActionableMessage() throws Exception {
+    void rejectsIncompleteAiSchema() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy.db"));
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("incomplete-schema.db"));
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
             statement.executeUpdate("""
@@ -105,13 +105,13 @@ class DatabaseInitializerFreshStartTest {
         IllegalStateException error = assertThrows(
                 IllegalStateException.class, () -> new DatabaseInitializer(dataSource).run());
 
-        assertTrue(error.getMessage().contains("不兼容旧 AI 对话数据"));
+        assertTrue(error.getMessage().contains("数据库结构不完整"));
     }
 
     @Test
-    void rejectsLegacyEventJournalInsteadOfApplyingCompatibilityPatches() throws Exception {
+    void rejectsIncompleteEventJournal() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-events.db"));
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("incomplete-events.db"));
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(
                     connection, new ClassPathResource("sql/schema.sql"));
@@ -135,7 +135,7 @@ class DatabaseInitializerFreshStartTest {
                 IllegalStateException.class,
                 () -> new DatabaseInitializer(dataSource).run());
 
-        assertTrue(error.getMessage().contains("不兼容旧 AI 对话数据"));
+        assertTrue(error.getMessage().contains("数据库结构不完整"));
     }
 
     private int scalar(Statement statement, String sql) throws SQLException {

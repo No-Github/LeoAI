@@ -2,7 +2,6 @@ package org.leo.core.init;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.ClassPathResource;
@@ -23,12 +22,7 @@ import java.util.Set;
 public class DatabaseInitializer implements CommandLineRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
-    private static final String PLACEHOLDER_KEY = "placeholder-configure-db-or-env";
-
     private final DataSource dataSource;
-
-    @Value("${spring.ai.openai.api-key:}")
-    private String openaiApiKey;
 
     public DatabaseInitializer(DataSource dataSource) {
         this.dataSource = dataSource;
@@ -38,7 +32,6 @@ public class DatabaseInitializer implements CommandLineRunner {
     public void run(String... args) throws Exception {
         enableWalMode();
         validateAiConversationSchema();
-        validateApiKeys();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             executeScript("sql/data.sql");
@@ -61,17 +54,6 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    private void validateApiKeys() {
-        if (isPlaceholderOrBlank(openaiApiKey)) {
-            log.warn("OpenAI API key 未配置（环境变量 OPENAI_API_KEY 或数据库 AI 渠道）");
-            log.warn("如已通过数据库 AI 渠道配置，可忽略以上警告");
-        }
-    }
-
-    private boolean isPlaceholderOrBlank(String key) {
-        return key == null || key.isBlank() || key.contains(PLACEHOLDER_KEY);
-    }
-
     private void enableWalMode() {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement();
@@ -84,10 +66,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    /**
-     * AI 对话结构采用全新 Turn 模型，不对旧表做隐式兼容或半迁移。
-     * 发现旧结构时直接失败，避免应用运行到首轮消息写入时才产生难以理解的 SQL 异常。
-     */
+    /** 启动时校验 AI Turn 数据库结构。 */
     private void validateAiConversationSchema() {
         try (Connection connection = dataSource.getConnection()) {
             requireColumns(connection, "ai_turns",
@@ -123,8 +102,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             Set<String> missing = new HashSet<>(requiredColumns);
             missing.removeAll(actual);
             throw new IllegalStateException(
-                    "AI 数据库结构已过期，缺少 " + table + "." + missing
-                            + "；当前版本不兼容旧 AI 对话数据，请重建数据库");
+                    "AI 数据库结构不完整，缺少 " + table + "." + missing);
         }
     }
 
@@ -138,8 +116,7 @@ public class DatabaseInitializer implements CommandLineRunner {
                 if (!column.equals(result.getString("name"))) continue;
                 if (result.getInt("notnull") == 0) return;
                 throw new IllegalStateException(
-                        "AI 数据库结构已过期，" + table + "." + column
-                                + " 必须允许 NULL；当前版本不兼容旧 AI 对话数据，请重建数据库");
+                        "AI 数据库结构不符合约束，" + table + "." + column + " 必须允许 NULL");
             }
         }
     }

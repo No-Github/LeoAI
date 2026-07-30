@@ -26,14 +26,14 @@ class GeneratedBytecodeCompatibilityTest {
     private static final int JAVA_5_CLASS_MAJOR = 49;
 
     @Test
-    void coreShellAndInjectorStayLoadableByLegacyJvms() throws Exception {
+    void coreShellAndInjectorStayLoadableBySupportedJvms() throws Exception {
         GenerationResult result = new ShellGenerator(
                 GenerationRequest.from(createConfig()))
                 .generateFormattedInjector();
 
-        assertLegacyClassFile(result.getCoreClassBytes(), "LeoCore");
-        assertLegacyClassFile(result.getShellClassBytes(), "Shell");
-        assertLegacyClassFile(result.getInjectorClassBytes(), "Injector");
+        assertSupportedClassFile(result.getCoreClassBytes(), "LeoCore");
+        assertSupportedClassFile(result.getShellClassBytes(), "Shell");
+        assertSupportedClassFile(result.getInjectorClassBytes(), "Injector");
     }
 
     @Test
@@ -45,15 +45,15 @@ class GeneratedBytecodeCompatibilityTest {
         Class<?> injectorClass = new ByteArrayClassLoader()
                 .defineAndResolve(result.getInjectorClassBytes());
 
-        assertEquals("org.example.LegacyInjector", injectorClass.getName());
+        assertEquals("org.example.Java6Injector", injectorClass.getName());
         injectorClass.getDeclaredConstructor();
     }
 
     @Test
-    void generatedCoreLoadsInConfiguredLegacyJvm(@TempDir Path tempDir) throws Exception {
-        String javaExecutable = System.getProperty("jmg.legacy.java");
+    void generatedCoreLoadsInConfiguredCompatibilityJvm(@TempDir Path tempDir) throws Exception {
+        String javaExecutable = System.getProperty("jmg.compat.java");
         Assumptions.assumeTrue(javaExecutable != null && !javaExecutable.trim().isEmpty(),
-                "通过 -Djmg.legacy.java=/path/to/java 启用真实旧 JDK 验证");
+                "通过 -Djmg.compat.java=/path/to/java 启用指定 JDK 验证");
 
         ShellGeneratorConfig config = createConfig();
         byte[] core = new LeoCore(config.getReqDisguise(), config.getRespDisguise())
@@ -61,21 +61,21 @@ class GeneratedBytecodeCompatibilityTest {
         core = ClassFileMinimizer.transform(core);
 
         writeClass(tempDir, config.getCoreClassName(), core);
-        writeClass(tempDir, "org.example.LegacyVerifier", createLegacyVerifier());
+        writeClass(tempDir, "org.example.Java6Verifier", createJava6Verifier());
 
         Process process = new ProcessBuilder(
                 javaExecutable,
                 "-Xverify:all",
                 "-cp",
                 tempDir.toString(),
-                "org.example.LegacyVerifier",
+                "org.example.Java6Verifier",
                 config.getCoreClassName()
         ).redirectErrorStream(true).start();
         byte[] output = readAll(process.getInputStream());
         int exitCode = process.waitFor();
 
         assertEquals(0, exitCode,
-                "旧 JDK 加载生成类失败: " + new String(output, StandardCharsets.UTF_8));
+                "兼容性 JDK 加载生成类失败: " + new String(output, StandardCharsets.UTF_8));
         assertEquals("OK", new String(output, StandardCharsets.UTF_8));
     }
 
@@ -170,7 +170,7 @@ class GeneratedBytecodeCompatibilityTest {
                 "WebSocket Shell 必须保留 MessageHandler.Whole<ByteBuffer> 泛型签名");
     }
 
-    private static void assertLegacyClassFile(byte[] classBytes, String label) {
+    private static void assertSupportedClassFile(byte[] classBytes, String label) {
         assertEquals(JAVA_5_CLASS_MAJOR, majorVersion(classBytes),
                 label + " 字节码版本必须兼容 JDK 6/7/8");
         assertFalse(new String(classBytes, StandardCharsets.ISO_8859_1)
@@ -182,9 +182,9 @@ class GeneratedBytecodeCompatibilityTest {
         return ((classBytes[6] & 0xff) << 8) | (classBytes[7] & 0xff);
     }
 
-    private static byte[] createLegacyVerifier() throws Exception {
+    private static byte[] createJava6Verifier() throws Exception {
         ClassPool pool = new ClassPool(true);
-        CtClass verifier = pool.makeClass("org.example.LegacyVerifier");
+        CtClass verifier = pool.makeClass("org.example.Java6Verifier");
         verifier.getClassFile().setVersionToJava5();
         verifier.addMethod(CtNewMethod.make(
                 "public static void main(String[] args) throws Exception {"
@@ -236,16 +236,15 @@ class GeneratedBytecodeCompatibilityTest {
         );
 
         return ShellGeneratorConfig.builder(request, response)
-                .coreClassName("org.example.LegacyCore")
-                .shellClassName("org.example.LegacyFilter")
-                .injectorClassName("org.example.LegacyInjector")
-                .header("X-Test", "legacy")
+                .coreClassName("org.example.Java6Core")
+                .shellClassName("org.example.Java6Filter")
+                .injectorClassName("org.example.Java6Injector")
+                .header("X-Test", "fixture")
                 .serverType(serverType)
                 .shellType("FilterInjector")
                 .packerType("DefaultBase64")
                 .servletNamespace(servletNamespace)
-                // Regression seed: fieldResults used to become "buffer" and
-                // collide with a fixed redirect local in Javassist source.
+                // 固定种子确保生成符号与 Javassist 局部变量保持唯一。
                 .obfuscationSeed(-2840755419257969001L)
                 .build();
     }

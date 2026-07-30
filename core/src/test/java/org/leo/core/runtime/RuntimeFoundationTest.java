@@ -24,9 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RuntimeFoundationTest {
 
     @Test
-    void keepsLegacyJavaDefaultAndRecognizesPhp() {
-        assertEquals(PuppetRuntime.JAVA, PuppetRuntime.from(null));
-        assertEquals(PuppetRuntime.JAVA, PuppetRuntime.from("  "));
+    void requiresAnExplicitRuntimeAndRecognizesPhp() {
+        assertEquals(PuppetRuntime.UNKNOWN, PuppetRuntime.from(null));
+        assertEquals(PuppetRuntime.UNKNOWN, PuppetRuntime.from("  "));
         assertEquals(PuppetRuntime.PHP, PuppetRuntime.from(" PHP "));
         assertEquals(PuppetRuntime.UNKNOWN, PuppetRuntime.from("ruby"));
     }

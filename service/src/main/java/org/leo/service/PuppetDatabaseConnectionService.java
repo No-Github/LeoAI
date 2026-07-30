@@ -120,8 +120,6 @@ public class PuppetDatabaseConnectionService {
         view.put("puppetId", source.getPuppetId());
         view.put("connection", sanitizeConnectionView(
                 withoutPassword(DatabaseConnectionSpec.fromMap(storedConnectionValues(source)).toMap())));
-        view.put("dialect", source.getDialect());
-        view.put("username", source.getUsername());
         view.put("status", source.getStatus());
         view.put("testStatus", source.getTestStatus());
         view.put("lastTestTime", source.getLastTestTime());

@@ -24,7 +24,7 @@ public abstract class AbstractPuppetNode implements AutoCloseable {
 
     private User user;
 
-    /** Runtime facts learned during handshake; absent for legacy Java nodes. */
+    /** Runtime facts learned during handshake. */
     private volatile RuntimeProfile runtimeProfile;
 
 

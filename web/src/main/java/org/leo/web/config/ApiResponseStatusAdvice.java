@@ -11,11 +11,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 import java.util.Map;
 
-/**
- * Keeps the legacy {@code {code,msg,data}} response contract while making the
- * HTTP status line express the same outcome. Controllers can therefore migrate
- * to {@code ApiException} incrementally without returning HTTP 200 for failures.
- */
+/** Keeps the HTTP status line aligned with the {@code {code,msg,data}} API response. */
 @ControllerAdvice
 public class ApiResponseStatusAdvice implements ResponseBodyAdvice<Object> {
 

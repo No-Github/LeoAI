@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS ai_providers (
 
 CREATE TABLE IF NOT EXISTS ai_model_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider_id INTEGER,
+    provider_id INTEGER NOT NULL,
     name VARCHAR(100) NOT NULL UNIQUE,
     provider_key VARCHAR(64) NOT NULL DEFAULT 'custom',
     provider_name VARCHAR(100),
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     create_time DATETIME NOT NULL,
     update_time DATETIME NOT NULL,
     remark TEXT,
-    FOREIGN KEY (provider_id) REFERENCES ai_providers(id) ON DELETE SET NULL,
+    FOREIGN KEY (provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
     FOREIGN KEY (fallback_model_id) REFERENCES ai_model_configs(id) ON DELETE SET NULL
 );
 

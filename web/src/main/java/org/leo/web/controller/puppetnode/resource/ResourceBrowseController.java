@@ -48,17 +48,17 @@ public class ResourceBrowseController {
             String className = ControllerUtil.getOptionalStringParam(params, "className");
             resourcePath = ControllerUtil.getOptionalStringParam(params, "resourcePath");
 
-            // 入参标准化：mode=class 时优先用 className 派生路径
-            if (resourcePath == null || resourcePath.isBlank()) {
-                if ("class".equalsIgnoreCase(mode) && className != null && !className.isBlank()) {
-                    resourcePath = className.trim().replace('.', '/') + ".class";
-                } else if (className != null && !className.isBlank()) {
-                    // 兼容前端只传 className 的情况
-                    resourcePath = className.trim().replace('.', '/') + ".class";
+            if ("class".equals(mode)) {
+                if (className == null || className.isBlank()) {
+                    return ApiResponse.badRequest("className不能为空");
                 }
-            }
-            if (resourcePath == null || resourcePath.isBlank()) {
-                return ApiResponse.badRequest("resourcePath 或 className 不能同时为空");
+                resourcePath = className.trim().replace('.', '/') + ".class";
+            } else if ("path".equals(mode)) {
+                if (resourcePath == null || resourcePath.isBlank()) {
+                    return ApiResponse.badRequest("resourcePath不能为空");
+                }
+            } else {
+                return ApiResponse.badRequest("mode必须为class或path");
             }
             resourcePath = resourcePath.trim();
 
@@ -77,8 +77,7 @@ public class ResourceBrowseController {
                 return ApiResponse.error(msg != null ? msg : "读取资源失败");
             }
 
-            byte[] bytes = (byte[]) componentResult.get("bytecode");
-            if (bytes == null) bytes = (byte[]) componentResult.get("data");
+            byte[] bytes = (byte[]) componentResult.get("data");
             if (bytes == null || bytes.length == 0) {
                 return ApiResponse.error("资源内容为空");
             }

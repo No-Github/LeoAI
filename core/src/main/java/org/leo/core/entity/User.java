@@ -1,7 +1,5 @@
 package org.leo.core.entity;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-
 /**
  * 用户模型
  * 
@@ -10,7 +8,6 @@ import com.fasterxml.jackson.annotation.JsonAlias;
  */
 public class User {
     private String userId;
-    @JsonAlias("username")
     private String userName;
     private String password;
     private String privilege;
@@ -22,7 +19,6 @@ public class User {
     private Integer passwordChangeRequired;
     private String createTime;
     private String updateTime;
-    @JsonAlias("teamname")
     private String teamId;
     private String remark;
 

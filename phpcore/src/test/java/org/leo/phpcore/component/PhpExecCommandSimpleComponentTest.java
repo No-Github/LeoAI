@@ -33,19 +33,19 @@ class PhpExecCommandSimpleComponentTest {
     @Test
     void executesWithBoundedPrimaryBackend() throws Exception {
         Map<String, Object> result = invoke(component);
-        assertEquals("simple-ok-err", result.get("output"));
+        assertEquals("simple-ok-err", result.get("data"));
         assertEquals(7, ((Number) result.get("exitCode")).intValue());
     }
 
     @Test
-    void usesExecAsTheOnlyFallback() throws Exception {
+    void usesExecWhenProcOpenIsUnavailable() throws Exception {
         String source = Files.readString(component, StandardCharsets.UTF_8)
                 .replace("if ($available('proc_open')) {", "if (false) {");
         Path forced = Files.createTempFile("php-command-simple-fallback-", ".php");
         try {
             Files.writeString(forced, source, StandardCharsets.UTF_8);
             Map<String, Object> result = invoke(forced);
-            assertEquals("simple-ok-err", result.get("output"));
+            assertEquals("simple-ok-err", result.get("data"));
             assertEquals(7, ((Number) result.get("exitCode")).intValue());
         } finally {
             Files.deleteIfExists(forced);

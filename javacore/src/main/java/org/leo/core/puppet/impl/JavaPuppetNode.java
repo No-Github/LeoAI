@@ -324,7 +324,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         // 聚合所有 ComponentService 实例的已加载组件，避免仅读单一 service 导致漏显
         Set<String> merged = serviceRegistry.loadedComponents(hostId);
         if (!merged.isEmpty()) return merged;
-        // fallback: 从旧的本地缓存读取
+        // 服务初始化前，组件状态暂存在节点级缓存。
         Set<String> set = allLoadedComponent.get(hostId);
         return set != null ? new HashSet<String>(set) : new HashSet<String>();
     }

@@ -112,7 +112,6 @@ public class PlatformAiController {
         item.put("model", config.getModel());
         item.put("protocol", config.getProtocol());
         item.put("isActive", config.getIsActive());
-        item.put("isDefault", config.getIsActive());
         item.put("enabled", config.getEnabled());
         item.put("contextWindowTokens", aiModelConfigService.getContextWindowTokens(config));
         item.put("maxOutputTokens", config.getMaxOutputTokens() != null

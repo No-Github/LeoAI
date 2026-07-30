@@ -57,8 +57,6 @@ v1.0.0 是 LeoAI 首个正式开源版本，也是一次覆盖运行时、组件
 
 > **安装基线**：v1.0.0 按全新安装发布。部署正式版本时请使用新的数据目录；旧测试版本的数据文件、Component 缓存和生成制品不作为升级输入。
 
-完整改动记录见 [CHANGELOG.md](CHANGELOG.md)。
-
 ---
 
 ## Java/PHP 双运行时
@@ -166,7 +164,7 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 - **计划任务**：Windows 计划任务管理
 - **服务管理**：启动、停止、重启 Windows 服务
 - **Docker 管理**：列出、启动、停止、查看容器和镜像
-- **应用管理**：Catalina 应用（Tomcat 5/6/7/8/9+、WebLogic）容器与 Spring Framework 运行时管理；支持 idle 部署 / puppet 注入全局 ClassLoader 等场景（线程扫描 + JMX MBean 双兜底），可即时卸载 Filter / Servlet / Valve / Listener / Controller / Interceptor
+- **应用管理**：Tomcat 6–11、WebLogic 10/12/14、Jetty、Undertow、JBoss/WildFly、WebSphere、Spring MVC 与 Spring WebFlux 运行时画像；支持移除 Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### 安全与权限
 - **凭据提取**：系统凭据、浏览器数据、WiFi 配置
@@ -442,13 +440,6 @@ docker volume inspect leoai_leoai-data
 # 修改 Web 端口（避开 8082 被占用的情况）
 LEOAI_PORT=9090
 
-# 配置 OpenAI 或兼容接口
-OPENAI_API_KEY=sk-xxxxx
-OPENAI_BASE_URL=https://api.openai.com/v1
-# 国内用户可换成兼容服务
-# OPENAI_BASE_URL=https://api.deepseek.com
-# OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-
 # 生产环境建议改成强随机字符串（至少 16 位）
 LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
@@ -458,10 +449,10 @@ LEO_PLUGIN_ENCRYPT_KEY=please-change-me-to-a-strong-key
 
 修改 `.env` 后用 `docker compose up -d` 让改动生效。**注意**：改 `JAR_URL` 必须加 `--build`，否则不会重新拉取。
 
-也可以临时通过命令行覆盖（一次性，不持久）：
+也可以通过命令行覆盖端口：
 
 ```bash
-LEOAI_PORT=9090 OPENAI_API_KEY=sk-xxxxx docker compose up -d
+LEOAI_PORT=9090 docker compose up -d
 ```
 
 #### 常见问题
@@ -503,23 +494,12 @@ java --add-opens java.base/java.lang=ALL-UNNAMED -jar \
 
 ### 配置 AI 模型
 
-LeoAI 的 AI 功能需要接入 LLM 接口，支持两种配置方式：
-
-#### 方式一：Web 界面配置（推荐）
+LeoAI 的 AI 功能从管理后台读取 Provider 与模型配置：
 
 1. 登录后进入「**管理后台 → AI 配置**」
 2. 点击「**添加通道**」
 3. 填写通道名称、API Key、Base URL、模型名称
 4. 点击「**测试连接**」验证后保存
-
-#### 方式二：环境变量
-
-```bash
-export OPENAI_API_KEY=your-api-key
-export OPENAI_BASE_URL=https://api.openai.com/v1
-
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar LeoAi-1.0.0.jar
-```
 
 ### 支持的 AI 模型
 
@@ -544,11 +524,6 @@ server.port=8082
 # 数据库（SQLite，路径相对于运行目录）
 spring.datasource.url=jdbc:sqlite:data.db
 
-# AI 配置（也可通过 Web 界面管理）
-leo.ai.openai.api-key=${OPENAI_API_KEY:}
-leo.ai.openai.base-url=${OPENAI_BASE_URL:https://api.openai.com/v1}
-leo.ai.openai.model=gpt-4o
-leo.ai.openai.thinking-enabled=false
 ```
 
 ---

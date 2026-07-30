@@ -18,8 +18,8 @@ public class DelegatingStreamingChatModel implements StreamingChatModel {
 
     private volatile StreamingChatModel delegate;
 
-    public DelegatingStreamingChatModel(StreamingChatModel initial) {
-        this.delegate = initial;
+    public DelegatingStreamingChatModel() {
+        this.delegate = null;
     }
 
     public void setDelegate(StreamingChatModel newDelegate) {
@@ -32,6 +32,10 @@ public class DelegatingStreamingChatModel implements StreamingChatModel {
 
     public StreamingChatModel getDelegate() {
         return delegate;
+    }
+
+    public void clearDelegate() {
+        this.delegate = null;
     }
 
     @Override

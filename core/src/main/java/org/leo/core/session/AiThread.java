@@ -52,8 +52,6 @@ public class AiThread implements AiEventStreamRuntime {
     /** 父会话 ID（子 Agent 派发使用，当前会话非派生时为 null）。 */
     private volatile String parentThreadId;
 
-    // ── Agent 生命周期（已迁移到 LangChain4j，不再需要 ReactAgent/MemorySaver 引用） ──
-
     // ── 停止机制 ──────────────────────────────────────────────────────────────
     /** 正在执行 agent.invoke() 的线程引用，用于 interrupt。 */
     private volatile Thread executingThread;

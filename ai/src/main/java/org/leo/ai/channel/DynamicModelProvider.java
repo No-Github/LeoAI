@@ -13,7 +13,6 @@ import org.leo.core.entity.ModelDefaults;
 import org.leo.core.entity.ProviderCapabilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
@@ -26,7 +25,7 @@ import java.util.Objects;
  * 动态模型提供者：从 {@link AiModelConfigService#getActive()} 读取激活配置，
  * 构建并维护 OpenAI Responses API / Chat Completions 兼容的流式 / 非流式模型实例。
  *
- * <p>启动时若数据库无激活记录，回退到 application.properties 中的 fallback 值。
+ * <p>模型配置以数据库中的激活记录为唯一来源。
  * 外部调用 {@link #refresh()} 可热切换底层模型。
  */
 @Component
@@ -46,24 +45,6 @@ public class DynamicModelProvider {
     private final DelegatingStreamingChatModel streamingModel;
     private final DelegatingChatModel chatModel;
 
-    @Value("${leo.ai.openai.api-key:}")
-    private String fallbackApiKey;
-
-    @Value("${leo.ai.openai.model:gpt-4o}")
-    private String fallbackModelName;
-
-    @Value("${leo.ai.openai.thinking-enabled:false}")
-    private boolean fallbackThinkingEnabled;
-
-    @Value("${leo.ai.openai.base-url:https://api.openai.com}")
-    private String fallbackBaseUrl;
-
-    @Value("${leo.ai.openai.protocol:}")
-    private String fallbackProtocol;
-
-    @Value("${leo.ai.openai.completions-path:}")
-    private String fallbackCompletionsPath;
-
     public DynamicModelProvider(AiModelConfigService configService,
                                 DelegatingStreamingChatModel streamingModel,
                                 DelegatingChatModel chatModel) {
@@ -77,15 +58,17 @@ public class DynamicModelProvider {
         configService.setDynamicModelProvider(this);
         try {
             AiModelConfig active = configService.getActive();
-            if (active != null && active.getApiKey() != null && !active.getApiKey().isEmpty()) {
+            if (active != null) {
                 log.info("从数据库加载激活模型配置: {} (id={}, model={})",
                         active.getName(), active.getId(), active.getModel());
                 refreshFromConfig(active);
             } else {
-                log.info("数据库无激活模型配置，使用 application.properties fallback 配置");
+                clearModels();
+                log.info("数据库无激活模型配置，AI 模型保持未初始化");
             }
         } catch (Exception e) {
-            log.warn("初始化动态模型失败，保持 fallback 配置: {}", e.getMessage());
+            clearModels();
+            log.warn("初始化动态模型失败: {}", e.getMessage());
         }
     }
 
@@ -93,21 +76,8 @@ public class DynamicModelProvider {
     public void refresh() {
         AiModelConfig active = configService.getActive();
         if (active == null) {
-            if (fallbackApiKey != null && !fallbackApiKey.isBlank()) {
-                log.warn("refresh() 调用时无激活模型配置，回退到 application 配置");
-                AiModelConfig fallback = new AiModelConfig();
-                fallback.setId(-1);
-                fallback.setName("application-fallback");
-                fallback.setApiKey(fallbackApiKey);
-                fallback.setBaseUrl(fallbackBaseUrl);
-                fallback.setModel(fallbackModelName);
-                fallback.setProtocol(normalizeProtocol(fallbackProtocol));
-                fallback.setCompletionsPath(fallbackCompletionsPath);
-                fallback.setThinkingEnabled(fallbackThinkingEnabled ? 1 : 0);
-                refreshFromConfig(fallback);
-                return;
-            }
-            log.warn("refresh() 调用时无激活模型配置且无 fallback apiKey，模型保持不变");
+            clearModels();
+            log.info("数据库无激活模型配置，AI 模型已清空");
             return;
         }
         refreshFromConfig(active);
@@ -115,17 +85,16 @@ public class DynamicModelProvider {
 
     /** 根据指定配置重建模型。 */
     public void refreshFromConfig(AiModelConfig config) {
-        ModelRuntime runtime;
-        try {
-            runtime = buildRuntime(config);
-        } catch (IllegalArgumentException e) {
-            log.warn("模型配置 (id={}) 不可用，跳过模型切换: {}", config.getId(), e.getMessage());
-            return;
-        }
+        ModelRuntime runtime = buildRuntime(config);
         streamingModel.setDelegate(runtime.streamingModel());
         chatModel.setDelegate(runtime.chatModel());
         log.info("模型已切换 — protocol={}, model={}, maxTokens={}, reasoning={}",
                 runtime.protocol(), runtime.modelName(), runtime.maxTokens(), runtime.doReasoning());
+    }
+
+    private void clearModels() {
+        streamingModel.clearDelegate();
+        chatModel.clearDelegate();
     }
 
     public ModelRuntime buildRuntime(AiModelConfig config) {

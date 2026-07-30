@@ -9,9 +9,6 @@ import java.util.*;
 public class WeblogicContainerManageComponent implements Runnable {
     private HashMap params;
     private HashMap results;
-    // 注意：曾经这里把 contexts 用 static 缓存（`static HashSet contexts = getContext()`），
-    // 类加载时执行一次，第一次扫描到空就永远空。现在改为每次现扫。
-
 
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
@@ -43,16 +40,16 @@ public class WeblogicContainerManageComponent implements Runnable {
             results.put("contexts",inspectRuntime());
             results.put("code", Integer.valueOf(200));
             return;
-        } else if ("unLoadFilter".equals(methodName)) {
+        } else if ("removeFilter".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("filterName");
-            putOperationResult(unLoadFilter(contextName,filterName));
-        } else if ("unLoadServlet".equals(methodName)) {
+            putOperationResult(removeFilter(contextName,filterName));
+        } else if ("removeServlet".equals(methodName)) {
             String contextName= (String) params.get("contextName");
             String filterName= (String) params.get("servletPattern");
-            putOperationResult(unLoadServlet(contextName,filterName));
-        } else if ("unLoadListener".equals(methodName)) {
-            putOperationResult(unLoadListener((String) params.get("listenerId")));
+            putOperationResult(removeServlet(contextName,filterName));
+        } else if ("removeListener".equals(methodName)) {
+            putOperationResult(removeListener((String) params.get("listenerId")));
         } else {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
@@ -61,11 +58,12 @@ public class WeblogicContainerManageComponent implements Runnable {
     }
 
     private void putOperationResult(Boolean changed) {
-        boolean removed = Boolean.TRUE.equals(changed);
-        results.put("removed", Boolean.valueOf(removed));
+        boolean changedValue = Boolean.TRUE.equals(changed);
+        results.put("matched", Integer.valueOf(changedValue ? 1 : 0));
+        results.put("changed", Integer.valueOf(changedValue ? 1 : 0));
         results.put("verified", Boolean.TRUE);
-        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
-        results.put("code", Integer.valueOf(removed ? 200 : 404));
+        results.put("status", changedValue ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(changedValue ? 200 : 404));
     }
 
     public ArrayList inspectRuntime() {
@@ -107,7 +105,7 @@ public class WeblogicContainerManageComponent implements Runnable {
                 filterInfo.put("servletName", servletName);
                 filterInfo.put("urlPatterns",urlPatterns);
                 Object filter=filters.get(filterName);
-                filterInfo.put("filterClass",getFV(filter, "filterClassName"));
+                filterInfo.put("filterClassName",getFV(filter, "filterClassName"));
                 allFilterInfo.add(filterInfo);
             }
             return allFilterInfo;
@@ -156,15 +154,14 @@ public class WeblogicContainerManageComponent implements Runnable {
      *   <li>{@code _asyncListeners}（async）</li>
      * </ul>
      * 这些字段挂在 {@code WebAppServletContext} 自身或其内部的 {@code eventsManager}/{@code _eventsManager} 上，
-     * 不同 WebLogic 版本（10.3 / 12.x / 14.x）字段位置和命名前缀（带不带下划线）有差异，
-     * 全部用反射 + 多候选字段名兜底。
+     * WebLogic 10.3 / 12.x / 14.x 的字段位置与命名前缀不同，通过画像字段读取。
      */
     public ArrayList getAllListener(Object standardContext) {
         ArrayList listeners = new ArrayList();
-        // listener 列表既可能挂在 context 自身，也可能挂在 eventsManager 上，两边都扫
+        // Listener 可能位于 context 或 eventsManager。
         Object[] holders = new Object[]{standardContext, tryGetField(standardContext, "eventsManager"), tryGetField(standardContext, "_eventsManager")};
 
-        // (字段名, 分类) 对：覆盖带/不带下划线两套命名
+        // 字段名与分类成对定义。
         String[][] fieldDefs = new String[][]{
                 {"_servletContextListeners", "context"},
                 {"servletContextListeners", "context"},
@@ -234,7 +231,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         }
     }
 
-    public Boolean unLoadListener(String listenerId) throws Exception {
+    public Boolean removeListener(String listenerId) throws Exception {
         String[] fieldNames = new String[]{
                 "_servletContextListeners", "servletContextListeners",
                 "_servletContextAttListeners", "servletContextAttListeners",
@@ -296,7 +293,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         return true;
     }
 
-    public Boolean unLoadFilter(String contextName,String filterName) throws Exception {
+    public Boolean removeFilter(String contextName,String filterName) throws Exception {
         for (Object standardContext:getContext()){
             if (contextName.equals(getFV(standardContext,"contextName"))){
                 Object filterManager = invokeMethod(standardContext, "getFilterManager");
@@ -321,7 +318,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         return removed && !filters.containsKey(filterName);
     }
 
-    public Boolean unLoadServlet(String contextName,String servletPattern) throws Exception {
+    public Boolean removeServlet(String contextName,String servletPattern) throws Exception {
         for (Object standardContext:getContext()){
             if (contextName.equals(getFV(standardContext,"contextName"))){
                 Object servletMapping=getFV(standardContext,"servletMapping");
@@ -343,8 +340,7 @@ public class WeblogicContainerManageComponent implements Runnable {
 
     public static Object[] getContextsByMbean() throws Throwable {
         HashSet webappContexts = new HashSet();
-        // 优先用类加载时记录的 CL（puppet 注入时拿到的 CL，通常是 weblogic.utils.classloaders.* 之一），
-        // 不行就 fallback 到 system classloader 再试一次（覆盖 puppet 在执行线程上 CL 被替换的情况）
+        // 同时检查当前线程与系统类加载器中的 RuntimeAccess。
         ClassLoader[] candidates = new ClassLoader[]{
                 Thread.currentThread().getContextClassLoader(), ClassLoader.getSystemClassLoader()};
         Class serverRuntimeClass = null;
@@ -457,10 +453,7 @@ public class WeblogicContainerManageComponent implements Runnable {
         } catch (Throwable e) {
 
         }
-        // 前两条路径都依赖 ServerRuntime 静态实例或活跃请求线程，
-        // idle 部署 / 普通 CL 注入时可能都拿不到。
-        // 兜底走 PlatformMBeanServer 查 ApplicationRuntime + ServletRuntime 的 MBean，
-        // 通过 MBean 反射出对应的 WebAppServletContext。
+        // PlatformMBeanServer 提供 ApplicationRuntime 与 ServletRuntime 视图。
         if (webappContexts.isEmpty()) {
             try {
                 webappContexts.addAll(Arrays.asList(getContextsByPlatformMbean()));

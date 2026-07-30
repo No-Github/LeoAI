@@ -105,10 +105,11 @@ public class Plugin {
 
     public void setRequirements(Map<String, Object> requirements) { this.requirements = requirements; }
 
-    /** Legacy plugins infer runtime from pluginType. */
     public String resolveRuntime() {
-        if (runtime != null && !runtime.isBlank()) return runtime.trim().toLowerCase();
-        return "php".equalsIgnoreCase(pluginType) ? "php" : "java";
+        if (runtime == null || runtime.isBlank()) {
+            throw new IllegalStateException("插件 runtime 未配置");
+        }
+        return runtime.trim().toLowerCase();
     }
 
     public String getParamsDemo() {

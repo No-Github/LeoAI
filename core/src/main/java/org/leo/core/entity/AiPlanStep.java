@@ -37,14 +37,7 @@ public class AiPlanStep {
     private volatile long completedAt;
 
     /**
-     * 原始构造函数，保持向后兼容性。
-     */
-    public AiPlanStep(int index, String description, String toolHint, boolean parallel) {
-        this(index, description, toolHint, parallel, null, 1, null);
-    }
-
-    /**
-     * 完整构造函数，包括新增的可选字段。
+     * 计划步骤构造函数。
      * 同时被 FastJSON 用于反序列化（{@link JSONCreator} + {@link JSONField}），
      * 让 plan 快照可以从持久化 JSON 还原。volatile 状态字段（status/result/preApproved 等）
      * 由 FastJSON 通过反射直接写入。

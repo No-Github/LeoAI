@@ -20,9 +20,8 @@ public class Disguise {
     private String encodeBody;
     private String decodeBody;
 
-    /** Portable disguise schema. Legacy Java-only files deserialize as version 1. */
-    private Integer schemaVersion;
-    private Integer protocolVersion;
+    private Integer schemaVersion = 2;
+    private Integer protocolVersion = 2;
 
     /** PHP function bodies. encode receives $payload; decode receives $body. */
     private String phpEncodeBody;
@@ -158,7 +157,7 @@ public class Disguise {
     }
 
     public int getSchemaVersion() {
-        return schemaVersion == null ? 1 : schemaVersion;
+        return schemaVersion;
     }
 
     public void setSchemaVersion(Integer schemaVersion) {
@@ -166,7 +165,7 @@ public class Disguise {
     }
 
     public int getProtocolVersion() {
-        return protocolVersion == null ? 1 : protocolVersion;
+        return protocolVersion;
     }
 
     public void setProtocolVersion(Integer protocolVersion) {

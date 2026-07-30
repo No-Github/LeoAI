@@ -39,9 +39,9 @@ class WebRuntimeManageServiceTest {
     void selectsTomcatStructuralSubStrategyInsideVersionProfile() {
         WebRuntimeProfileRegistry.RuntimeProfile profile =
                 WebRuntimeProfileRegistry.resolve("Tomcat", "8.5.100");
-        assertEquals("tomcat-8.5:modern-list", WebRuntimeProfileRegistry.strategyId(
+        assertEquals("tomcat-8.5:list-field", WebRuntimeProfileRegistry.strategyId(
                 profile, Map.of("listenerStorage", "applicationEventListenersList")));
-        assertEquals("tomcat-8.5:legacy-objects", WebRuntimeProfileRegistry.strategyId(
+        assertEquals("tomcat-8.5:objects-field", WebRuntimeProfileRegistry.strategyId(
                 profile, Map.of("listenerStorage", "applicationEventListenersObjects")));
     }
 

@@ -74,6 +74,7 @@ public class PluginTools {
         plugin.setVersion(defaultIfBlank(version, DEFAULT_VERSION));
         plugin.setParamsDemo(trimToNull(paramsDemo));
         plugin.setPluginType(trimToNull(pluginType));
+        plugin.setRuntime("php".equalsIgnoreCase(plugin.getPluginType()) ? "php" : "java");
         plugin.setRemark(trimToNull(remark));
         plugin.setCreateUserId(requireNonBlank(userId, "userId不能为空"));
         plugin.setCreateTime(String.valueOf(System.currentTimeMillis()));
@@ -133,6 +134,7 @@ public class PluginTools {
         }
         if (pluginType != null) {
             existing.setPluginType(trimToNull(pluginType));
+            existing.setRuntime("php".equalsIgnoreCase(existing.getPluginType()) ? "php" : "java");
         }
         if (remark != null) {
             existing.setRemark(trimToNull(remark));
@@ -259,10 +261,8 @@ public class PluginTools {
                 .getBytes(StandardCharsets.UTF_8);
     }
 
-    /** java 类型按字节码处理；空值视为 java（向后兼容旧数据）。 */
     private boolean isJavaPlugin(String pluginType) {
-        return pluginType == null || pluginType.isBlank()
-                || PLUGIN_TYPE_JAVA.equalsIgnoreCase(pluginType.trim());
+        return PLUGIN_TYPE_JAVA.equalsIgnoreCase(requireNonBlank(pluginType, "pluginType不能为空"));
     }
 
     private void savePlugin(Plugin plugin) throws Exception {

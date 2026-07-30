@@ -92,7 +92,7 @@ public class WebRuntimeManageService extends ComponentService {
             String component = resolveFrameworkComponentName(webFramework);
             if (component == null) return operation("UNSUPPORTED", 0, 0, false, "FRAMEWORK_READ_ONLY");
             HashMap<String, Object> request = params("controller".equals(type)
-                    ? "unLoadController" : "unLoadInterceptor");
+                    ? "removeController" : "removeInterceptor");
             request.put("frameworkName", webFramework);
             request.put("controller".equals(type) ? "mappingInfo" : "interceptorId", identifier);
             raw = invokeComponent(component, request);
@@ -225,21 +225,16 @@ public class WebRuntimeManageService extends ComponentService {
     private Map<String, Object> normalizeOperation(Map<String, Object> raw) {
         if (raw == null) return operation("FAILED", 0, 0, false, "EMPTY_COMPONENT_RESPONSE");
         Object status = raw.get("status");
-        if (status != null) {
-            String operationStatus = String.valueOf(status);
-            boolean changed = "CHANGED".equals(operationStatus);
-            boolean verified = Boolean.TRUE.equals(raw.get("verified"));
-            int matched = number(raw.get("matched"), changed ? 1 : 0);
-            int changedCount = number(raw.get("changed"), changed ? 1 : 0);
-            return operation(operationStatus, matched, changedCount, verified,
-                    changed ? null : text(raw.get("msg"), null));
+        if (status == null) {
+            return operation("FAILED", 0, 0, false, "INVALID_COMPONENT_RESPONSE");
         }
-        boolean changed = Boolean.TRUE.equals(raw.get("removed"));
-        int code = raw.get("code") instanceof Number ? ((Number) raw.get("code")).intValue() : 500;
-        if (changed) return operation("CHANGED", 1, 1, true, text(raw.get("msg"), null));
-        if (code == 404) return operation("NOT_FOUND", 0, 0, true, text(raw.get("msg"), "NOT_FOUND"));
-        if (code >= 400) return operation("FAILED", 0, 0, false, text(raw.get("msg"), "COMPONENT_ERROR"));
-        return operation("NOT_FOUND", 0, 0, true, text(raw.get("msg"), "NOT_FOUND"));
+        String operationStatus = String.valueOf(status);
+        boolean changed = "CHANGED".equals(operationStatus);
+        return operation(operationStatus,
+                number(raw.get("matched"), 0),
+                number(raw.get("changed"), 0),
+                Boolean.TRUE.equals(raw.get("verified")),
+                changed ? null : text(raw.get("msg"), null));
     }
 
     private Map<String, Object> operation(String status, int matched, int changed,
@@ -261,10 +256,10 @@ public class WebRuntimeManageService extends ComponentService {
     }
 
     private String methodFor(String type) {
-        if ("filter".equals(type)) return "unLoadFilter";
-        if ("servlet".equals(type)) return "unLoadServlet";
-        if ("listener".equals(type)) return "unLoadListener";
-        if ("valve".equals(type)) return "unLoadValve";
+        if ("filter".equals(type)) return "removeFilter";
+        if ("servlet".equals(type)) return "removeServlet";
+        if ("listener".equals(type)) return "removeListener";
+        if ("valve".equals(type)) return "removeValve";
         throw new IllegalArgumentException("不支持的组件类型: " + type);
     }
 
@@ -293,7 +288,7 @@ public class WebRuntimeManageService extends ComponentService {
     }
 
     private String assetClassName(String type, Map<?, ?> raw) {
-        if ("filter".equals(type)) return text(raw.get("filterClassName"), text(raw.get("filterClass"), ""));
+        if ("filter".equals(type)) return text(raw.get("filterClassName"), "");
         if ("servlet".equals(type)) return text(raw.get("servletClass"), "");
         if ("listener".equals(type)) return text(raw.get("className"), "");
         if ("valve".equals(type)) return text(raw.get("valveClassName"), "");

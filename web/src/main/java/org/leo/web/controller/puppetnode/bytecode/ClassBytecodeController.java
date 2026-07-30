@@ -44,7 +44,7 @@ public class ClassBytecodeController {
             }
 
             // 获取字节码数据
-            byte[] bytecode = (byte[]) componentResult.get("bytecode");
+            byte[] bytecode = (byte[]) componentResult.get("data");
             if (bytecode == null || bytecode.length == 0) {
                 throw new RuntimeException("类字节码数据为空");
             }

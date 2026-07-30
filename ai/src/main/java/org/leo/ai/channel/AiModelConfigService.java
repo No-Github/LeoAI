@@ -20,11 +20,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * AI 模型配置服务（ccswitch 风格的单表 CRUD）。
+ * AI 供应商及模型配置服务。
  *
- * <p>每条记录都是一组完整的 "name + base_url + api_key + model + 可选高级项"。
- * 同一时刻只允许一条 {@code is_active=1}。激活时会触发 {@link DynamicModelProvider#refresh()}
- * 热切换底层模型。
+ * <p>模型继承所属供应商的连接配置，同一时刻只允许一条 {@code is_active=1}。
+ * 激活时会触发 {@link DynamicModelProvider#refresh()} 热切换底层模型。
  */
 @Service
 public class AiModelConfigService {
@@ -470,8 +469,7 @@ public class AiModelConfigService {
     private void validateRequired(AiModelConfig row) {
         if (row == null) throw new IllegalArgumentException("配置不能为空");
         if (isBlank(row.getName())) throw new IllegalArgumentException("name 不能为空");
-        if (row.getProviderId() == null && isBlank(row.getApiKey())) throw new IllegalArgumentException("apiKey 不能为空");
-        if (row.getProviderId() == null && isBlank(row.getBaseUrl())) throw new IllegalArgumentException("baseUrl 不能为空");
+        if (row.getProviderId() == null) throw new IllegalArgumentException("providerId 不能为空");
         if (isBlank(row.getModel())) throw new IllegalArgumentException("model 不能为空");
     }
 
@@ -507,7 +505,6 @@ public class AiModelConfigService {
     }
 
     private void applyProvider(AiModelConfig row) {
-        if (row.getProviderId() == null) return;
         AiProvider provider = findProviderById(row.getProviderId());
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());
@@ -539,7 +536,6 @@ public class AiModelConfigService {
         if (capabilities.maxOutputTokens() <= 0) {
             throw new IllegalArgumentException("模型最大输出长度为 0，不能用于当前聊天通道");
         }
-        if (row.getProviderId() == null) return;
         AiProvider provider = findProviderById(row.getProviderId());
         if (provider == null) {
             throw new IllegalArgumentException("供应商不存在，providerId: " + row.getProviderId());

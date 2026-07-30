@@ -80,9 +80,6 @@ public class MountDiskController {
 
     private String extractResponseMessage(Map<String, Object> result) {
         Object msg = result.get("msg");
-        if (msg == null) {
-            msg = result.get("message");
-        }
         return msg == null ? null : String.valueOf(msg);
     }
 }

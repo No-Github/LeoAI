@@ -473,7 +473,7 @@ public class BrowserDataService extends ComponentService {
     private long getFileSize(String path, int osType) throws Exception {
         String out;
         if (osType == OS_WINDOWS) {
-            // for %~z is batch-only; use wmic or a workaround
+            // for %~z is batch-only; query size through available Windows commands
             out = execFast(winCmd("for %F in (\"" + path + "\") do @echo %~zF")).trim();
         } else if (osType == OS_MACOS) {
             out = execFast("stat -f%z \"" + path + "\" 2>/dev/null").trim();

@@ -353,8 +353,6 @@ public class FileTools {
             return new String(bytes, StandardCharsets.UTF_8);
         }
         if (data instanceof String s) return s;
-        Object output = raw.get("output");
-        if (output instanceof String s) return s;
         return "";
     }
 

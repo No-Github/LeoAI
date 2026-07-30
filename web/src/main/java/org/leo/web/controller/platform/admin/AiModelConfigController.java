@@ -34,10 +34,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * AI 模型配置管理（ccswitch 风格的单层条目 CRUD）。
+ * AI 供应商模型配置管理。
  *
- * <p>每条记录 = name + baseUrl + apiKey + model + 可选 thinking/maxTokens。
- * 任意时刻只允许一条 {@code is_active=1}。激活时热切换底层模型。
+ * <p>模型从所属供应商继承连接配置，任意时刻只允许一条 {@code is_active=1}。
  */
 @RestController
 @RequestMapping("/platform/admin/ai-models")
@@ -404,7 +403,6 @@ public class AiModelConfigController {
         m.put("protocol", DynamicModelProvider.resolveProtocol(c));
         m.put("completionsPath", c.getCompletionsPath());
         m.put("isActive", c.getIsActive());
-        m.put("isDefault", c.getIsActive());
         m.put("enabled", c.getEnabled());
         m.put("fallbackModelId", c.getFallbackModelId());
         AiModelConfig fallback = c.getFallbackModelId() != null
@@ -432,7 +430,7 @@ public class AiModelConfigController {
         m.put("supportsStructuredOutput", capabilities.supportsStructuredOutput());
         m.put("supportsWebSearch", capabilities.supportsWebSearch());
         m.put("supportsParallelToolCalls", capabilities.supportsParallelToolCalls());
-        m.put("defaultMaxOutputTokens", capabilities.defaultMaxOutputTokens());
+        m.put("defaultMaxOutputTokens", capabilities.maxOutputTokens());
         m.put("createTime", c.getCreateTime());
         m.put("updateTime", c.getUpdateTime());
         m.put("remark", c.getRemark());

@@ -19,22 +19,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 系统基础信息收集组件
- * 用于收集目标主机的硬件、操作系统、Java运行时、网络等信息
- *
- * v3.0 修复：
- * 1. com.sun.management 硬依赖 → 反射调用，非 Oracle JVM 自动 fallback
- * 2. getBootClassPath() Java 9+ 异常 → try-catch 隔离
- * 3. middlewareInfo 缓存永不失效 → 加 TTL（10 分钟）
- * 4. getHostName() DNS 阻塞 → 先读环境变量 fallback InetAddress
- * 5. formatUptime 中文硬编码 → 纯英文 "Xd HH:MM:SS"
- * 6. for-each → 索引遍历，与其他 Component 风格一致
- * 7. 去掉类级 @SuppressWarnings / @Override 保留
- *
- * 遵循 COMPONENT_GUIDE.md：Java 1.6 语法，无 lambda/匿名内部类/diamond。
+ * 收集目标主机的硬件、操作系统、Java 运行时、网络、中间件和 Web 框架信息。
+ * 保持 Java 6 字节码与独立 payload 约束。
  *
  * @author LeoSpring
- * @version 3.0
  */
 public class BasicInfoComponent implements Runnable {
 
@@ -47,18 +35,15 @@ public class BasicInfoComponent implements Runnable {
     private static final long MILLIS_PER_HOUR = 60 * MILLIS_PER_MINUTE;
     private static final long MILLIS_PER_DAY = 24 * MILLIS_PER_HOUR;
 
-    // 【修复 #3】middlewareInfo 缓存 TTL：10 分钟
     private static final long MIDDLEWARE_CACHE_TTL_MS = 10 * 60 * 1000;
 
-    // 缓存系统信息，避免重复调用
-    // 【修复 #1】osBean 改为 Object，不再硬引用 com.sun.management 类
     private static volatile Object osBean;
-    private static volatile Class<?> sunOsBeanClass; // com.sun.management.OperatingSystemMXBean 接口 Class
+    private static volatile boolean sunOsBeanResolved;
+    private static volatile Class<?> sunOsBeanClass;
     private static volatile RuntimeMXBean runtimeBean;
     private static volatile MemoryMXBean memoryBean;
     private static volatile ThreadMXBean threadBean;
     private static volatile String hostName;
-    // 【修复 #3】增加缓存时间戳
     private static volatile Map<String, Object> middlewareInfo;
     private static volatile long middlewareCacheTime;
 
@@ -171,7 +156,6 @@ public class BasicInfoComponent implements Runnable {
 
     /**
      * 获取硬件信息
-     * 【修复 #1】通过反射调用 com.sun.management API，fallback 到标准 API
      */
     public Map<String, Object> getHardwareInfo() {
         Map<String, Object> info = new HashMap<String, Object>();
@@ -218,7 +202,6 @@ public class BasicInfoComponent implements Runnable {
 
     /**
      * 获取操作系统信息
-     * 【修复 #4】hostname 优先读环境变量
      */
     public Map<String, Object> getOSInfo() {
         Map<String, Object> info = new HashMap<String, Object>();
@@ -241,7 +224,6 @@ public class BasicInfoComponent implements Runnable {
 
     /**
      * 获取中间件信息
-     * 【修复 #3】加 TTL 缓存过期
      */
     public Map<String, Object> getMiddlewareInfo() {
         long now = System.currentTimeMillis();
@@ -311,7 +293,6 @@ public class BasicInfoComponent implements Runnable {
 
     /**
      * 获取Java运行时信息
-     * 【修复 #2】getBootClassPath() 用 try-catch 隔离
      */
     public Map<String, Object> getJavaRuntimeInfo() {
         Map<String, Object> javaInfo = new HashMap<String, Object>();
@@ -331,7 +312,6 @@ public class BasicInfoComponent implements Runnable {
             javaInfo.put("JVMArguments", runtime.getInputArguments());
             javaInfo.put("ClassPath", runtime.getClassPath());
 
-            // 【修复 #2】getBootClassPath 在 Java 9+ 会抛 UnsupportedOperationException
             try {
                 javaInfo.put("BootClassPath", runtime.getBootClassPath());
             } catch (UnsupportedOperationException e) {
@@ -734,32 +714,20 @@ public class BasicInfoComponent implements Runnable {
     // ==================== 反射辅助方法 ====================
 
     /**
-     * 【修复 #1】获取 com.sun.management.OperatingSystemMXBean（反射，不硬依赖）
-     * 返回 null 表示当前 JVM 不支持
+     * 通过反射获取 com.sun.management.OperatingSystemMXBean。
      */
     private static Object getSunOsBean() {
-        if (osBean != null) {
-            if ("UNAVAILABLE".equals(osBean)) {
-                return null;
-            }
-            return osBean;
-        }
+        if (sunOsBeanResolved) return osBean;
         synchronized (BasicInfoComponent.class) {
-            if (osBean != null) {
-                if ("UNAVAILABLE".equals(osBean)) {
-                    return null;
-                }
-                return osBean;
-            }
+            if (sunOsBeanResolved) return osBean;
             try {
                 java.lang.management.OperatingSystemMXBean stdOs = ManagementFactory.getOperatingSystemMXBean();
-                // 加载接口 Class 并缓存，用于后续反射查方法
                 sunOsBeanClass = Class.forName("com.sun.management.OperatingSystemMXBean");
                 osBean = stdOs;
             } catch (ClassNotFoundException e) {
-                osBean = "UNAVAILABLE";
-                return null;
+                osBean = null;
             }
+            sunOsBeanResolved = true;
         }
         return osBean;
     }
@@ -840,8 +808,7 @@ public class BasicInfoComponent implements Runnable {
     // ==================== 辅助方法 ====================
 
     /**
-     * 【修复 #4】安全获取主机名
-     * 优先读环境变量，避免 DNS 反向查找阻塞
+     * 优先读取环境变量，最后通过 InetAddress 获取主机名。
      */
     private static String getHostNameSafe() {
         if (hostName != null) {
@@ -852,7 +819,6 @@ public class BasicInfoComponent implements Runnable {
                 return hostName;
             }
 
-            // 1. 先尝试环境变量（无 DNS 开销）
             String name = System.getenv("HOSTNAME");        // Linux
             if (name != null && name.length() > 0) {
                 hostName = name;
@@ -864,7 +830,6 @@ public class BasicInfoComponent implements Runnable {
                 return hostName;
             }
 
-            // 2. fallback InetAddress（可能触发 DNS 查找）
             try {
                 hostName = InetAddress.getLocalHost().getHostName();
             } catch (Exception e) {
@@ -887,7 +852,6 @@ public class BasicInfoComponent implements Runnable {
 
     /**
      * 格式化 MAC 地址
-     * 【修复 #6】索引遍历替代 for-each
      */
     private String formatMacAddress(byte[] mac) {
         StringBuilder sb = new StringBuilder();
@@ -918,7 +882,7 @@ public class BasicInfoComponent implements Runnable {
     }
 
     /**
-     * 【修复 #5】格式化运行时间 — 纯英文 "Xd HH:MM:SS"
+     * 格式化运行时间为 "Xd HH:MM:SS"。
      */
     private String formatUptime(long uptime) {
         long days = uptime / MILLIS_PER_DAY;

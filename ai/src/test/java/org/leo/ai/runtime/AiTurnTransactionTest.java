@@ -181,7 +181,8 @@ class AiTurnTransactionTest {
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         AiConversationStoreService.PersistedTurn persisted =
                 new AiConversationStoreService.PersistedTurn(
-                        "turn-1", "run-1", "thread-1", "message-1", 1L);
+                        "turn-1", "run-1", "thread-1", "message-1",
+                        "assistant-message-1", 1L, null);
         when(classifier.classify(any(Throwable.class))).thenReturn(
                 new AiErrorClassifier.Classification(
                         "network", "网络连接失败", "network down", List.of()));

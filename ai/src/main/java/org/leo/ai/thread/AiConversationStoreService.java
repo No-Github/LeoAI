@@ -896,19 +896,6 @@ public class AiConversationStoreService {
     public record PersistedTurn(String turnId, String runId, String threadId,
                                 String userMessageId, String assistantMessageId,
                                 long startedAt, String leaseToken) {
-        public PersistedTurn(String turnId, String runId, String threadId,
-                             String userMessageId, String assistantMessageId,
-                             long startedAt) {
-            this(turnId, runId, threadId, userMessageId,
-                    assistantMessageId, startedAt, null);
-        }
-
-        /** 兼容旧测试和内部调用点。 */
-        public PersistedTurn(String turnId, String runId, String threadId,
-                             String userMessageId, long startedAt) {
-            this(turnId, runId, threadId, userMessageId,
-                    "item-" + UUID.randomUUID(), startedAt, null);
-        }
     }
 
     public record ConversationMessage(String role, String content) {

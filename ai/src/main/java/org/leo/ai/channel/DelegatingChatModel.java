@@ -18,8 +18,8 @@ public class DelegatingChatModel implements ChatModel {
 
     private volatile ChatModel delegate;
 
-    public DelegatingChatModel(ChatModel initial) {
-        this.delegate = initial;
+    public DelegatingChatModel() {
+        this.delegate = null;
     }
 
     public void setDelegate(ChatModel newDelegate) {
@@ -32,6 +32,10 @@ public class DelegatingChatModel implements ChatModel {
 
     public ChatModel getDelegate() {
         return delegate;
+    }
+
+    public void clearDelegate() {
+        this.delegate = null;
     }
 
     @Override

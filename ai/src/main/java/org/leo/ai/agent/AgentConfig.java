@@ -3,28 +3,19 @@ package org.leo.ai.agent;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.TokenCountEstimator;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiResponsesChatModel;
-import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
-import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.config.AiAgentProperties;
 import org.leo.ai.service.SkillRegistryService;
-import org.leo.core.entity.AiModelConfig;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.annotation.EnableAsync;
 
-import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,8 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>使用 {@link DelegatingStreamingChatModel} / {@link DelegatingChatModel} 代理层，
  * 支持运行时通过 {@link org.leo.ai.channel.DynamicModelProvider#refresh()} 热切换底层模型。
  *
- * <p>启动时使用 application.yml 中的 fallback 配置构建初始模型实例；
- * 随后 DynamicModelProvider 的 @PostConstruct 会尝试从数据库加载激活 Provider 覆盖。
+ * <p>模型代理启动时为空，由 DynamicModelProvider 从数据库加载激活 Provider。
  *
  * <p>线程池架构：
  * <ul>
@@ -62,27 +52,6 @@ public class AgentConfig {
         this.agentProps = agentProps;
         this.modelConfigService = modelConfigService;
     }
-
-    @Value("${leo.ai.openai.api-key:}")
-    private String apiKey;
-
-    @Value("${leo.ai.openai.model:gpt-4o}")
-    private String modelName;
-
-    @Value("${leo.ai.openai.base-url:https://api.openai.com/v1}")
-    private String baseUrl;
-
-    @Value("${leo.ai.openai.protocol:}")
-    private String protocol;
-
-    @Value("${leo.ai.openai.completions-path:}")
-    private String completionsPath;
-
-    @Value("${leo.ai.openai.thinking-enabled:false}")
-    private boolean thinkingEnabled;
-
-    @Value("${leo.ai.openai.max-tokens:}")
-    private String maxTokens;
 
     // ── 线程池 ────────────────────────────────────────────────────────────────
 
@@ -156,43 +125,10 @@ public class AgentConfig {
 
     /**
      * 代理流式模型 Bean。Agent 绑定此代理，底层实例可热切换。
-     * 启动时使用 fallback 配置构建初始实例；DynamicModelProvider @PostConstruct 会从 DB 覆盖。
-     * OpenAI Responses API：reasoning summary 通过 reasoningSummary("auto") 启用。
      */
     @Bean
     public DelegatingStreamingChatModel delegatingStreamingChatModel() {
-        AiModelConfig fallback = fallbackConfig();
-        if (!DynamicModelProvider.useResponsesApi(fallback)) {
-            var builder = OpenAiStreamingChatModel.builder()
-                    .apiKey(apiKey)
-                    .baseUrl(DynamicModelProvider.resolveChatCompletionsBaseUrl(fallback))
-                    .modelName(modelName)
-                    .parallelToolCalls(true)
-                    .timeout(Duration.ofMinutes(5));
-            Integer configuredMaxTokens = parsePositiveInt(maxTokens);
-            if (configuredMaxTokens != null) {
-                builder.maxTokens(configuredMaxTokens);
-            }
-            return new DelegatingStreamingChatModel(builder.build());
-        }
-        var builder = OpenAiResponsesStreamingChatModel.builder()
-                .httpClientBuilder(new JdkHttpClientBuilder()
-                        .connectTimeout(Duration.ofSeconds(15))
-                        .readTimeout(Duration.ofMinutes(5)))
-                .apiKey(apiKey)
-                .baseUrl(DynamicModelProvider.resolveResponsesBaseUrl(fallback))
-                .modelName(modelName)
-                .parallelToolCalls(true)
-                .store(false)
-                .strictTools(false);
-        if (thinkingEnabled) {
-            builder.reasoningSummary("auto");
-        }
-        Integer configuredMaxTokens = parsePositiveInt(maxTokens);
-        if (configuredMaxTokens != null) {
-            builder.maxOutputTokens(configuredMaxTokens);
-        }
-        return new DelegatingStreamingChatModel(builder.build());
+        return new DelegatingStreamingChatModel();
     }
 
     /**
@@ -200,58 +136,7 @@ public class AgentConfig {
      */
     @Bean
     public DelegatingChatModel delegatingChatModel() {
-        AiModelConfig fallback = fallbackConfig();
-        if (!DynamicModelProvider.useResponsesApi(fallback)) {
-            var builder = OpenAiChatModel.builder()
-                    .apiKey(apiKey)
-                    .baseUrl(DynamicModelProvider.resolveChatCompletionsBaseUrl(fallback))
-                    .modelName(modelName)
-                    .parallelToolCalls(true)
-                    .timeout(Duration.ofMinutes(2));
-            Integer configuredMaxTokens = parsePositiveInt(maxTokens);
-            if (configuredMaxTokens != null) {
-                builder.maxTokens(configuredMaxTokens);
-            }
-            return new DelegatingChatModel(builder.build());
-        }
-        var builder = OpenAiResponsesChatModel.builder()
-                .httpClientBuilder(new JdkHttpClientBuilder()
-                        .connectTimeout(Duration.ofSeconds(15))
-                        .readTimeout(Duration.ofMinutes(2)))
-                .apiKey(apiKey)
-                .baseUrl(DynamicModelProvider.resolveResponsesBaseUrl(fallback))
-                .modelName(modelName)
-                .parallelToolCalls(true)
-                .store(false)
-                .strictTools(false);
-        Integer configuredMaxTokens = parsePositiveInt(maxTokens);
-        if (configuredMaxTokens != null) {
-            builder.maxOutputTokens(configuredMaxTokens);
-        }
-        return new DelegatingChatModel(builder.build());
-    }
-
-    private AiModelConfig fallbackConfig() {
-        AiModelConfig config = new AiModelConfig();
-        config.setApiKey(apiKey);
-        config.setBaseUrl(baseUrl);
-        config.setModel(modelName);
-        config.setProtocol(DynamicModelProvider.normalizeProtocol(protocol));
-        config.setCompletionsPath(completionsPath);
-        if (config.getProtocol() == null) {
-            config.setProtocol(DynamicModelProvider.resolveProtocol(config));
-        }
-        return config;
-    }
-
-    private static Integer parsePositiveInt(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            int parsed = Integer.parseInt(value.trim());
-            return parsed > 0 ? parsed : null;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return new DelegatingChatModel();
     }
 
     // ── Skill 工具 Bean ───────────────────────────────────────────────────────

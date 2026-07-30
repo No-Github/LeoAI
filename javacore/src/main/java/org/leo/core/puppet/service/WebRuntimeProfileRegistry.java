@@ -149,9 +149,9 @@ final class WebRuntimeProfileRegistry {
         }
         Object storageValue = features == null ? null : features.get("listenerStorage");
         String storage = storageValue == null ? "" : String.valueOf(storageValue);
-        if (storage.endsWith("List")) return profile.profileId + ":modern-list";
-        if (storage.endsWith("Objects")) return profile.profileId + ":legacy-objects";
-        if (storage.length() > 0) return profile.profileId + ":legacy-array";
+        if (storage.endsWith("List")) return profile.profileId + ":list-field";
+        if (storage.endsWith("Objects")) return profile.profileId + ":objects-field";
+        if (storage.length() > 0) return profile.profileId + ":array-field";
         return profile.profileId + ":feature-probe";
     }
 

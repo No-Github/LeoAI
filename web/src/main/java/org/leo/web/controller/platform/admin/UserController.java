@@ -159,7 +159,7 @@ public class UserController {
     /**
      * 更新用户信息。
      * admin 可更新任意非 admin 用户；leader 只能更新自己团队内的 normal 用户。
-     * id 必填；password 不为空时使用带盐 PBKDF2 存储。
+     * userId 必填；password 不为空时使用带盐 PBKDF2 存储。
      */
     @RequestMapping(value = "/users/update", method = RequestMethod.POST)
     public HashMap<String, Object> updateUser(HttpServletRequest request,
@@ -168,9 +168,8 @@ public class UserController {
         if (caller == null) return ApiResponse.unauthorized("未登录");
         if (params == null) return ApiResponse.badRequest("params不能为空");
 
-        String userId = getString(params, "id");
-        if (userId == null) userId = getString(params, "userId");
-        if (userId == null) return ApiResponse.badRequest("id不能为空");
+        String userId = getString(params, "userId");
+        if (userId == null) return ApiResponse.badRequest("userId不能为空");
 
         User target = userService.getUserById(userId);
         if (target == null) return ApiResponse.notFound("用户不存在");
@@ -192,8 +191,7 @@ public class UserController {
         }
 
         // 字段更新
-        String newName = getString(params, "username");
-        if (newName == null) newName = getString(params, "userName");
+        String newName = getString(params, "userName");
         if (newName != null && !newName.equals(target.getUserName())) {
             if (newName.length() > MAX_USERNAME_LENGTH) {
                 return ApiResponse.badRequest("用户名不能超过 " + MAX_USERNAME_LENGTH + " 个字符");
@@ -233,9 +231,8 @@ public class UserController {
             target.setStatus(1);
         }
 
-        String newTeamId = getString(params, "teamname");
-        if (newTeamId == null) newTeamId = getString(params, "teamId");
-        if (params.containsKey("teamname") || params.containsKey("teamId")) {
+        String newTeamId = getString(params, "teamId");
+        if (params.containsKey("teamId")) {
             String normalizedTeamId = normalizeNullableId(newTeamId);
             if (targetIsBuiltInAdmin && !sameNullable(normalizedTeamId, normalizeNullableId(target.getTeamId()))) {
                 return ApiResponse.forbidden("admin用户为系统内置账户，禁止修改所属团队");
