@@ -1,284 +1,113 @@
 ---
 name: hunt-credentials
-description: 在目标主机的环境变量、进程启动参数、配置文件和常见凭据存放路径中猎取账号密码、Token、密钥等敏感信息。覆盖 JDBC 数据库、Redis、Nacos、Shiro Key、SSH、云凭据等所有场景。当任务涉及凭据搜集、密钥提取、数据库密码、Redis 密码、Nacos 配置、Shiro Key、API Token、云凭据或服务账号时使用。
-enabled: true
-tags:
-  - credential
-  - linux
-  - windows
+description: 在已授权的 Puppet 立足点上定向搜集与红队任务相关的应用、JVM、数据库、SSH、云和服务账号凭据线索，建立“凭据—身份—目标—用途”映射。当需要扩大访问、接近指定业务目标或判断当前主机凭据价值时使用。
 ---
 
-# 凭据猎取
+# 定向凭据猎取
 
-当用户希望从目标主机搜集任何类型的敏感凭据时，使用这个 skill。覆盖系统级通用凭据和各专项服务凭据（JDBC、Redis、Nacos、Shiro Key 等）。
+目标不是尽可能多地抓取秘密，而是找到能推进当前任务的最少凭据，并说明它能用于哪个明确目标。
 
-## 目标
+## 行动目标
 
-搜集以下类型的凭据：
+- 定位当前进程、当前用户和已确认应用目录中的凭据来源。
+- 将每条线索关联到身份、服务、目标和预期权限。
+- 优先识别能推进演练目标、横向移动或访问高价值服务的凭据。
+- 为受控验证提供最小输入，不在本 skill 内使用凭据登录。
 
-- 环境变量中的密码、Token、密钥、密钥文件路径
-- 进程启动参数中的内联凭据（`-D`、`--`、`JAVA_OPTS` 等）
-- 系统配置文件中的凭据（SSH 私钥、`.env`、`credentials` 文件等）
-- 云凭据文件（AWS、阿里云、GCP、Azure）
-- 服务账号凭据：JDBC 数据源、Redis、Nacos、Shiro RememberMe Key
-- fat jar classpath 内嵌配置（`application.yml`、`bootstrap.yml` 等）
+## 授权与 ROE
 
-## Skill 元数据
+- 风险等级：medium；访问模式：read-only-sensitive。
+- 只检查当前 JVM、当前用户目录和已确认部署目录。
+- 不批量读取其他用户目录、浏览器、Wi-Fi 或无关个人数据。
+- 不读取或保存私钥正文；优先引用目标上的路径和指纹。
+- 不下载、上传或修改凭据文件，不使用发现的凭据发起认证。
+- 默认不在回复、计划结果或摘要中保存完整秘密值。
 
-- riskLevel: `medium`
-- accessMode: `read_only_sensitive`
-- requiredTools: `CredentialHarvestTools(harvestAll)`, `CommandTools(exec)`, `ProcessTools(findProcesses)`
-- optionalTools: `ResourceTools`, `BrowserDataTools`, `WifiProfileTools`
-- produces: `credentials.generic`, `credentials.jdbc`, `credentials.redis`, `credentials.nacos`, `credentials.shiro`, `credentials.cloud`, `credentials.sshKeys`, `keyPaths.credentialFiles`, `openQuestions`
-- structuredPatchPaths: `credentials.generic[]`, `credentials.jdbc[]`, `credentials.redis[]`, `credentials.nacos[]`, `credentials.shiro[]`, `credentials.cloud[]`, `credentials.sshKeys[]`, `keyPaths.credentialFiles[]`
-- recommendedNextSkills: `exploit-database-post`, `exploit-redis-post`, `exploit-nacos-post`, `collect-cloud-metadata`, `lateral-move-ssh`
-- forbiddenByDefault: 修改凭据文件、使用凭据登录第三方服务、批量读取无关用户目录
+## OPSEC 预算
 
-## 核心原则：exec 优先，最少调用次数
+- Java 目标最多一次 `harvestAll`。
+- 系统枚举最多一次合并 `exec`；递归搜索只允许一个已确认目录。
+- 候选文件先列元数据，按任务相关性选择后再读取；不要整目录导出。
+- 结果达到任务所需的可用凭据后停止扩张搜索。
 
-**禁止**为简单的文件存在性检查、环境变量读取、关键词搜索派发子 Agent。
-**所有**只读检查必须用 `exec` 直接执行，多个检查用 `&&` 或 `;` 合并为一条命令。
+## 工作流
 
-反例（禁止）：
-- 派 file_agent 检查 ~/.ssh 是否存在
-- 5 次 exec 分别 grep 不同关键词
-- 派 command_agent 执行 env
+1. 读取侦察摘要和用户目标，确定所需凭据类型与目标服务。
+2. 创建 4 步以内计划：运行时采集、系统线索、定向读取、价值排序与交接。
+3. Java 应用调用一次 `harvestAll`；非 Java 目标跳过。
+4. 用一次受限 `exec` 枚举环境、进程参数和当前用户候选文件。
+5. 只对高相关候选调用 `readTextFile`、`searchFileContent` 或 `ResourceTools`。
+6. 解析占位符和连接关系，构建凭据—目标矩阵，去重并掩码。
+7. 用一次 `manage_recon_summary(action="append")` 保存可复用线索。
 
-正例（要求）：
-- `exec("env | grep -iE 'password|secret|token|key|auth|credential' && cat /proc/1/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'password|secret|token|key'")`
-- `exec("ls -la ~/.ssh/ 2>/dev/null && cat ~/.aws/credentials 2>/dev/null && cat ~/.aliyun/config.json 2>/dev/null && cat ~/.kube/config 2>/dev/null && cat ~/.docker/config.json 2>/dev/null")`
-- `exec("grep -rnI 'password=\\|secret=\\|token=\\|api_key=\\|access_key=\\|jdbc:\\|BEGIN.*PRIVATE KEY' /opt/ /srv/ /data/ 2>/dev/null | head -200")`
+## 系统枚举
 
-## 工作流程
-
-### 执行前：制定计划
-
-调用 `createPlan`，步骤不超过 5 步：
-
-1. harvestAll 一键采集 JVM 凭据
-2. exec 并行扫描环境变量 + 进程参数 + 常见凭据文件路径
-3. exec 对应用目录做关键词递归搜索（按需）
-4. 汇总分析 + 写入侦察摘要
-5. completePlan
-
-### 第一步：JVM 运行时凭据直提（最高效）
-
-直接调用 `harvestAll`，一次获取所有 JVM 可见凭据：
-- DataSource Bean（JDBC URL/用户名/密码）
-- System Properties 中的敏感条目
-- 环境变量中的敏感条目
-- JNDI DataSource
-- Spring Environment PropertySource
-
-如果目标不是 Java 应用，跳过此步。
-
-### 第二步：系统级凭据扫描（一次 exec 完成）
-
-**合并为一条命令**，不要拆分：
-
-Linux/macOS:
-```bash
-exec("echo '=== ENV ===' && env | grep -iE 'password|passwd|secret|token|key|auth|credential|private' 2>/dev/null; echo '=== PROC ARGS ===' && ps aux | grep -iE 'password|secret|token|key' | grep -v grep 2>/dev/null; echo '=== SSH KEYS ===' && ls -la ~/.ssh/ 2>/dev/null && ls -la /root/.ssh/ 2>/dev/null; echo '=== CLOUD CREDS ===' && cat ~/.aws/credentials 2>/dev/null && cat ~/.aliyun/config.json 2>/dev/null && cat ~/.config/gcloud/application_default_credentials.json 2>/dev/null; echo '=== DOT ENV ===' && find / -maxdepth 4 -name '.env' -o -name '.env.local' -o -name '.env.production' 2>/dev/null | head -20; echo '=== SERVICE CREDS ===' && cat /etc/redis.conf 2>/dev/null | grep -i 'requirepass' && cat ~/.pgpass 2>/dev/null && cat ~/.my.cnf 2>/dev/null")
-```
-
-Windows:
-```bash
-exec("echo === ENV === && set | findstr /i \"password secret token key auth credential\" & echo === SSH === && dir %USERPROFILE%\\.ssh\\ 2>nul & echo === CLOUD === && type %USERPROFILE%\\.aws\\credentials 2>nul")
-```
-
-### 第三步：关键词递归搜索（按需）
-
-仅当前两步未找到足够凭据时执行。**一条命令**完成：
+Linux/macOS：
 
 ```bash
-exec("grep -rnI --include='*.properties' --include='*.yml' --include='*.yaml' --include='*.conf' --include='*.ini' --include='*.cfg' --include='*.xml' --include='*.json' -E 'password=|passwd=|secret=|token=|api_key=|access_key=|private_key=|BEGIN.*PRIVATE KEY|jdbc:' /opt/ /srv/ /data/ /app/ /home/ 2>/dev/null | grep -v 'Binary' | head -200")
+echo '=== ENV ==='; env | grep -iE 'password|passwd|secret|token|credential|api[_-]?key|access[_-]?key|jdbc|redis|nacos' 2>/dev/null
+echo '=== PROCESS ARGS ==='; ps -eo pid,user,comm,args --no-header 2>/dev/null | grep -iE 'password|passwd|secret|token|jdbc:|redis|nacos|vault|aws|azure|gcp' | grep -v grep | head -80
+echo '=== USER CANDIDATES ==='; find "$HOME" -maxdepth 3 -type f \( -name '.env' -o -name 'credentials' -o -name 'config.json' -o -name '.pgpass' -o -name '.my.cnf' -o -name 'config' \) -print 2>/dev/null | head -50
+echo '=== SSH METADATA ==='; find "$HOME/.ssh" -maxdepth 1 -type f -exec ls -ld {} \; 2>/dev/null
 ```
 
-如果已知应用部署目录（从 harvestAll 或进程参数获取），优先搜索该目录。
+Windows：
 
-### 第四步：汇总 + 写入摘要
+```cmd
+set | findstr /i "password passwd secret token credential api_key access_key jdbc redis nacos"
+wmic process get ProcessId,Name,CommandLine | findstr /i "password secret token jdbc redis nacos vault"
+dir /a "%USERPROFILE%\.ssh" 2>nul & dir /a "%USERPROFILE%\.aws" 2>nul
+```
 
-分析所有结果，调用 `manage_recon_summary(action="append")` 和 `manage_recon_summary(action="append")`，然后 `completePlan`。
+## 定向策略
 
-## 工具优先级
+- JDBC：解析 URL、用户、认证来源和业务库；判断是否只绑定本机或指向高价值数据节点。
+- Redis/Nacos：解析地址、namespace/database、账号和占位符来源。
+- SSH：记录私钥路径、属主、权限、算法、指纹、SSH config 和对应目标；不读取正文。
+- 云/CI：只在任务涉及该平台时读取选定配置，记录账号或 key id、权限线索和目标环境。
+- Shiro/应用密钥：记录来源、用途和是否为默认值；不在本 skill 构造利用载荷。
+- `${ENV_NAME}`、Vault/KMS 引用：追溯实际来源；无法解析时保留引用关系，不猜值。
 
-1. `harvestAll` — JVM 运行时凭据直提（一次调用，最高效）
-2. `exec` — 环境变量、进程参数、文件检查、关键词搜索（合并命令，最少调用次数）
-3. `findProcesses` — 查找特定进程的启动参数（name="java" 等）
+## 凭据价值排序
 
-**禁止使用子 Agent 完成本 skill 的任何步骤。** 所有操作均可通过 harvestAll + exec 直接完成。
+每条凭据按以下维度评分：
 
-## 输出格式
+- 任务相关性：是否直接接近用户指定目标。
+- 权限潜力：普通应用、运维、云、数据库或高权限服务账号。
+- 目标明确度：是否已有对应主机、服务、端口和用户名。
+- 可验证性：能否用当前已存在 skill 受控验证。
+- 噪声与锁定风险：认证日志、失败计数、第三方系统影响。
 
-按凭据类型分组输出 Markdown 报告：
+禁止因为“可能有用”就展开所有秘密。优先保留目标明确、成功率高、噪声可控的 3 条路径。
+
+## 秘密处理
+
+- 默认展示掩码、类型、长度、来源和置信度；短秘密显示 `<present>`。
+- URL 密码、查询 Token、Authorization 头和 Cookie 必须掩码。
+- 用户明确要求查看某一条原值时，只展示该条，不写入摘要。
+- 摘要保存路径、变量名、账号、key id、指纹、掩码和用途，不保存密码、Token、Cookie 或私钥正文。
+
+## 成功与停止条件
+
+成功：获得至少一条与任务相关、来源可靠且目标明确的凭据线索，或确认授权范围内没有可用线索。
+
+立即停止并报告：
+
+- 下一步需要读取其他用户、导出秘密文件或访问第三方系统。
+- 发现的秘密与演练目标无关。
+- 已获得足够推进当前最优路径的输入。
+- 输出可能包含大批秘密或超出安全展示范围。
+
+## 摘要与交接
 
 ```markdown
-## 凭据猎取摘要
-
-**总计发现**：{n} 条凭据线索（high: x，medium: y，low: z）
-
----
-
-## 环境变量凭据
-
-| 变量名 | 原始值 | 来源 | 置信度 |
-|--------|----------|------|--------|
-| DB_PASSWORD | p@ssw0rd1234 | printenv | high |
-
-## 进程参数凭据
-
-| PID | 参数 | 原始值 | 置信度 |
-|-----|------|----------|--------|
-
-## 配置文件凭据
-
-| 文件路径 | 键名 | 原始值 | 置信度 |
-|---------|------|----------|--------|
-
-## SSH / 密钥文件
-
-| 路径 | 类型 | 状态 |
-|------|------|------|
-
-## 云凭据
-
-| 文件 | 云厂商 | Access Key 原始值 | 置信度 |
-|------|--------|------------------|--------|
-
-## 未找到内容
-
-{列出已检查但未发现凭据的位置}
-
-## 下一步建议
-
-根据发现的凭据类型给出 2~3 条具体建议，例如：
-- 发现 JDBC/数据库凭据 → "建议使用 exploit-database-post skill 枚举数据库"
-- 发现 AWS 凭据 → "建议使用 collect-cloud-metadata skill 枚举云资源权限"
-- 发现 SSH 私钥 → "建议尝试使用该私钥横向移动到内网其他主机（lateral-move-ssh）"
-- 发现 Redis 密码 → "建议使用 exploit-redis-post skill 连接 Redis"
-- 发现 Nacos 凭据 → "建议使用 exploit-nacos-post skill 读取配置中心内容"
-- 发现 Shiro 默认密钥 → "可直接利用已知密钥构造反序列化 payload"
+## 凭据行动情报更新
+- 类型与身份：...
+- 秘密状态：掩码 / 占位符 / 未读取
+- 来源与证据：...
+- 对应目标：host/service/account
+- 预期权限与任务价值：...
+- 验证前提、噪声和锁定风险：...
 ```
 
-## 侦察摘要保真规则
-
-- 侦察摘要和结构化摘要必须保留实际发现的原始值，不要主动脱敏、替换为 `****` 或只保存片段。
-- 如果源系统本身返回 `****`、`<redacted>` 等脱敏值，按原样保存，并标注 `sourceMasked=true` 或"来源已脱敏"。
-- 对 SSH 私钥：如果已经读取到密钥体且与任务相关，可以在结构化摘要中保存完整 `privateKeyBody`；如果只确认了文件存在但未读取正文，则保存路径、类型和可读性。
-
-## 结构化摘要写入
-
-完成后必须：
-
-1. 调用 `manage_recon_summary(action="append")` 保存凭据线索分类、来源和风险等级。
-2. 调用 `manage_recon_summary(action="append")` 合并机器可读字段。结构化摘要默认保存原始凭据值；只有来源本身脱敏时才记录脱敏值并标注来源已脱敏。
-
-结构化 patch 示例：
-
-```json
-{
-  "credentials": {
-    "generic": [
-      {
-        "name": "DB_PASSWORD",
-        "type": "environment_variable",
-        "secret": "p@ssw0rd1234",
-        "source": "printenv",
-        "confidence": "high"
-      }
-    ],
-    "sshKeys": [
-      {
-        "path": "/home/app/.ssh/id_rsa",
-        "keyType": "OPENSSH PRIVATE KEY",
-        "readable": true,
-        "privateKeyBody": "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----",
-        "confidence": "high"
-      }
-    ],
-    "cloud": [
-      {
-        "platform": "aws",
-        "accessKeyId": "AKIAEXAMPLE123456",
-        "source": "~/.aws/credentials",
-        "confidence": "high"
-      }
-    ]
-  },
-  "keyPaths": {
-    "credentialFiles": ["~/.aws/credentials", "/home/app/.ssh/id_rsa"]
-  },
-  "openQuestions": ["exploit-database-post", "collect-cloud-metadata"]
-}
-```
-
-## 决策规则
-
-- 不要执行任何写操作，本 skill 仅读取和观察。
-- 如果权限不足无法读取某个位置，标注为"权限不足"并继续。
-- 如果只找到了变量名但值为空或占位符，标注为低置信度。
-- 不要假设或猜测凭据值，只报告实际发现。
-- 发现 SSH 私钥时，至少说明文件路径和密钥类型；如果已经读取正文并需要沉淀到侦察摘要，保存原始正文，不要脱敏。
-- 发现 JDBC / Redis / Nacos 凭据后，参考下方「专项凭据快查」章节补全对应字段并写入结构化摘要。
-
----
-
-## 专项凭据快查
-
-> 在通用扫描（步骤一~三）发现线索后，用以下快查补全专项字段。**直接用 exec + ResourceTools 完成，禁止派子 Agent。**
-
-### JDBC 数据源
-
-重点搜索关键字：`spring.datasource.*`、`jdbc:`、`username`、`password`、`driverClassName`、`hikari`、`druid`
-
-优先路径：`application.yml`、`application-prod.yml`、`bootstrap.yml`、`.env`、`context.xml`
-
-fat jar 补充：用 `ResourceTools` 读 `application.yml`、`application-prod.yml`、`bootstrap.yml`、`META-INF/context.xml`
-
-`harvestAll` 已覆盖 JVM 运行时 DataSource Bean，JDBC 场景优先依赖其结果。
-
-结构化写入：`credentials.jdbc[]`，字段：`url`、`username`、`password`、`driverClass`、`source`、`confidence`
-
----
-
-### Redis 凭据
-
-重点搜索关键字：`spring.redis.*`、`spring.data.redis.*`、`requirepass`、`REDIS_HOST`、`REDIS_PASSWORD`、`redisson`
-
-优先路径：`application.yml`、`application-prod.yml`、`bootstrap.yml`、`redisson.yml`、`/etc/redis/redis.conf`
-
-fat jar 补充：`ResourceTools` 读 `application.yml`、`application-prod.yml`、`redisson.yml`
-
-exec 补充：`ps -ef | grep redis-server | grep -v grep`，从进程参数提取配置文件路径再读取
-
-结构化写入：`credentials.redis[]`，字段：`host`、`port`、`password`、`database`、`mode`（standalone/cluster/sentinel）、`source`、`confidence`
-
----
-
-### Nacos 配置
-
-重点搜索关键字：`spring.cloud.nacos.*`、`nacos.config.*`、`server-addr`、`namespace`、`NACOS_PASSWORD`
-
-优先路径：`bootstrap.yml`（Nacos 配置通常在此，不在 application.yml）、`application-prod.yml`、`.env`
-
-fat jar 补充：`ResourceTools` 读 `bootstrap.yml`、`bootstrap-prod.yml`
-
-注意：Nacos 密码可能是 `${NACOS_PASSWORD}` 占位符，需追溯环境变量
-
-结构化写入：`credentials.nacos[]`，字段：`serverAddr`、`namespace`、`username`、`password`、`source`、`confidence`
-
----
-
-### Shiro RememberMe Key
-
-重点搜索关键字：`cipherKey`、`rememberMeManager`、`shiro.key`、`cookieRememberMeManager`
-
-优先路径：`application.yml`、`shiro.ini`、`applicationContext-shiro.xml`、`spring-shiro.xml`
-
-fat jar 补充：`ResourceTools` 读 `shiro.ini`、`applicationContext-shiro.xml`、`spring-mvc.xml`
-
-exec 补充：`grep -rnI 'cipherKey\|rememberMeManager\|shiro\.key' /opt/ /srv/ /app/ 2>/dev/null | head -50`
-
-注意：Shiro 默认密钥为 `kPH+bIxk5D2deZiIxcaaaA==`，若无自定义配置则标注"使用默认密钥，可直接利用"
-
-结构化写入：`credentials.shiro[]`，字段：`cipherKey`、`source`、`isDefault`、`confidence`
+输出凭据—目标矩阵。只有目标、用户名和私钥路径都明确且用户授权连接时，才建议 `lateral-move-ssh`；本机权限不足且 Linux 提权能推进目标时，建议 `escalate-linux-privilege`。否则说明缺少的具体能力，不推荐不存在的 skill。

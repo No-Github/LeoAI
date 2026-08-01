@@ -38,7 +38,8 @@ class ShellGeneratorToolsTest {
         when(puppetService.findPuppetById("php-node")).thenReturn(puppet);
         ShellGeneratorTools tools = new ShellGeneratorTools(mock(DisguiseService.class),
                 mock(DelegatingChatModel.class), new ShellResultStore(), puppetService,
-                new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))));
+                new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))),
+                mock(PlatformToolAccessService.class));
 
         Map<String, Object> config = tools.getPuppetShellConfig("php-node");
 
@@ -57,7 +58,8 @@ class ShellGeneratorToolsTest {
         when(puppetService.findPuppetById("chunk-node")).thenReturn(puppet);
         ShellGeneratorTools tools = new ShellGeneratorTools(mock(DisguiseService.class),
                 mock(DelegatingChatModel.class), new ShellResultStore(), puppetService,
-                new ScriptGeneratorService(List.of()));
+                new ScriptGeneratorService(List.of()),
+                mock(PlatformToolAccessService.class));
 
         Map<String, Object> config = tools.getPuppetShellConfig("chunk-node");
 
@@ -117,7 +119,8 @@ class ShellGeneratorToolsTest {
                                               ShellResultStore resultStore,
                                               ScriptGeneratorService generators) {
         return new ShellGeneratorTools(disguiseService, mock(DelegatingChatModel.class), resultStore,
-                mock(PuppetService.class), generators);
+                mock(PuppetService.class), generators,
+                mock(PlatformToolAccessService.class));
     }
 
     private static DisguiseService mockDisguiseService() {

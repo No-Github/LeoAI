@@ -2,6 +2,7 @@ package org.leo.web.security;
 
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
+import org.leo.core.security.AccessPolicy;
 import org.leo.core.session.PuppetNodeSession;
 
 /**
@@ -11,53 +12,31 @@ import org.leo.core.session.PuppetNodeSession;
  */
 public final class PermissionPolicy {
 
-    public static final String PRIVILEGE_ADMIN = "admin";
-    public static final String PRIVILEGE_LEADER = "leader";
-    public static final String PERMISSION_PRIVATE = "private";
-    public static final String PERMISSION_TEAM = "team";
-    private static final String PERMISSION_PUBLIC = "public";
+    public static final String PRIVILEGE_ADMIN = AccessPolicy.PRIVILEGE_ADMIN;
+    public static final String PRIVILEGE_LEADER = AccessPolicy.PRIVILEGE_LEADER;
+    public static final String PERMISSION_PRIVATE = AccessPolicy.PERMISSION_PRIVATE;
+    public static final String PERMISSION_TEAM = AccessPolicy.PERMISSION_TEAM;
 
     private PermissionPolicy() {
     }
 
     public static boolean isAdmin(User user) {
-        return user != null && PRIVILEGE_ADMIN.equals(user.getPrivilege());
+        return AccessPolicy.isAdmin(user);
     }
 
     public static boolean isLeader(User user) {
-        return user != null && PRIVILEGE_LEADER.equals(user.getPrivilege());
+        return AccessPolicy.isLeader(user);
     }
 
     public static boolean isTeamVisiblePermission(String permission) {
-        return PERMISSION_TEAM.equals(permission);
+        return AccessPolicy.isTeamVisiblePermission(permission);
     }
 
     public static boolean canAccessSession(PuppetNodeSession session, User user) {
-        if (session == null || user == null || user.getUserId() == null) {
-            return false;
-        }
-        if (isAdmin(user)) {
-            return true;
-        }
-        String owner = session.getCreateByUser();
-        return owner != null && owner.equals(user.getUserId());
+        return AccessPolicy.canAccessSession(session, user);
     }
 
     public static boolean canAccessPuppet(Puppet puppet, User user) {
-        if (puppet == null || user == null || user.getUserId() == null) {
-            return false;
-        }
-        if (isAdmin(user)) {
-            return true;
-        }
-        if (user.getUserId().equals(puppet.getCreateByUserId())) {
-            return true;
-        }
-        if (PERMISSION_PUBLIC.equals(puppet.getPermission())) {
-            return true;
-        }
-        return isTeamVisiblePermission(puppet.getPermission())
-                && user.getTeamId() != null
-                && user.getTeamId().equals(puppet.getTeamId());
+        return AccessPolicy.canAccessPuppet(puppet, user);
     }
 }

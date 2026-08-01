@@ -57,8 +57,7 @@ public class PlatformAiTurnService {
                 policy.getUserId(),
                 policy.getUserName(),
                 policy.getPrivilege(),
-                message,
-                false);
+                message);
         auditLogStore.append(audit);
         return audit;
     }

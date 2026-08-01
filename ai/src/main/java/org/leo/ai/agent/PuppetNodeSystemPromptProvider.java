@@ -1,6 +1,5 @@
 package org.leo.ai.agent;
 
-import dev.langchain4j.skills.Skills;
 import org.leo.ai.service.LeoSkillsProvider;
 import org.leo.ai.service.ReconSummaryDigestService;
 import org.leo.ai.service.SkillRegistryService;
@@ -15,8 +14,8 @@ import org.springframework.stereotype.Component;
  * <p>通过 {@code AgentConfig} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
  * 以方法引用形式注册到 AiServices。
  *
- * <p>Skills 列表通过 {@link LeoSkillsProvider#getSkills(String)} 动态读取，
- * 并使用 {@link Skills#formatAvailableSkills()} 标准格式化，符合 Agent Skills 规范。
+ * <p>Skills 列表通过 {@link LeoSkillsProvider#getFormattedSkills(String)} 动态读取，
+ * 正文由 {@code activate_skill} 按需激活。
  */
 @Component
 public class PuppetNodeSystemPromptProvider {
@@ -51,14 +50,13 @@ public class PuppetNodeSystemPromptProvider {
     // ── 动态 Skills 区块 ──────────────────────────────────────────────────────
 
     private String buildSkillsSection() {
-        Skills skills = skillsProvider.getSkills(SkillRegistryService.SCOPE_PUPPET_NODE);
         StringBuilder sb = new StringBuilder();
         sb.append("════════════════════════════════════════\n");
         sb.append("【Skills 优先】\n");
         sb.append("════════════════════════════════════════\n\n");
         sb.append("面对典型场景优先使用 skill，而不是手工拼装工具调用。\n");
         sb.append("执行前先调用 activate_skill 获取完整指令；Skills 已内置合理参数和顺序，能减少重复调度被拦截的风险。\n\n");
-        String formatted = skills.formatAvailableSkills();
+        String formatted = skillsProvider.getFormattedSkills(SkillRegistryService.SCOPE_PUPPET_NODE);
         if (formatted == null || formatted.isBlank()) {
             sb.append("（当前暂无可用 skill）\n");
         } else {
@@ -113,6 +111,10 @@ public class PuppetNodeSystemPromptProvider {
             4. 小步执行；遇到失败时根据错误调整路径，而不是重复同一个失败调用。
             5. 多步骤任务必须创建计划，详细规则见下方【任务计划】章节。
             6. 收集到可复用的数据库连接信息时，可保存为当前 Puppet 的数据库配置；后续优先通过 connectionId 查询和执行 SQL，避免重复传递凭据。
+            7. 当目标、范围或关键参数存在会显著改变结果的歧义时，调用 request_user_input 澄清；能枚举的答案必须提供 2 到 4 个结构化选项（label/value/intent）并关闭自由输入，只有无法枚举的具体路径、名称、标识或描述才允许自由输入。
+               删除、覆盖、停服、修改权限、持久化、凭据导出等高风险动作执行前，
+               调用 request_user_input(type="CONFIRMATION", ...) 绑定准确工具名和参数。
+               调用后立即停止其他工具并结束本轮。能通过只读工具查明的信息不要询问。
 
             ════════════════════════════════════════
             【任务计划】
@@ -150,8 +152,8 @@ public class PuppetNodeSystemPromptProvider {
             4. completePlan("已完成权限提升，获得 root shell。关键发现：...") — 所有步骤结束后写入最终结论
 
             ▸ 注意
-            - 创建计划后不等待，立即 start 第一个步骤并开始执行
-            - 高危操作（脚本执行、插件调用、容器卸载）由系统自动弹窗确认，不需要你在 plan 中处理
+            - 创建计划后立即 start 第一个步骤；只有调用 request_user_input 时才暂停等待用户
+            - 工具可用范围由当前用户权限决定；权限不足时说明限制并停止重复调用
 
             ▸ 最佳实践
             - 每完成一个步骤，在 updatePlanStep 的 resultText 里简要记录输出摘要

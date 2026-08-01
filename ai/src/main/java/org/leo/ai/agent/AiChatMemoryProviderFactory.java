@@ -52,11 +52,15 @@ public class AiChatMemoryProviderFactory {
                         .build());
             }
             int maxMessages = Math.max(50, effectiveWindow / 2_000);
-            return managedMemory.initialize(new CompressingChatMemory(
+            var delegate = managedMemory.initialize(MessageWindowChatMemory.builder()
+                    .id(memoryId)
+                    .maxMessages(maxMessages)
+                    .build());
+            return new CompressingChatMemory(
                     memoryId,
-                    MessageWindowChatMemory.builder().id(memoryId).maxMessages(maxMessages).build(),
+                    delegate,
                     compressionService,
-                    effectiveWindow));
+                    effectiveWindow);
         };
     }
 

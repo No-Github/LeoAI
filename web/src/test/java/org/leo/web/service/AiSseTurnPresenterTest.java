@@ -170,7 +170,7 @@ class AiSseTurnPresenterTest {
         return new AiSseTurnPresenter.Context(
                 "test", thread, execution, emitter,
                 AiChatAuditEntry.platform(
-                        "user-1", "alice", "normal", "hello", false),
+                        "user-1", "alice", "normal", "hello"),
                 System.currentTimeMillis(),
                 AiTurnTrace.start(
                         "test", thread.getThreadId(),

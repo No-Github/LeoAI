@@ -1,10 +1,12 @@
 package org.leo.ai.runtime;
 
+import com.alibaba.fastjson.JSON;
 import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolExecution;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolErrorHandler;
+import org.leo.ai.agent.AiToolOperation;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -23,6 +25,8 @@ final class AiToolEventNormalizer {
         data.put("kind", "tool");
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
+        data.put("operation", AiToolOperation.classify(
+                execution.request().name()).name());
         data.put("arguments", AiToolArgumentSanitizer.sanitize(
                 execution.request().arguments()));
         data.put("success", null);
@@ -61,16 +65,69 @@ final class AiToolEventNormalizer {
         data.put("kind", "tool");
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
+        data.put("operation", AiToolOperation.classify(
+                execution.request().name()).name());
         data.put("arguments", AiToolArgumentSanitizer.sanitize(
                 execution.request().arguments()));
-        data.put("resultPreview", truncate(execution.result(), 2000));
+        data.put("resultPreview", truncate(resultForDisplay(execution), 2000));
         data.put("success", !failed);
         data.put("status", failed ? "failed" : "completed");
         data.put("timestamp", startTime);
         data.put("startTime", startTime);
         data.put("endTime", toEpochMs(execution.finishTime(), now));
+        data.put("durationMs", Math.max(0L,
+                toEpochMs(execution.finishTime(), now) - startTime));
+        injectProtocolMetadata(data, execution.result());
         injectPlanStepIndex(data);
         return data;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void injectProtocolMetadata(Map<String, Object> data, String result) {
+        if (result == null || result.isBlank() || result.charAt(0) != '{') return;
+        try {
+            Map<String, Object> envelope = JSON.parseObject(result, Map.class);
+            if (envelope == null) return;
+            copyIfPresent(envelope, data, "protocol");
+            copyIfPresent(envelope, data, "code");
+            copyIfPresent(envelope, data, "retryable");
+            Object rawMetadata = envelope.get("metadata");
+            if (rawMetadata instanceof Map<?, ?> metadata) {
+                for (String key : java.util.List.of(
+                        "operation", "timeoutMs", "truncated",
+                        "originalChars", "deduplicated", "archiveId",
+                        "recoverableBy", "attempt", "maxAttempts")) {
+                    Object value = metadata.get(key);
+                    if (value != null) data.put(key, value);
+                }
+                Object executionDuration = metadata.get("durationMs");
+                if (executionDuration != null) {
+                    data.put("executionDurationMs", executionDuration);
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 普通文本工具结果不参与协议元数据提取。
+        }
+    }
+
+    private static void copyIfPresent(Map<String, Object> source,
+                                      Map<String, Object> target,
+                                      String key) {
+        Object value = source.get(key);
+        if (value != null) target.put(key, value);
+    }
+
+    private static String resultForDisplay(ToolExecution execution) {
+        Object raw = execution.resultObject();
+        if (raw instanceof String text) return text;
+        if (raw != null) {
+            try {
+                return JSON.toJSONString(raw);
+            } catch (RuntimeException ignored) {
+                return String.valueOf(raw);
+            }
+        }
+        return execution.result();
     }
 
     private static void injectPlanStepIndex(Map<String, Object> data) {

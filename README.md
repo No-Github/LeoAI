@@ -581,7 +581,8 @@ spring.datasource.url=jdbc:sqlite:data.db
 - **启用 / 禁用**：禁用的 Skill 不会出现在 AI 的 system prompt 中，AI 对其存在完全无感知；可按需关闭暂不使用的 Skill 以节省 token
 - **全文搜索**：支持按 name、description 或正文内容模糊搜索
 - **新建 / 删除**：可创建自定义 Skill，填写名称、描述后在编辑器中编写 Skill 提示词
-- **导入/导出**：可将单条 Skill 导出为 `.skill` 文件，或勾选多条批量导出为 `.zip`；导入时支持冲突策略（跳过/覆盖/重命名），方便在不同实例间迁移自定义 Skill
+- **导入/导出**：可将单条 Skill 导出为 `.skill` 文件，或勾选多条批量导出为 `.zip`；导入包必须同时包含 `SKILL.md` 与 `manifest.yaml`，并统一以 `draft + disabled` 状态进入能力库，审核后才能发布启用
+- **分类治理**：Skill 通过 `manifest.yaml` 声明稳定 ID、版本、scope、能力域、主分类、运行模式、ATT&CK 映射、平台、目标、能力包、风险、访问模式、状态、来源和依赖；管理页支持筛选与 Catalog 健康检查
 
 <img src="docs/images/screenshot-skill-manager.png" alt="AI Skills 能力库" width="800" />
 

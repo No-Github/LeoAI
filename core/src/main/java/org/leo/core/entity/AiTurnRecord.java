@@ -17,6 +17,7 @@ public class AiTurnRecord {
     private Long startedAt;
     private Boolean interruptRequested;
     private String errorMessage;
+    private String answerToQuestionId;
 
     public String getTurnId() { return turnId; }
     public void setTurnId(String turnId) { this.turnId = turnId; }
@@ -58,4 +59,8 @@ public class AiTurnRecord {
     }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public String getAnswerToQuestionId() { return answerToQuestionId; }
+    public void setAnswerToQuestionId(String answerToQuestionId) {
+        this.answerToQuestionId = answerToQuestionId;
+    }
 }

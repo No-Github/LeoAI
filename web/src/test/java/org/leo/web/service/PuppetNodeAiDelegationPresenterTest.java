@@ -109,7 +109,7 @@ class PuppetNodeAiDelegationPresenterTest {
                         session,
                         thread,
                                 AiChatAuditEntry.platform(
-                                        "user-1", "alice", "normal", "hello", false),
+                                        "user-1", "alice", "normal", "hello"),
                         System.currentTimeMillis(),
                         AiTurnTrace.start(
                                 "delegation", thread.getThreadId(),

@@ -25,7 +25,8 @@ class AdminOnlyEndpointCoverageTest {
         assertAdminOnly(FingerprintManageController.class,
                 Set.of("saveFingerprint", "deleteFingerprint", "importFingerprints"));
         assertAdminOnly(SkillController.class,
-                Set.of("save", "delete", "toggle", "saveFile", "deleteFile", "moveFile", "importSkills"));
+                Set.of("save", "delete", "deleteBatch", "toggle", "toggleBatch", "saveFile", "deleteFile",
+                        "moveFile", "importSkills"));
         assertAdminOnly(PlatformAiController.class, Set.of("telemetry"));
     }
 

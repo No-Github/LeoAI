@@ -19,14 +19,13 @@ import java.util.function.Consumer;
  * 单条 AI 对话线程，归属于某个 {@link PuppetNodeSession}。
  *
  * <p>一个 PuppetNodeSession 可持有多个 AiThread，彼此独立、可并行执行。
- * 每个线程拥有独立的 SSE 队列、工具确认状态和授权状态。
+ * 每个线程拥有独立的 SSE 队列和执行状态。
  *
  * <p>停止机制：{@link #stop()} 同时做三件事：
  * <ol>
  *   <li>设置 {@code stopRequested} 标志</li>
  *   <li>调用 stopCallback（如 StreamingHandle.cancel()）取消流式响应</li>
  *   <li>interrupt 正在执行的线程（中断阻塞的 HTTP 调用）</li>
- *   <li>以 false 完成所有挂起的工具确认 Future，防止拦截器永久阻塞</li>
  * </ol>
  */
 public class AiThread implements AiEventStreamRuntime {
@@ -35,20 +34,16 @@ public class AiThread implements AiEventStreamRuntime {
 
     public static final String STATUS_IDLE = "idle";
     public static final String STATUS_RUNNING = "running";
-    public static final String STATUS_WAITING_CONFIRMATION = "waiting_confirmation";
     public static final String STATUS_COMPLETED = "completed";
     public static final String STATUS_FAILED = "failed";
     public static final String STATUS_CANCELLED = "cancelled";
-
-    public static final String MODE_AUTO = "auto";
+    public static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
 
     private final String threadId;
     private volatile String title;
     private final long createdAt;
     private volatile long lastActiveAt;
     private volatile Integer aiConfigId;
-    /** 执行模式：plan / execute / auto。 */
-    private volatile String mode = MODE_AUTO;
     /** 父会话 ID（子 Agent 派发使用，当前会话非派生时为 null）。 */
     private volatile String parentThreadId;
 
@@ -58,10 +53,12 @@ public class AiThread implements AiEventStreamRuntime {
     /** 执行占用标记：HTTP 线程提交后台任务前先抢占，避免重复提交。 */
     private final AtomicBoolean executionClaimed = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+    private final AtomicBoolean waitingForUserInput = new AtomicBoolean(false);
     private volatile String runStatus = STATUS_IDLE;
     private volatile String activeTurnId;
     private volatile String activeItemId;
     private volatile String activeRunId;
+    private volatile String activeConfirmationRequestId;
     private volatile String activeLeaseToken;
     private volatile String stopReason;
     private volatile long taskTimeoutAt;
@@ -106,9 +103,6 @@ public class AiThread implements AiEventStreamRuntime {
     public Integer getAiConfigId()     { return aiConfigId; }
     public void    setAiConfigId(Integer aiConfigId) { this.aiConfigId = aiConfigId; }
 
-    public String getMode()            { return mode != null ? mode : MODE_AUTO; }
-    public void   setMode(String m)    { this.mode = m == null || m.isBlank() ? MODE_AUTO : m; }
-
     public String getParentThreadId()                 { return parentThreadId; }
     public void   setParentThreadId(String parentId)  { this.parentThreadId = parentId; }
 
@@ -123,6 +117,7 @@ public class AiThread implements AiEventStreamRuntime {
         if (claimed) {
             currentRunStartSeq = sseEventSeq.get();
             stopRequested.set(false);
+            waitingForUserInput.set(false);
             runStatus = STATUS_RUNNING;
             stopReason = null;
             taskTimeoutAt = 0L;
@@ -147,6 +142,7 @@ public class AiThread implements AiEventStreamRuntime {
     }
 
     public boolean isStopRequested() { return stopRequested.get(); }
+    public boolean isWaitingForUserInput() { return waitingForUserInput.get(); }
     public String getRunStatus() { return runStatus; }
     @Override public String getActiveTurnId() { return activeTurnId; }
     @Override public void bindActiveTurnId(String turnId) { this.activeTurnId = turnId; }
@@ -154,6 +150,10 @@ public class AiThread implements AiEventStreamRuntime {
     @Override public void bindActiveItemId(String itemId) { this.activeItemId = itemId; }
     @Override public String getActiveRunId() { return activeRunId; }
     @Override public void bindActiveRunId(String runId) { this.activeRunId = runId; }
+    public String getActiveConfirmationRequestId() { return activeConfirmationRequestId; }
+    public void bindActiveConfirmationRequestId(String requestId) {
+        this.activeConfirmationRequestId = requestId;
+    }
     @Override public String getActiveLeaseToken() { return activeLeaseToken; }
     @Override public void bindActiveLeaseToken(String leaseToken) { this.activeLeaseToken = leaseToken; }
     public boolean isExecuting() { return executionClaimed.get() || executingThread != null; }
@@ -162,7 +162,7 @@ public class AiThread implements AiEventStreamRuntime {
     public void setTaskTimeoutAt(long taskTimeoutAt) { this.taskTimeoutAt = Math.max(0L, taskTimeoutAt); }
 
     /**
-     * 干净停止：interrupt 执行线程 + 取消所有挂起确认。
+     * 干净停止：取消流式响应并 interrupt 执行线程。
      * 可从任意线程安全调用（HTTP 线程、SSE onCompletion 回调等）。
      */
     public void stop() {
@@ -186,16 +186,25 @@ public class AiThread implements AiEventStreamRuntime {
     }
 
     public void markCompleted() {
-        runStatus = STATUS_COMPLETED;
+        runStatus = waitingForUserInput.get()
+                ? STATUS_WAITING_FOR_USER : STATUS_COMPLETED;
+        taskTimeoutAt = 0L;
+    }
+
+    public void markWaitingForUserInput() {
+        waitingForUserInput.set(true);
+        runStatus = STATUS_WAITING_FOR_USER;
         taskTimeoutAt = 0L;
     }
 
     public void markFailed() {
+        waitingForUserInput.set(false);
         runStatus = STATUS_FAILED;
         taskTimeoutAt = 0L;
     }
 
     public void markCancelled() {
+        waitingForUserInput.set(false);
         runStatus = STATUS_CANCELLED;
         taskTimeoutAt = 0L;
     }
@@ -247,6 +256,7 @@ public class AiThread implements AiEventStreamRuntime {
         activeTurnId = null;
         activeItemId = null;
         activeRunId = null;
+        activeConfirmationRequestId = null;
         activeLeaseToken = null;
     }
 
@@ -255,8 +265,6 @@ public class AiThread implements AiEventStreamRuntime {
             offerSseEvent("warn", message);
         }
     }
-
-    // ── 工具确认 ──────────────────────────────────────────────────────────────
 
     // ── 轮次计数 ──────────────────────────────────────────────────────────────
 

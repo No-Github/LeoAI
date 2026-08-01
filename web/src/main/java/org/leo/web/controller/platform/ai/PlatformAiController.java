@@ -143,13 +143,14 @@ public class PlatformAiController {
                 AiTurnCommandPayload.SCOPE_PLATFORM,
                 request.getSession().getId(), message, guardedMessage,
                 body.configId(), body.reasoningEffort(),
-                AiAttachmentPrompt.metadata(body.attachments()), policy);
+                AiAttachmentPrompt.metadata(body.attachments()), policy)
+                .answerTo(body.answerToQuestionId());
         AiTurnProtocolService.Reservation reservation;
         try {
             reservation = turnProtocolService.begin(
                     state.getStateId(), body.clientUserMessageId(),
                     command.getScope(), command.toJson(),
-                    message, body.attachments());
+                    message, body.attachments(), body.answerToQuestionId());
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
@@ -199,8 +200,8 @@ public class PlatformAiController {
                                            HttpServletRequest request) {
         User user = ControllerUtil.getCurrentUser(request);
         Integer configId = body != null ? body.configId() : null;
-        String mode = body != null ? body.mode() : null;
-        return ApiResponse.success(threadService.createAgent(request.getSession(), user, configId, mode));
+        threadService.createAgent(request.getSession(), user, configId);
+        return ApiResponse.success(true);
     }
 
     /**
@@ -214,15 +215,6 @@ public class PlatformAiController {
                 ControllerUtil.getCurrentUser(request), body != null ? body.threadId() : null);
         threadService.switchChannel(state, configId);
         return ApiResponse.success(true);
-    }
-
-    @PostMapping("/switchMode")
-    public Map<String, Object> switchMode(@RequestBody PlatformAiDtos.SwitchModeRequest body,
-                                          HttpServletRequest request) {
-        String mode = body != null ? body.mode() : null;
-        PlatformAiState state = threadService.requireOwnedRuntime(
-                ControllerUtil.getCurrentUser(request), body != null ? body.threadId() : null);
-        return ApiResponse.success(threadService.switchMode(state, mode));
     }
 
     // ── 线程管理 ─────────────────────────────────────────────────────────────

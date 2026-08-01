@@ -32,7 +32,7 @@ class PuppetNodeLifecycleServiceTest {
         session.setCreateByUser("user-1");
         session.setPuppetId("puppet-1");
 
-        when(aiThreadService.createThread(same(session), eq("对话 1"), isNull(), isNull()))
+        when(aiThreadService.createThread(same(session), eq("对话 1"), isNull()))
                 .thenAnswer(invocation -> {
                     assertSame(session, PuppetNodeSessionContainer.getSession("session-1"));
                     return null;
@@ -40,6 +40,6 @@ class PuppetNodeLifecycleServiceTest {
 
         lifecycleService.registerSessionWithInitialAiThread(session, "puppet-1");
 
-        verify(aiThreadService).createThread(same(session), eq("对话 1"), isNull(), isNull());
+        verify(aiThreadService).createThread(same(session), eq("对话 1"), isNull());
     }
 }

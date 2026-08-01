@@ -12,6 +12,7 @@ import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiSubagentInvocation;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.core.entity.AiOrphanedRunRecord;
 
@@ -39,12 +40,12 @@ public interface AiConversationMapper {
     @Insert("INSERT INTO ai_threads (thread_id, scope, user_id, puppet_id, session_id, title, config_id, "
             + "config_name, config_protocol, config_model, config_base_url, config_completions_path, "
             + "config_max_output_tokens, created_at, last_active_at, message_count, run_status, "
-            + "parent_thread_id, profile, mode, context_summary, root_plan_id) "
+            + "parent_thread_id, profile, context_summary, context_checkpoint_json, root_plan_id) "
             + "VALUES (#{threadId}, #{scope}, #{userId}, #{puppetId}, #{sessionId}, #{title}, #{configId}, "
             + "#{configName}, #{configProtocol}, #{configModel}, #{configBaseUrl}, #{configCompletionsPath}, "
             + "#{configMaxOutputTokens}, #{createdAt}, #{lastActiveAt}, #{messageCount}, #{runStatus}, "
-            + "#{parentThreadId}, 'default', COALESCE(#{mode}, 'auto'), "
-            + "#{contextSummary}, #{rootPlanId})")
+            + "#{parentThreadId}, 'default', "
+            + "#{contextSummary}, #{contextCheckpointJson}, #{rootPlanId})")
     int insertThread(AiThreadRecord row);
 
     @Update("UPDATE ai_threads SET title = #{title}, last_active_at = #{lastActiveAt} WHERE thread_id = #{threadId}")
@@ -75,17 +76,13 @@ public interface AiConversationMapper {
             + "WHERE thread_id = #{threadId}")
     int updateThreadConfig(AiThreadRecord row);
 
-    @Update("UPDATE ai_threads SET mode = #{mode}, last_active_at = #{lastActiveAt} "
+    @Update("UPDATE ai_threads SET context_summary = #{contextSummary}, "
+            + "context_checkpoint_json = #{contextCheckpointJson}, last_active_at = #{lastActiveAt} "
             + "WHERE thread_id = #{threadId}")
-    int updateThreadMode(@Param("threadId") String threadId,
-                         @Param("mode") String mode,
-                         @Param("lastActiveAt") long lastActiveAt);
-
-    @Update("UPDATE ai_threads SET context_summary = #{contextSummary}, last_active_at = #{lastActiveAt} "
-            + "WHERE thread_id = #{threadId}")
-    int updateThreadContextSummary(@Param("threadId") String threadId,
-                                   @Param("contextSummary") String contextSummary,
-                                   @Param("lastActiveAt") long lastActiveAt);
+    int updateThreadContextCheckpoint(@Param("threadId") String threadId,
+                                      @Param("contextSummary") String contextSummary,
+                                      @Param("contextCheckpointJson") String contextCheckpointJson,
+                                      @Param("lastActiveAt") long lastActiveAt);
 
     @Update("UPDATE ai_threads SET message_count = (SELECT COUNT(*) FROM ai_messages WHERE thread_id = #{threadId}), "
             + "last_active_at = #{lastActiveAt} WHERE thread_id = #{threadId}")
@@ -105,10 +102,11 @@ public interface AiConversationMapper {
             + "(turn_id, thread_id, status, created_at, protocol_status, "
             + "dispatch_status, command_scope, command_json, "
             + "client_user_message_id, user_item_id, assistant_item_id, "
-            + "interrupt_requested) VALUES "
+            + "interrupt_requested, answer_to_question_id) VALUES "
             + "(#{turnId}, #{threadId}, 'pending', #{createdAt}, #{protocolStatus}, "
             + "'queued', #{commandScope}, #{commandJson}, "
-            + "#{clientUserMessageId}, #{userItemId}, #{assistantItemId}, 0)")
+            + "#{clientUserMessageId}, #{userItemId}, #{assistantItemId}, 0, "
+            + "#{answerToQuestionId})")
     int insertProtocolTurn(AiTurnRecord row);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
@@ -122,7 +120,13 @@ public interface AiConversationMapper {
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
             + "AND protocol_status = 'inProgress' AND dispatch_status = 'queued' "
-            + "ORDER BY created_at, turn_id LIMIT 1")
+            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
+            + "WHERE input.thread_id = ai_turns.thread_id AND input.status = 'PENDING') "
+            + "OR answer_to_question_id = (SELECT input.request_id "
+            + "FROM ai_user_input_requests input WHERE input.thread_id = ai_turns.thread_id "
+            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
+            + "ORDER BY CASE WHEN answer_to_question_id IS NOT NULL THEN 0 ELSE 1 END, "
+            + "created_at, turn_id LIMIT 1")
     AiTurnRecord findNextQueuedTurn(@Param("threadId") String threadId);
 
     @Select("SELECT * FROM ai_turns WHERE thread_id = #{threadId} "
@@ -135,6 +139,11 @@ public interface AiConversationMapper {
     @Select("SELECT DISTINCT queued.thread_id FROM ai_turns queued "
             + "WHERE queued.protocol_status = 'inProgress' "
             + "AND queued.dispatch_status = 'queued' "
+            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
+            + "WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING') "
+            + "OR queued.answer_to_question_id = (SELECT input.request_id "
+            + "FROM ai_user_input_requests input WHERE input.thread_id = queued.thread_id "
+            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
             + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
             + "WHERE active.thread_id = queued.thread_id "
             + "AND active.dispatch_status IN ('running', 'cancelling'))")
@@ -148,7 +157,13 @@ public interface AiConversationMapper {
             + "WHERE queued.thread_id = ai_turns.thread_id "
             + "AND queued.protocol_status = 'inProgress' "
             + "AND queued.dispatch_status = 'queued' "
-            + "ORDER BY queued.created_at, queued.turn_id LIMIT 1) "
+            + "AND (NOT EXISTS (SELECT 1 FROM ai_user_input_requests input "
+            + "WHERE input.thread_id = queued.thread_id AND input.status = 'PENDING') "
+            + "OR queued.answer_to_question_id = (SELECT input.request_id "
+            + "FROM ai_user_input_requests input WHERE input.thread_id = queued.thread_id "
+            + "AND input.status = 'PENDING' ORDER BY input.created_at DESC LIMIT 1)) "
+            + "ORDER BY CASE WHEN queued.answer_to_question_id IS NOT NULL THEN 0 ELSE 1 END, "
+            + "queued.created_at, queued.turn_id LIMIT 1) "
             + "AND NOT EXISTS (SELECT 1 FROM ai_turns active "
             + "WHERE active.thread_id = ai_turns.thread_id "
             + "AND active.dispatch_status IN ('running', 'cancelling'))")
@@ -200,6 +215,56 @@ public interface AiConversationMapper {
             + "AND dispatch_status = 'running'")
     int requeueProtocolTurn(@Param("turnId") String turnId);
 
+    // ── Agent 等待用户输入 ────────────────────────────────────────────────
+
+    @Insert("INSERT INTO ai_user_input_requests (request_id, thread_id, turn_id, item_id, "
+            + "request_type, prompt, options_json, allow_free_text, action_summary, "
+            + "tool_name, arguments_hash, risk, status, answer, created_at, answered_at, "
+            + "confirmation_consumed_at, expires_at) "
+            + "VALUES (#{requestId}, #{threadId}, #{turnId}, #{itemId}, #{requestType}, "
+            + "#{prompt}, #{optionsJson}, #{allowFreeText}, #{actionSummary}, #{toolName}, "
+            + "#{argumentsHash}, #{risk}, #{status}, #{answer}, #{createdAt}, #{answeredAt}, "
+            + "#{confirmationConsumedAt}, #{expiresAt})")
+    int insertUserInputRequest(AiUserInputRequest row);
+
+    @Select("SELECT * FROM ai_user_input_requests WHERE request_id = #{requestId}")
+    AiUserInputRequest findUserInputRequest(@Param("requestId") String requestId);
+
+    @Select("SELECT * FROM ai_user_input_requests WHERE thread_id = #{threadId} "
+            + "AND status = 'PENDING' ORDER BY created_at DESC LIMIT 1")
+    AiUserInputRequest findPendingUserInputRequest(@Param("threadId") String threadId);
+
+    @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
+            + "WHERE thread_id = #{threadId} AND status = 'PENDING' "
+            + "AND expires_at IS NOT NULL AND expires_at <= #{now}")
+    int expireUserInputRequests(@Param("threadId") String threadId,
+                                @Param("now") long now);
+
+    @Update("UPDATE ai_user_input_requests SET status = 'EXPIRED' "
+            + "WHERE status = 'PENDING' AND expires_at IS NOT NULL AND expires_at <= #{now}")
+    int expireAllUserInputRequests(@Param("now") long now);
+
+    @Update("UPDATE ai_user_input_requests SET status = 'ANSWERED', answer = #{answer}, "
+            + "answered_at = #{answeredAt} WHERE request_id = #{requestId} "
+            + "AND thread_id = #{threadId} AND status = 'PENDING' "
+            + "AND (expires_at IS NULL OR expires_at > #{answeredAt})")
+    int answerUserInputRequest(@Param("requestId") String requestId,
+                               @Param("threadId") String threadId,
+                               @Param("answer") String answer,
+                               @Param("answeredAt") long answeredAt);
+
+    @Update("UPDATE ai_user_input_requests SET confirmation_consumed_at = #{consumedAt} "
+            + "WHERE request_id = #{requestId} AND thread_id = #{threadId} "
+            + "AND request_type = 'CONFIRMATION' AND status = 'ANSWERED' "
+            + "AND confirmation_consumed_at IS NULL AND tool_name = #{toolName} "
+            + "AND arguments_hash = #{argumentsHash} "
+            + "AND (expires_at IS NULL OR expires_at > #{consumedAt})")
+    int consumeConfirmation(@Param("requestId") String requestId,
+                            @Param("threadId") String threadId,
+                            @Param("toolName") String toolName,
+                            @Param("argumentsHash") String argumentsHash,
+                            @Param("consumedAt") long consumedAt);
+
     @Update("UPDATE ai_turns SET status = #{status}, completed_at = #{completedAt} "
             + "WHERE turn_id = #{turnId} AND status = 'pending' "
             + "AND (#{leaseToken} IS NULL OR EXISTS "
@@ -231,7 +296,8 @@ public interface AiConversationMapper {
             + "SELECT m.*, r.status AS run_status, "
             + "t.protocol_status AS protocol_status, "
             + "t.dispatch_status AS dispatch_status, "
-            + "t.error_message AS protocol_error_message "
+            + "t.error_message AS protocol_error_message, "
+            + "t.answer_to_question_id AS answer_to_question_id "
             + "FROM ai_messages m "
             + "LEFT JOIN ai_runs r ON r.run_id = m.run_id "
             + "LEFT JOIN ai_turns t ON t.turn_id = m.turn_id "
@@ -247,9 +313,14 @@ public interface AiConversationMapper {
     int countMessages(@Param("threadId") String threadId);
 
     @Select("SELECT * FROM (SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
-            + "AND status = 'committed' ORDER BY timestamp DESC, message_seq DESC, message_id DESC "
-            + "LIMIT #{limit}) ORDER BY timestamp ASC, message_seq ASC, message_id ASC")
+            + "AND status = 'committed' ORDER BY message_seq DESC, message_id DESC "
+            + "LIMIT #{limit}) ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> recentMessages(@Param("threadId") String threadId, @Param("limit") int limit);
+
+    @Select("SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
+            + "AND message_seq = #{messageSeq} AND status = 'committed' LIMIT 1")
+    AiMessageRecord findCommittedMessageBySequence(@Param("threadId") String threadId,
+                                                   @Param("messageSeq") long messageSeq);
 
     @Update("UPDATE ai_messages SET status = #{status} "
             + "WHERE thread_id = #{threadId} AND turn_id = #{turnId}")

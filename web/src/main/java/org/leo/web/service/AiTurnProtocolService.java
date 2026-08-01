@@ -2,6 +2,7 @@ package org.leo.web.service;
 
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.entity.AiUserInputRequest;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -15,6 +16,7 @@ public class AiTurnProtocolService {
 
     public static final String STATUS_QUEUED = "queued";
     public static final String STATUS_RUNNING = "running";
+    public static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
     private static final String STATUS_CANCELLING = "cancelling";
     private static final String STATUS_IN_PROGRESS = "inProgress";
     private static final String STATUS_COMPLETED = "completed";
@@ -39,6 +41,17 @@ public class AiTurnProtocolService {
                              String commandJson,
                              String userContent,
                              Object attachments) {
+        return begin(threadId, clientUserMessageId, commandScope, commandJson,
+                userContent, attachments, null);
+    }
+
+    public Reservation begin(String threadId,
+                             String clientUserMessageId,
+                             String commandScope,
+                             String commandJson,
+                             String userContent,
+                             Object attachments,
+                             String answerToQuestionId) {
         String clientId = isBlank(clientUserMessageId)
                 ? UUID.randomUUID().toString() : clientUserMessageId.trim();
         TurnSnapshot duplicate = findByClientId(threadId, clientId);
@@ -60,7 +73,9 @@ public class AiTurnProtocolService {
         row.setAssistantItemId("item-" + UUID.randomUUID());
         row.setCreatedAt(now);
         row.setInterruptRequested(false);
-        if (store.reserveProtocolTurn(row, userContent, attachments)) {
+        row.setAnswerToQuestionId(emptyToNull(answerToQuestionId));
+        if (store.reserveProtocolTurn(
+                row, userContent, attachments, answerToQuestionId)) {
             return new Reservation(snapshot(row), false);
         }
 
@@ -94,13 +109,21 @@ public class AiTurnProtocolService {
         List<TurnSnapshot> queued = inProgress.stream()
                 .filter(turn -> STATUS_QUEUED.equals(turn.status()))
                 .toList();
+        AiUserInputRequest pendingUserInput =
+                store.findPendingUserInputRequest(threadId);
+        String normalizedFallback = pendingUserInput == null
+                && STATUS_WAITING_FOR_USER.equals(fallbackStatus)
+                ? STATUS_COMPLETED : fallbackStatus;
         String status = active != null
                 ? active.status()
                 : !queued.isEmpty()
                         ? STATUS_QUEUED
-                        : fallbackStatus;
+                        : pendingUserInput != null
+                                ? STATUS_WAITING_FOR_USER
+                                : normalizedFallback;
         return new ThreadSnapshot(
-                status, !inProgress.isEmpty(), active, queued);
+                status, !inProgress.isEmpty(), active, queued,
+                pendingUserInput);
     }
 
     public StartClaim tryStart(String turnId) {
@@ -136,7 +159,7 @@ public class AiTurnProtocolService {
             String turnId, String runtimeStatus, String errorMessage,
             String leaseToken) {
         String status = switch (runtimeStatus != null ? runtimeStatus : "") {
-            case "completed" -> STATUS_COMPLETED;
+            case "completed", STATUS_WAITING_FOR_USER -> STATUS_COMPLETED;
             case "cancelled", "interrupted" -> STATUS_INTERRUPTED;
             default -> STATUS_FAILED;
         };
@@ -193,11 +216,15 @@ public class AiTurnProtocolService {
                 row.getStartedAt(), row.getCompletedAt(),
                 Boolean.TRUE.equals(row.getInterruptRequested()),
                 row.getErrorMessage(), row.getCommandScope(),
-                row.getCommandJson());
+                row.getCommandJson(), row.getAnswerToQuestionId());
     }
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static String emptyToNull(String value) {
+        return isBlank(value) ? null : value.trim();
     }
 
     public record Reservation(TurnSnapshot turn, boolean reused) {}
@@ -207,7 +234,15 @@ public class AiTurnProtocolService {
     public record ThreadSnapshot(String status,
                                  boolean executing,
                                  TurnSnapshot activeTurn,
-                                 List<TurnSnapshot> queuedTurns) {
+                                 List<TurnSnapshot> queuedTurns,
+                                 AiUserInputRequest pendingUserInput) {
+
+        public ThreadSnapshot(String status,
+                              boolean executing,
+                              TurnSnapshot activeTurn,
+                              List<TurnSnapshot> queuedTurns) {
+            this(status, executing, activeTurn, queuedTurns, null);
+        }
 
         public Map<String, Object> toMap() {
             Map<String, Object> value = new LinkedHashMap<>();
@@ -221,6 +256,8 @@ public class AiTurnProtocolService {
                     .toList());
             value.put("pendingTurnCount",
                     queuedTurns.size() + (activeTurn != null ? 1 : 0));
+            value.put("pendingUserInput",
+                    pendingUserInput != null ? pendingUserInput.toMap() : null);
             return value;
         }
     }
@@ -237,7 +274,27 @@ public class AiTurnProtocolService {
                                boolean interruptRequested,
                                String errorMessage,
                                String commandScope,
-                               String commandJson) {
+                               String commandJson,
+                               String answerToQuestionId) {
+
+        public TurnSnapshot(String id,
+                            String threadId,
+                            String status,
+                            String clientUserMessageId,
+                            String userItemId,
+                            String assistantItemId,
+                            long createdAt,
+                            Long startedAt,
+                            Long completedAt,
+                            boolean interruptRequested,
+                            String errorMessage,
+                            String commandScope,
+                            String commandJson) {
+            this(id, threadId, status, clientUserMessageId,
+                    userItemId, assistantItemId, createdAt, startedAt,
+                    completedAt, interruptRequested, errorMessage,
+                    commandScope, commandJson, null);
+        }
 
         public Map<String, Object> toMap() {
             Map<String, Object> value = new LinkedHashMap<>();
@@ -249,6 +306,7 @@ public class AiTurnProtocolService {
             value.put("startedAt", startedAt);
             value.put("completedAt", completedAt);
             value.put("interruptRequested", interruptRequested);
+            value.put("answerToQuestionId", answerToQuestionId);
             value.put("items", List.of(
                     messageItem(userItemId, "user", "completed"),
                     messageItem(assistantItemId, "assistant", itemStatus())));

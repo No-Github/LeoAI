@@ -1,9 +1,6 @@
 ---
 name: develop-fingerprint
 description: 当用户希望在平台侧编写、生成、完善、检查、保存、更新或删除指纹规则时使用。该 skill 用于生成符合 FingerprintComponent 约束的 HTTP/TCP 指纹 rule.requests 与 rule.script，并要求通过平台 FingerprintTools 查询已有指纹、读取详情、保存和删除，不直接读写 VFS 指纹文件。
-tags:
-  - platform
-  - fingerprint
 ---
 
 # 开发平台侧指纹
@@ -69,17 +66,7 @@ tags:
   "tags": ["web", "server"],
   "info": {
     "version": "1.0",
-    "description": "Detects Nginx by HTTP server header or default page markers.",
-    "vulnerabilities": [
-      {
-        "title": "示例漏洞标题",
-        "cve": "CVE-XXXX-YYYY",
-        "severity": "high",
-        "description": "命中后说明可能存在的利用方式",
-        "exploitSkill": "exploit-xxx-post",
-        "references": ["https://..."]
-      }
-    ]
+    "description": "Detects Nginx by HTTP server header or default page markers."
   },
   "rule": {
     "requests": [
@@ -108,30 +95,6 @@ tags:
 - `protocol`: `http` 或 `tcp`。
 - `tags`: 短标签，例如 `web`、`server`、`database`、`middleware`、`cms`。
 - `info.description`: 说明识别依据、适用版本和误报边界。
-- `info.vulnerabilities`: 命中该指纹后已知的漏洞清单，供后续漏洞利用建议消费。
-
-## info.vulnerabilities 规范
-
-`vulnerabilities` 是可选数组。如果对应产品/版本存在已知问题（包括无 CVE 编号的配置类、未授权访问类、自研利用类问题），按以下结构列出；没有已知问题则省略该字段。
-
-每个数组元素字段：
-
-| 字段 | 必填 | 类型 | 说明 |
-|------|------|------|------|
-| `title` | ✅ | string | 漏洞简短名称，例如 "RememberMe Cookie 反序列化" |
-| `cve` | ✗ | string | CVE 编号，仅在有官方编号时填写。配置类、自研利用类问题不填 |
-| `severity` | ✗ | string | 优先级，取值 `low` / `medium` / `high` / `critical` |
-| `description` | ✗ | string | 详细说明利用方式或风险点 |
-| `exploitSkill` | ✗ | string | 平台中对应的 skill 名称，便于 AI 直接调用；没有对应 skill 不填 |
-| `references` | ✗ | string[] | 参考链接数组 |
-
-典型场景示例：
-
-- 有 CVE 有 skill：`{ "title": "Log4j JNDI 注入", "cve": "CVE-2021-44228", "severity": "critical", "exploitSkill": "exploit-log4j-post" }`
-- 无 CVE 但有 skill：`{ "title": "Actuator heapdump 泄露", "severity": "high", "exploitSkill": "exploit-spring-actuator", "description": "/actuator/heapdump 未授权访问" }`
-- 纯情报（无 CVE 无 skill）：`{ "title": "默认弱口令", "severity": "medium", "description": "admin/admin 等默认账号需要手动尝试" }`
-
-未列入此规范的字段会被下游忽略。不要在 `vulnerabilities` 元素里附加大段证据文本或原始响应体。
 
 ## saveFingerprint 参数
 

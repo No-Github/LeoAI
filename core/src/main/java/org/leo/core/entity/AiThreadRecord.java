@@ -21,10 +21,10 @@ public class AiThreadRecord {
     private String runStatus;
     /** 父会话 ID（非空表示当前是子 Agent 派发出来的隔离上下文）。 */
     private String parentThreadId;
-    /** 执行模式：plan / execute / auto。 */
-    private String mode;
     /** 上下文压缩后写入的摘要（可为 null，未压缩时为 null）。 */
     private String contextSummary;
+    /** 上下文摘要对应的可恢复边界元数据 JSON。 */
+    private String contextCheckpointJson;
     /** 当前活跃 plan 的 ID（可为 null）。 */
     private String rootPlanId;
 
@@ -86,11 +86,13 @@ public class AiThreadRecord {
     public String getParentThreadId() { return parentThreadId; }
     public void setParentThreadId(String parentThreadId) { this.parentThreadId = parentThreadId; }
 
-    public String getMode() { return mode; }
-    public void setMode(String mode) { this.mode = mode; }
-
     public String getContextSummary() { return contextSummary; }
     public void setContextSummary(String contextSummary) { this.contextSummary = contextSummary; }
+
+    public String getContextCheckpointJson() { return contextCheckpointJson; }
+    public void setContextCheckpointJson(String contextCheckpointJson) {
+        this.contextCheckpointJson = contextCheckpointJson;
+    }
 
     public String getRootPlanId() { return rootPlanId; }
     public void setRootPlanId(String rootPlanId) { this.rootPlanId = rootPlanId; }

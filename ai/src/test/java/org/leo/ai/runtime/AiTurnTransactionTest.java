@@ -195,7 +195,7 @@ class AiTurnTransactionTest {
                 new AiTurnTransaction.Context(
                         persisted, 7, agent, "session:thread-1",
                         AiChatAuditEntry.platform(
-                                "user-1", "alice", "normal", "hello", false),
+                                "user-1", "alice", "normal", "hello"),
                         System.currentTimeMillis(),
                         boundTrace(persisted)));
         return new Fixture(store, failover, memory, agent, persisted, session);

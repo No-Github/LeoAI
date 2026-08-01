@@ -9,6 +9,7 @@ import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
@@ -18,6 +19,7 @@ import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,7 +79,6 @@ public class AiConversationStoreService {
         row.setLastActiveAt(thread.getLastActiveAt());
         row.setMessageCount(0);
         row.setRunStatus(AiThread.STATUS_IDLE);
-        row.setMode(thread.getMode());
         row.setParentThreadId(thread.getParentThreadId());
         mapper.insertThread(row);
     }
@@ -95,14 +96,7 @@ public class AiConversationStoreService {
         row.setLastActiveAt(row.getCreatedAt());
         row.setMessageCount(0);
         row.setRunStatus(AiThread.STATUS_IDLE);
-        row.setMode(AiThread.MODE_AUTO);
         mapper.insertThread(row);
-    }
-
-    /** 切换执行模式并刷新 last_active。 */
-    public void updateMode(String threadId, String mode) {
-        long now = System.currentTimeMillis();
-        mapper.updateThreadMode(threadId, mode == null || mode.isBlank() ? AiThread.MODE_AUTO : mode, now);
     }
 
     public void renameThread(String threadId, String title) {
@@ -149,6 +143,47 @@ public class AiConversationStoreService {
         mapper.updateThreadConfig(row);
     }
 
+    public ConversationCheckpoint findContextCheckpoint(String threadId) {
+        AiThreadRecord thread = findThread(threadId);
+        if (thread == null || isBlank(thread.getContextSummary())
+                || isBlank(thread.getContextCheckpointJson())) {
+            return null;
+        }
+        try {
+            var metadata = JSON.parseObject(thread.getContextCheckpointJson());
+            Integer version = metadata.getInteger("version");
+            Long boundarySequence = metadata.getLong("boundarySequence");
+            String boundaryHash = metadata.getString("boundaryHash");
+            if (version == null || boundarySequence == null || isBlank(boundaryHash)) {
+                return null;
+            }
+            return new ConversationCheckpoint(
+                    thread.getContextSummary(), boundarySequence, boundaryHash, version);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    public void updateContextCheckpoint(String threadId,
+                                        String contextSummary,
+                                        long boundarySequence,
+                                        String boundaryHash,
+                                        int version) {
+        if (isBlank(threadId) || isBlank(contextSummary) || isBlank(boundaryHash)) return;
+        String metadata = JsonUtil.toJsonString(Map.of(
+                "version", version,
+                "boundarySequence", boundarySequence,
+                "boundaryHash", boundaryHash));
+        mapper.updateThreadContextCheckpoint(
+                threadId, contextSummary, metadata, System.currentTimeMillis());
+    }
+
+    public void clearContextCheckpoint(String threadId) {
+        if (isBlank(threadId)) return;
+        mapper.updateThreadContextCheckpoint(
+                threadId, null, null, System.currentTimeMillis());
+    }
+
     public void deleteThread(String threadId) {
         mapper.deleteThread(threadId);
     }
@@ -167,7 +202,9 @@ public class AiConversationStoreService {
     }
 
     public AiTurnRecord findNextQueuedProtocolTurn(String threadId) {
-        return isBlank(threadId) ? null : mapper.findNextQueuedTurn(threadId);
+        if (isBlank(threadId)) return null;
+        mapper.expireUserInputRequests(threadId.trim(), System.currentTimeMillis());
+        return mapper.findNextQueuedTurn(threadId);
     }
 
     public List<AiTurnRecord> listInProgressProtocolTurns(String threadId) {
@@ -175,6 +212,7 @@ public class AiConversationStoreService {
     }
 
     public List<String> listDispatchableProtocolThreadIds() {
+        mapper.expireAllUserInputRequests(System.currentTimeMillis());
         return mapper.listDispatchableThreadIds();
     }
 
@@ -186,6 +224,14 @@ public class AiConversationStoreService {
     public boolean reserveProtocolTurn(AiTurnRecord turn,
                                        String userContent,
                                        Object attachments) {
+        return reserveProtocolTurn(turn, userContent, attachments, null);
+    }
+
+    @Transactional
+    public boolean reserveProtocolTurn(AiTurnRecord turn,
+                                       String userContent,
+                                       Object attachments,
+                                       String answerToQuestionId) {
         if (turn == null || mapper.insertProtocolTurn(turn) != 1) return false;
         appendMessage(
                 turn.getUserItemId(), turn.getThreadId(), turn.getTurnId(),
@@ -195,7 +241,72 @@ public class AiConversationStoreService {
                 turn.getAssistantItemId(), turn.getThreadId(), turn.getTurnId(),
                 null, MESSAGE_PENDING, "assistant", "",
                 null, null, null, null);
+        if (!isBlank(answerToQuestionId)) {
+            AiUserInputRequest request = findUserInputRequest(answerToQuestionId);
+            String normalizedAnswer = userContent != null ? userContent.trim() : "";
+            if (request == null || !turn.getThreadId().equals(request.getThreadId())
+                    || !AiUserInputRequest.STATUS_PENDING.equals(request.getStatus())) {
+                throw new IllegalStateException("待回答问题不存在或已处理");
+            }
+            if (normalizedAnswer.isBlank()) {
+                throw new IllegalStateException("用户回答不能为空");
+            }
+            if (!Boolean.TRUE.equals(request.getAllowFreeText())
+                    && !request.optionValues().contains(normalizedAnswer)) {
+                throw new IllegalStateException("回答必须从问题提供的选项中选择");
+            }
+            int answered = mapper.answerUserInputRequest(
+                    answerToQuestionId.trim(), turn.getThreadId(),
+                    normalizedAnswer,
+                    System.currentTimeMillis());
+            if (answered != 1) {
+                throw new IllegalStateException(
+                        "待回答问题不存在、已处理或已过期");
+            }
+        }
         return true;
+    }
+
+    // ── Agent 等待用户输入 ────────────────────────────────────────────────
+
+    public AiUserInputRequest findUserInputRequest(String requestId) {
+        return isBlank(requestId) ? null : mapper.findUserInputRequest(requestId.trim());
+    }
+
+    public AiUserInputRequest findPendingUserInputRequest(String threadId) {
+        if (isBlank(threadId)) return null;
+        String normalized = threadId.trim();
+        mapper.expireUserInputRequests(normalized, System.currentTimeMillis());
+        return mapper.findPendingUserInputRequest(normalized);
+    }
+
+    public AiUserInputRequest createUserInputRequest(AiUserInputRequest request) {
+        if (request == null || isBlank(request.getThreadId())) {
+            throw new IllegalArgumentException("用户输入请求缺少 threadId");
+        }
+        AiUserInputRequest pending = findPendingUserInputRequest(request.getThreadId());
+        if (pending != null) return pending;
+        try {
+            if (mapper.insertUserInputRequest(request) != 1) {
+                throw new IllegalStateException("创建用户输入请求失败");
+            }
+        } catch (DataIntegrityViolationException conflict) {
+            AiUserInputRequest winner = findPendingUserInputRequest(request.getThreadId());
+            if (winner != null) return winner;
+            throw conflict;
+        }
+        return request;
+    }
+
+    /** 原子消费一次高风险操作确认，避免同一确认被并发工具调用复用。 */
+    @Transactional
+    public boolean consumeConfirmation(String requestId, String threadId,
+                                       String toolName, String argumentsHash,
+                                       long consumedAt) {
+        if (isBlank(requestId) || isBlank(threadId)
+                || isBlank(toolName) || isBlank(argumentsHash)) return false;
+        return mapper.consumeConfirmation(requestId.trim(), threadId.trim(),
+                toolName.trim(), argumentsHash.trim(), consumedAt) == 1;
     }
 
     public boolean claimProtocolTurnStart(String turnId, long startedAt) {
@@ -745,8 +856,15 @@ public class AiConversationStoreService {
 
     public List<ConversationMessage> committedMessages(String threadId, int limit) {
         return mapper.recentMessages(threadId, Math.max(1, Math.min(limit, 200))).stream()
-                .map(record -> new ConversationMessage(record.getRole(), record.getContent()))
+                .map(record -> new ConversationMessage(
+                        record.getMessageSeq(), record.getRole(), record.getContent()))
                 .toList();
+    }
+
+    public ConversationMessage committedMessage(String threadId, long messageSequence) {
+        AiMessageRecord record = mapper.findCommittedMessageBySequence(threadId, messageSequence);
+        return record == null ? null : new ConversationMessage(
+                record.getMessageSeq(), record.getRole(), record.getContent());
     }
 
     public int countMessages(String threadId) {
@@ -755,7 +873,7 @@ public class AiConversationStoreService {
 
     /**
      * 查找指定线程最近一条带有 plan 快照的消息中的 plan_json，
-     * 用于线程重启后恢复计划状态（含每步的 preApproved 标志）。
+     * 用于线程重启后恢复计划状态。
      *
      * @return plan JSON 字符串，找不到则返回 null
      */
@@ -840,6 +958,7 @@ public class AiConversationStoreService {
             item.put("dispatchStatus", record.getDispatchStatus());
             item.put("protocolErrorMessage",
                     record.getProtocolErrorMessage());
+            item.put("answerToQuestionId", record.getAnswerToQuestionId());
             item.put("sequence", record.getMessageSeq());
             item.put("status", record.getStatus());
             item.put("role", record.getRole());
@@ -898,6 +1017,15 @@ public class AiConversationStoreService {
                                 long startedAt, String leaseToken) {
     }
 
-    public record ConversationMessage(String role, String content) {
+    public record ConversationMessage(Long sequence, String role, String content) {
+        public ConversationMessage(String role, String content) {
+            this(null, role, content);
+        }
+    }
+
+    public record ConversationCheckpoint(String summary,
+                                         long boundarySequence,
+                                         String boundaryHash,
+                                         int version) {
     }
 }

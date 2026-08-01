@@ -10,6 +10,7 @@ public class AiMessageRecord {
     private String protocolStatus;
     private String dispatchStatus;
     private String protocolErrorMessage;
+    private String answerToQuestionId;
     private Long messageSeq;
     private String status;
     private String role;
@@ -44,6 +45,10 @@ public class AiMessageRecord {
     public String getProtocolErrorMessage() { return protocolErrorMessage; }
     public void setProtocolErrorMessage(String protocolErrorMessage) {
         this.protocolErrorMessage = protocolErrorMessage;
+    }
+    public String getAnswerToQuestionId() { return answerToQuestionId; }
+    public void setAnswerToQuestionId(String answerToQuestionId) {
+        this.answerToQuestionId = answerToQuestionId;
     }
 
     public Long getMessageSeq() { return messageSeq; }

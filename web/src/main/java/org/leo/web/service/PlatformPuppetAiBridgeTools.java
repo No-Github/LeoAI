@@ -105,7 +105,7 @@ public class PlatformPuppetAiBridgeTools {
 
         try {
             Map<String, Object> created = threadService.createChildThread(
-                    session, childTitle(normalizedTask), effectiveConfigId, AiThread.MODE_AUTO, parentThreadId);
+                    session, childTitle(normalizedTask), effectiveConfigId, parentThreadId);
             String childThreadId = String.valueOf(created.get("threadId"));
             AiThread childThread = session.getAiThread(childThreadId);
             if (childThread == null) {
@@ -121,7 +121,7 @@ public class PlatformPuppetAiBridgeTools {
             AiExecutionPolicy policy = AiExecutionPolicy.from(caller.user());
             AiChatAuditEntry audit = AiChatAuditEntry.puppet(
                     session.getSessionId(), policy.getUserId(), policy.getUserName(), policy.getPrivilege(),
-                    normalizedTask, false);
+                    normalizedTask);
             auditLogStore.append(audit);
             String guardedMessage = ControllerUtil.buildAiPolicyPrompt(policy, normalizedTask);
             Map<String, Object> delegated = delegationService.execute(

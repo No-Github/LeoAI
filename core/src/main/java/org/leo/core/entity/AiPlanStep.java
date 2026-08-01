@@ -30,16 +30,15 @@ public class AiPlanStep {
     private volatile String result;
     /** 失败或跳过时的原因 */
     private volatile String reason;
-    /** 预批准标记：为 true 时该步骤内的高影响工具调用跳过用户确认 */
-    private volatile boolean preApproved;
-
+    /** 已开始执行的次数；首次执行计为 1，后续每次重试递增。 */
+    private volatile int attemptCount;
     private volatile long startedAt;
     private volatile long completedAt;
 
     /**
      * 计划步骤构造函数。
      * 同时被 FastJSON 用于反序列化（{@link JSONCreator} + {@link JSONField}），
-     * 让 plan 快照可以从持久化 JSON 还原。volatile 状态字段（status/result/preApproved 等）
+     * 让 plan 快照可以从持久化 JSON 还原。volatile 状态字段（status/result 等）
      * 由 FastJSON 通过反射直接写入。
      */
     @JSONCreator
@@ -61,27 +60,51 @@ public class AiPlanStep {
 
     // ── 状态变更 ──────────────────────────────────────────────────────────────
 
-    public void markInProgress() {
+    public boolean markInProgress() {
+        if (!canStart()) return false;
+        boolean retry = this.status == AiStepStatus.FAILED;
         this.status    = AiStepStatus.IN_PROGRESS;
+        this.attemptCount++;
+        if (retry) this.result = null;
+        this.reason = null;
+        this.completedAt = 0L;
         this.startedAt = System.currentTimeMillis();
+        return true;
     }
 
-    public void markCompleted(String result) {
+    public boolean markCompleted(String result) {
+        if (this.status != AiStepStatus.IN_PROGRESS) return false;
         this.status      = AiStepStatus.COMPLETED;
         this.result      = result;
+        this.reason      = null;
         this.completedAt = System.currentTimeMillis();
+        return true;
     }
 
-    public void markFailed(String reason) {
+    public boolean markFailed(String reason) {
+        if (this.status != AiStepStatus.IN_PROGRESS) return false;
         this.status      = AiStepStatus.FAILED;
         this.reason      = reason;
         this.completedAt = System.currentTimeMillis();
+        return true;
     }
 
-    public void markSkipped(String reason) {
+    public boolean markSkipped(String reason) {
+        if (this.status != AiStepStatus.PENDING
+                && this.status != AiStepStatus.IN_PROGRESS) {
+            return false;
+        }
         this.status      = AiStepStatus.SKIPPED;
         this.reason      = reason;
         this.completedAt = System.currentTimeMillis();
+        return true;
+    }
+
+    /** 是否可以首次启动或在失败后重试。 */
+    public boolean canStart() {
+        return this.status == AiStepStatus.PENDING
+                || (this.status == AiStepStatus.FAILED
+                && this.attemptCount <= this.maxRetries);
     }
 
     // ── Getters ───────────────────────────────────────────────────────────────
@@ -96,13 +119,9 @@ public class AiPlanStep {
     public AiStepStatus getStatus()           { return status; }
     public String       getResult()           { return result; }
     public String       getReason()           { return reason; }
-    public boolean      isPreApproved()       { return preApproved; }
+    public int          getAttemptCount()     { return attemptCount; }
     public long         getStartedAt()        { return startedAt; }
     public long         getCompletedAt()      { return completedAt; }
-
-    // ── 预批准 ───────────────────────────────────────────────────────────────
-
-    public void setPreApproved(boolean preApproved) { this.preApproved = preApproved; }
 
     /** 追加/更新步骤结果摘要（不改变步骤状态）。 */
     public void setResult(String result) { this.result = result; }

@@ -8,6 +8,7 @@ import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiOrphanedRunRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.mockito.ArgumentCaptor;
@@ -32,6 +33,54 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiConversationStoreServiceTest {
+
+    @Test
+    void storesAndRestoresVersionedContextCheckpointMetadata() {
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        AiConversationStoreService service = new AiConversationStoreService(mapper);
+        AiThreadRecord thread = new AiThreadRecord();
+        thread.setThreadId("thread-1");
+        thread.setContextSummary("[历史摘要]\nsummary");
+        thread.setContextCheckpointJson("""
+                {"version":1,"boundarySequence":42,"boundaryHash":"hash-42"}
+                """);
+        when(mapper.findThread("thread-1")).thenReturn(thread);
+
+        AiConversationStoreService.ConversationCheckpoint checkpoint =
+                service.findContextCheckpoint("thread-1");
+
+        assertNotNull(checkpoint);
+        assertEquals("[历史摘要]\nsummary", checkpoint.summary());
+        assertEquals(42L, checkpoint.boundarySequence());
+        assertEquals("hash-42", checkpoint.boundaryHash());
+        assertEquals(1, checkpoint.version());
+
+        service.updateContextCheckpoint(
+                "thread-1", checkpoint.summary(), checkpoint.boundarySequence(),
+                checkpoint.boundaryHash(), checkpoint.version());
+        ArgumentCaptor<String> metadata = ArgumentCaptor.forClass(String.class);
+        verify(mapper).updateThreadContextCheckpoint(
+                eq("thread-1"), eq("[历史摘要]\nsummary"),
+                metadata.capture(), anyLong());
+        assertEquals(true, metadata.getValue().contains("\"boundarySequence\":42"));
+        assertEquals(true, metadata.getValue().contains("\"boundaryHash\":\"hash-42\""));
+        assertEquals(true, metadata.getValue().contains("\"version\":1"));
+    }
+
+    @Test
+    void committedConversationMessagesKeepTheirStableSequence() {
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        AiMessageRecord row = new AiMessageRecord();
+        row.setMessageSeq(7L);
+        row.setRole("assistant");
+        row.setContent("answer");
+        when(mapper.recentMessages("thread-1", 20)).thenReturn(List.of(row));
+        when(mapper.findCommittedMessageBySequence("thread-1", 7L)).thenReturn(row);
+        AiConversationStoreService service = new AiConversationStoreService(mapper);
+
+        assertEquals(7L, service.committedMessages("thread-1", 20).get(0).sequence());
+        assertEquals("answer", service.committedMessage("thread-1", 7L).content());
+    }
 
     @Test
     void reservesTurnAndVisibleMessagesInOneStoreOperation() {

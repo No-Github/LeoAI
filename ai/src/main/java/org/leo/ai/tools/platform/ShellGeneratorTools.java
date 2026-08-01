@@ -87,17 +87,20 @@ public class ShellGeneratorTools {
     private final ShellResultStore resultStore;
     private final PuppetService puppetService;
     private final ScriptGeneratorService scriptGeneratorService;
+    private final PlatformToolAccessService accessService;
 
     public ShellGeneratorTools(DisguiseService disguiseService,
                                DelegatingChatModel chatModel,
                                ShellResultStore resultStore,
                                PuppetService puppetService,
-                               ScriptGeneratorService scriptGeneratorService) {
+                               ScriptGeneratorService scriptGeneratorService,
+                               PlatformToolAccessService accessService) {
         this.disguiseService = disguiseService;
         this.chatModel = chatModel;
         this.resultStore = resultStore;
         this.puppetService = puppetService;
         this.scriptGeneratorService = scriptGeneratorService;
+        this.accessService = accessService;
     }
 
     // ── 元数据查询 ──────────────────────────────────────────────────────────────
@@ -133,6 +136,7 @@ public class ShellGeneratorTools {
         if (isBlank(puppetId)) throw new IllegalArgumentException("puppetId 不能为空");
         Puppet puppet = puppetService.findPuppetById(puppetId.trim());
         if (puppet == null) throw new IllegalArgumentException("Puppet 不存在: " + puppetId);
+        accessService.requireVisible(puppet);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success",       true);

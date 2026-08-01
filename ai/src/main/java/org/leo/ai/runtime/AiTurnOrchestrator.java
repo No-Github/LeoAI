@@ -59,12 +59,14 @@ public class AiTurnOrchestrator {
             @Override
             public void onEvent(AiTurnEvent event) {
                 trace.checkpoint(AiTurnTrace.Checkpoint.FIRST_EVENT);
+                trace.recordEvent(event);
                 lifecycle.onEvent(event);
             }
 
             @Override
             public void onCompleted(AiTurnResult result) throws Exception {
                 trace.checkpoint(AiTurnTrace.Checkpoint.MODEL_COMPLETED);
+                trace.recordModelResponse(result != null ? result.response() : null);
                 lifecycle.beforeCommit();
                 trace.checkpoint(AiTurnTrace.Checkpoint.PERSISTENCE_STARTED);
                 AiTurnTransaction.CompletedTurn completed = transaction.commit(

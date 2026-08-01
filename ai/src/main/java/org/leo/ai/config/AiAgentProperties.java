@@ -15,20 +15,13 @@ import org.springframework.stereotype.Component;
  *       puppet-node:
  *         main:
  *           max-parallel-tools: 5
- *           max-tokens-before-summary: 40000
  *           max-context-tokens: 180000        # 主 Agent token 滑动窗口上限
- *         sub-max-parallel-tools: 3            # 子 Agent 并行工具数上限
- *         sub-max-context-tokens: 16000        # 子 Agent token 滑动窗口上限
+ *           tool-timeout-ms: 180000
+ *           max-tool-result-chars: 12000
  *       platform:
  *         main:
  *           max-parallel-tools: 5
- *           max-tokens-before-summary: 40000
  *           max-context-tokens: 180000
- *         sub-max-parallel-tools: 3
- *         sub-max-context-tokens: 16000
- *       interceptor:
- *         max-duplicate-calls: 3               # 工具去重阈值
- *         confirmation-timeout-minutes: 2
  * </pre>
  */
 @Component
@@ -37,18 +30,16 @@ public class AiAgentProperties {
 
     private final PuppetNodeConfig puppetNode = new PuppetNodeConfig();
     private final PlatformConfig platform = new PlatformConfig();
-    private final InterceptorConfig interceptor = new InterceptorConfig();
 
     // ── Getters ──────────────────────────────────────────────────────────────
 
     public PuppetNodeConfig getPuppetNode() { return puppetNode; }
     public PlatformConfig getPlatform() { return platform; }
-    public InterceptorConfig getInterceptor() { return interceptor; }
 
     // ── PuppetNode ────────────────────────────────────────────────────────────
 
     public static class PuppetNodeConfig {
-        private final MainAgentConfig main = new MainAgentConfig(5, 40000);
+        private final MainAgentConfig main = new MainAgentConfig(5);
 
         public MainAgentConfig getMain() { return main; }
     }
@@ -56,7 +47,7 @@ public class AiAgentProperties {
     // ── Platform ──────────────────────────────────────────────────────────────
 
     public static class PlatformConfig {
-        private final MainAgentConfig main = new MainAgentConfig(5, 40000);
+        private final MainAgentConfig main = new MainAgentConfig(5);
 
         public MainAgentConfig getMain() { return main; }
     }
@@ -65,31 +56,33 @@ public class AiAgentProperties {
 
     public static class MainAgentConfig {
         private int maxParallelTools;
-        private int maxTokensBeforeSummary;
         /** 主 Agent token 滑动窗口上限，默认 180000（Claude 200k 窗口预留 system + tools 空间）。 */
         private int maxContextTokens = 180000;
+        /** 单次工具执行硬超时。 */
+        private long toolTimeoutMs = 180_000L;
+        /** 发送给模型的单个工具结果字符上限，完整结果会进入短期归档。 */
+        private int maxToolResultChars = 12_000;
+        /** 写操作 tool-call ID 去重记录保留时间。 */
+        private long toolIdempotencyTtlMs = 30 * 60 * 1000L;
+        /** 大型工具结果归档保留时间。 */
+        private long toolArchiveTtlMs = 30 * 60 * 1000L;
 
-        public MainAgentConfig(int maxParallelTools, int maxTokensBeforeSummary) {
+        public MainAgentConfig(int maxParallelTools) {
             this.maxParallelTools = maxParallelTools;
-            this.maxTokensBeforeSummary = maxTokensBeforeSummary;
         }
 
         public int getMaxParallelTools()       { return maxParallelTools; }
-        public int getMaxTokensBeforeSummary() { return maxTokensBeforeSummary; }
         public int getMaxContextTokens()       { return maxContextTokens; }
+        public long getToolTimeoutMs()         { return toolTimeoutMs; }
+        public int getMaxToolResultChars()     { return maxToolResultChars; }
+        public long getToolIdempotencyTtlMs()  { return toolIdempotencyTtlMs; }
+        public long getToolArchiveTtlMs()      { return toolArchiveTtlMs; }
 
         public void setMaxParallelTools(int v)       { this.maxParallelTools = v; }
-        public void setMaxTokensBeforeSummary(int v) { this.maxTokensBeforeSummary = v; }
         public void setMaxContextTokens(int v)       { this.maxContextTokens = v; }
-    }
-
-    // ── InterceptorConfig ─────────────────────────────────────────────────────
-
-    public static class InterceptorConfig {
-        /** 同一工具+同一参数的最大允许调用次数，超过后视为无效重复并拦截。 */
-        private int maxDuplicateCalls = 3;
-
-        public int getMaxDuplicateCalls()           { return maxDuplicateCalls; }
-        public void setMaxDuplicateCalls(int v)     { this.maxDuplicateCalls = v; }
+        public void setToolTimeoutMs(long v)         { this.toolTimeoutMs = Math.max(1L, v); }
+        public void setMaxToolResultChars(int v)     { this.maxToolResultChars = Math.max(512, v); }
+        public void setToolIdempotencyTtlMs(long v)  { this.toolIdempotencyTtlMs = Math.max(1_000L, v); }
+        public void setToolArchiveTtlMs(long v)      { this.toolArchiveTtlMs = Math.max(1_000L, v); }
     }
 }

@@ -9,7 +9,6 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.User;
-import org.leo.web.dto.platform.ai.PlatformAiDtos.AgentInfoResponse;
 import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 
@@ -23,7 +22,7 @@ import java.util.UUID;
 /**
  * 平台 AI 线程生命周期与查询用例。
  *
- * <p>只负责状态装载、线程 CRUD、通道/模式切换和历史读取，不参与模型执行。
+ * <p>只负责状态装载、线程 CRUD、通道切换和历史读取，不参与模型执行。
  */
 @Service
 public class PlatformAiThreadService {
@@ -44,11 +43,10 @@ public class PlatformAiThreadService {
         this.turnProtocolService = turnProtocolService;
     }
 
-    public AgentInfoResponse createAgent(HttpSession httpSession, User user,
-                                         Integer configId, String mode) {
+    public void createAgent(HttpSession httpSession, User user,
+                            Integer configId) {
         PlatformAiState state = recreateState(httpSession);
         state.resetTurnCount();
-        state.setMode(mode);
         AiModelConfig config = resolveOptionalChannel(configId);
         if (config != null) state.setAiConfigId(config.getId());
 
@@ -58,7 +56,6 @@ public class PlatformAiThreadService {
                     "平台 AI", state.getCreatedAt(), config);
         }
         conversationStore.attachEventJournal(state.getStateId(), state);
-        return new AgentInfoResponse(0);
     }
 
     public void switchChannel(PlatformAiState state, Integer configId) {
@@ -69,16 +66,6 @@ public class PlatformAiThreadService {
         state.setAiConfigId(config != null ? config.getId() : null);
         agentRegistry.evict(state.getStateId());
         conversationStore.updateConfig(state.getStateId(), config);
-    }
-
-    public Map<String, Object> switchMode(PlatformAiState state, String mode) {
-        if (mode != null) state.setMode(mode);
-        conversationStore.updateMode(state.getStateId(), state.getMode());
-
-        Map<String, Object> info = new LinkedHashMap<>();
-        info.put("stateId", state.getStateId());
-        info.put("mode", state.getMode());
-        return info;
     }
 
     public List<Map<String, Object>> listThreads(User user) {
@@ -105,7 +92,6 @@ public class PlatformAiThreadService {
                     record.getThreadId(),
                     String.valueOf(item.get("runStatus")));
             if (snapshot != null) item.putAll(snapshot.toMap());
-            item.put("mode", runtime != null ? runtime.getMode() : record.getMode());
             item.put("configId", record.getConfigId());
             item.put("configName", record.getConfigName());
             item.put("configProtocol", record.getConfigProtocol());
@@ -174,7 +160,6 @@ public class PlatformAiThreadService {
         PlatformAiState state = PlatformAiStateStore.get(threadId);
         if (state == null) state = PlatformAiStateStore.create(threadId);
         state.setAiConfigId(record.getConfigId());
-        state.setMode(record.getMode());
         conversationStore.attachEventJournal(threadId, state);
         httpSession.setAttribute(SESSION_ATTR_PLATFORM_AI_STATE_ID, threadId);
         return state;
@@ -316,7 +301,6 @@ public class PlatformAiThreadService {
         if (state == null) {
             state = PlatformAiStateStore.create(record.getThreadId());
             state.setAiConfigId(record.getConfigId());
-            state.setMode(record.getMode());
         }
         conversationStore.attachEventJournal(record.getThreadId(), state);
         return state;

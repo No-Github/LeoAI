@@ -75,7 +75,8 @@ public class AiTurnArtifacts {
                     || ("node".equals(name) && ("thinking".equals(kind)
                             || "text".equals(kind)
                             || "plan".equals(kind)
-                            || "subtask".equals(kind)))
+                            || "subtask".equals(kind)
+                            || "user_input".equals(kind)))
                     || ("patch".equals(name) && ("tool".equals(kind)
                             || "subtask".equals(kind)))) {
                 long sequence = event.seq() > 0 ? event.seq() : index + 1L;

@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: leo.platform.shell-obfuscation
+name: shell-obfuscation
+version: 1.0.0
+scope: platform
+domain: capability-development
+category: payload-generation
+mode: generate
+attack:
+  tactics: [execution, defense-evasion]
+platforms: [java, php]
+targets: [web-application, servlet-container]
+pack: red-team-development
+risk: high
+accessMode: artifact-generation
+status: published
+source: builtin
+owner: leo
+enabled: false
+requires:
+  tools: [getShellGeneratorMeta, getPuppetShellConfig, generatePhpWebShell, mutateJspTemplate, generateWebShell, generateMemoryShell]
+produces: [shell-artifact]

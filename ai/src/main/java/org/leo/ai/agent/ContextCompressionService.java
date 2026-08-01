@@ -5,25 +5,22 @@ import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.ChatModel;
+import org.leo.ai.runtime.AiTurnTelemetryRegistry;
+import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.ai.thread.AiConversationStoreService.ConversationCheckpoint;
+import org.leo.ai.thread.AiConversationStoreService.ConversationMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
- * 上下文压缩服务：在对话历史接近上下文窗口上限时，自动将旧消息压缩为摘要，
- * 以少量 token 代价保留关键信息，避免消息被硬淘汰（TokenWindowChatMemory eviction）。
+ * 上下文压缩服务：在对话历史接近上下文窗口上限时，将旧消息压缩为摘要。
  *
- * <p>触发条件：当前积累消息的估算 token 数超过窗口上限的 {@link #COMPRESSION_THRESHOLD_RATIO}。
- * <p>压缩策略：取最早的消息段（约占当前总消息的 50%），调用非流式 LLM 生成摘要，
- * 将原消息替换为一条摘要 SystemMessage。
- * <p>并发控制：同一 memoryId 同一时刻只允许一次压缩，避免并发压缩导致消息丢失。
- *
- * <p>典型场景：1M 上下文模型 + 长对话侦察任务，在 ~800K token 时触发压缩，
- * 将前 ~400K token 的历史压缩为 ~2K token 的摘要，使对话可以继续推进到接近 1M 上限。
+ * <p>服务只负责判断和生成摘要，checkpoint 的边界管理由
+ * {@link CompressingChatMemory} 完成。压缩或摘要持久化失败均按 best-effort
+ * 处理，不得阻断主 Agent Turn。
  */
 public class ContextCompressionService {
 
@@ -38,102 +35,255 @@ public class ContextCompressionService {
     /** 上下文窗口小于此值不启用压缩（小窗口压缩性价比太低）。 */
     static final int MIN_WINDOW_FOR_COMPRESSION = 100_000;
 
-    /** 单条压缩的最大消息数，防止 LLM 调用过重。 */
+    /** 单次压缩的最大消息数，防止 LLM 调用过重。 */
     static final int MAX_MESSAGES_PER_COMPRESSION = 20;
 
-    /** 压缩保护锁：同 memoryId 同一时刻只能执行一次压缩。 */
-    private final ConcurrentMap<String, Object> compressionLocks = new ConcurrentHashMap<>();
+    static final int CHECKPOINT_VERSION = 1;
+
+    private static final int LOCK_STRIPES = 64;
+
+    /** 固定数量的分段锁，避免按 memoryId 创建的锁无限增长。 */
+    private final Object[] compressionLocks = new Object[LOCK_STRIPES];
 
     private final ChatModel chatModel;
     private final TokenCountEstimator tokenEstimator;
+    private final AiConversationStoreService conversationStore;
+    private final AiTurnTelemetryRegistry telemetryRegistry;
 
     public ContextCompressionService(ChatModel chatModel, TokenCountEstimator tokenEstimator) {
-        this.chatModel = chatModel;
-        this.tokenEstimator = tokenEstimator;
+        this(chatModel, tokenEstimator, null, null);
     }
 
-    /**
-     * 检查是否需要压缩，需要时执行压缩并返回压缩后的消息列表。
-     *
-     * @param memoryId      对话标识
-     * @param messages      当前完整消息列表（由 ChatMemory.messages() 返回）
-     * @param maxTokens     上下文窗口上限（token 数）
-     * @return 压缩后的消息列表；如果未触发压缩则返回原列表
-     */
-    public List<ChatMessage> compressIfNeeded(String memoryId, List<ChatMessage> messages, int maxTokens) {
-        if (messages == null || messages.size() < 8) return messages;
-        if (maxTokens < MIN_WINDOW_FOR_COMPRESSION) return messages;
+    public ContextCompressionService(ChatModel chatModel,
+                                     TokenCountEstimator tokenEstimator,
+                                     AiConversationStoreService conversationStore) {
+        this(chatModel, tokenEstimator, conversationStore, null);
+    }
 
-        int currentTokens = tokenEstimator.estimateTokenCountInMessages(messages);
-        int threshold = (int) (maxTokens * COMPRESSION_THRESHOLD_RATIO);
-        if (currentTokens < threshold) return messages;
-
-        // 只压缩到不低于 MIN_REMAINING_TOKENS
-        int maxRemovableTokens = currentTokens - MIN_REMAINING_TOKENS;
-        if (maxRemovableTokens <= 0) return messages;
-
-        // ── 并发控制：锁定 memoryId ──
-        Object lock = compressionLocks.computeIfAbsent(memoryId, k -> new Object());
-        synchronized (lock) {
-            try {
-                // 二次检查（其他线程可能已完成压缩）
-                List<ChatMessage> latest = messages;
-                int latestTokens = tokenEstimator.estimateTokenCountInMessages(latest);
-                if (latestTokens < threshold) return latest;
-                return doCompress(latest, maxRemovableTokens, currentTokens);
-            } finally {
-                compressionLocks.remove(memoryId);
-            }
+    public ContextCompressionService(ChatModel chatModel,
+                                     TokenCountEstimator tokenEstimator,
+                                     AiConversationStoreService conversationStore,
+                                     AiTurnTelemetryRegistry telemetryRegistry) {
+        this.chatModel = chatModel;
+        this.tokenEstimator = tokenEstimator;
+        this.conversationStore = conversationStore;
+        this.telemetryRegistry = telemetryRegistry;
+        for (int i = 0; i < compressionLocks.length; i++) {
+            compressionLocks[i] = new Object();
         }
     }
 
     /**
-     * 执行实际的压缩操作。
+     * 检查是否需要压缩，需要时执行压缩并返回带边界信息的结果。
      */
-    private List<ChatMessage> doCompress(List<ChatMessage> messages, int maxRemovableTokens, int currentTokens) {
-        // ── 选择要压缩的消息段 ──
-        // 从最早的消息开始，累计 token 数不超过 maxRemovableTokens，最多 MAX_MESSAGES_PER_COMPRESSION 条
+    public CompressionResult compressIfNeeded(String memoryId,
+                                               List<ChatMessage> messages,
+                                               int maxTokens) {
+        if (messages == null || messages.size() < 8) {
+            return CompressionResult.unchanged(messages);
+        }
+        if (maxTokens < MIN_WINDOW_FOR_COMPRESSION) {
+            return CompressionResult.unchanged(messages);
+        }
+
+        try {
+            int currentTokens = tokenEstimator.estimateTokenCountInMessages(messages);
+            int threshold = (int) (maxTokens * COMPRESSION_THRESHOLD_RATIO);
+            if (currentTokens < threshold) {
+                return CompressionResult.unchanged(messages);
+            }
+
+            int maxRemovableTokens = currentTokens - MIN_REMAINING_TOKENS;
+            if (maxRemovableTokens <= 0) {
+                return CompressionResult.unchanged(messages);
+            }
+
+            synchronized (lockFor(memoryId)) {
+                recordTelemetry("compression.attempted");
+                return doCompress(memoryId, messages, maxRemovableTokens, currentTokens);
+            }
+        } catch (RuntimeException e) {
+            recordTelemetry("compression.failed");
+            log.warn("上下文压缩内部失败，保留原上下文: memoryId={}, errorType={}",
+                    safeMemoryId(memoryId), rootCauseType(e));
+            return CompressionResult.failed(messages);
+        }
+    }
+
+    RestoredCheckpoint restoreCheckpoint(String memoryId, List<ChatMessage> currentMessages) {
+        if (conversationStore == null || currentMessages == null || currentMessages.isEmpty()) {
+            return null;
+        }
+        String threadId = threadIdFromMemoryId(memoryId);
+        try {
+            ConversationCheckpoint persisted = conversationStore.findContextCheckpoint(threadId);
+            if (persisted == null || persisted.version() != CHECKPOINT_VERSION) return null;
+
+            ConversationMessage boundary = conversationStore.committedMessage(
+                    threadId, persisted.boundarySequence());
+            CompressionCheckpoint.DurableMessage durableBoundary = boundary != null
+                    ? CompressionCheckpoint.durableMessage(boundary.role(), boundary.content())
+                    : null;
+            if (durableBoundary == null
+                    || !durableBoundary.fingerprint().equals(persisted.boundaryHash())) {
+                log.debug("忽略无效上下文 checkpoint: memoryId={}, reason=boundary-mismatch",
+                        safeMemoryId(memoryId));
+                return null;
+            }
+
+            List<ConversationMessage> recent = visibleMessages(
+                    conversationStore.committedMessages(threadId, 200));
+            List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
+            if (current.size() != currentMessages.size() || current.size() > recent.size()) {
+                return null;
+            }
+
+            int recentOffset = recent.size() - current.size();
+            for (int i = 0; i < current.size(); i++) {
+                CompressionCheckpoint.DurableMessage stored = CompressionCheckpoint.durableMessage(
+                        recent.get(recentOffset + i).role(), recent.get(recentOffset + i).content());
+                if (stored == null || !stored.fingerprint().equals(current.get(i).fingerprint())) {
+                    return null;
+                }
+            }
+
+            long firstSequence = requireSequence(recent.get(recentOffset));
+            int summarizedCount;
+            if (persisted.boundarySequence() < firstSequence) {
+                summarizedCount = 0;
+            } else {
+                summarizedCount = -1;
+                for (int i = recentOffset; i < recent.size(); i++) {
+                    if (requireSequence(recent.get(i)) == persisted.boundarySequence()) {
+                        summarizedCount = i - recentOffset + 1;
+                        break;
+                    }
+                }
+                if (summarizedCount < 0) return null;
+            }
+
+            log.info("恢复上下文 checkpoint: memoryId={}, boundarySequence={}, retainedMessages={}",
+                    safeMemoryId(memoryId), persisted.boundarySequence(),
+                    currentMessages.size() - summarizedCount);
+            recordTelemetry("compression.checkpoint_restored");
+            return new RestoredCheckpoint(
+                    new SystemMessage(persisted.summary()), summarizedCount);
+        } catch (RuntimeException e) {
+            recordTelemetry("compression.checkpoint_restore_failed");
+            log.warn("恢复上下文 checkpoint 失败，使用原始历史: memoryId={}, errorType={}",
+                    safeMemoryId(memoryId), rootCauseType(e));
+            return null;
+        }
+    }
+
+    void persistCheckpoint(String memoryId,
+                           SystemMessage summaryMessage,
+                           List<ChatMessage> currentMessages,
+                           int summarizedSourceCount) {
+        if (conversationStore == null || summaryMessage == null
+                || currentMessages == null || summarizedSourceCount <= 0) {
+            return;
+        }
+        String threadId = threadIdFromMemoryId(memoryId);
+        try {
+            List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
+            int summarizedDurableCount = durableMessages(
+                    currentMessages.subList(0,
+                            Math.min(summarizedSourceCount, currentMessages.size()))).size();
+            if (current.isEmpty() || summarizedDurableCount == 0) return;
+
+            List<ConversationMessage> recent = visibleMessages(
+                    conversationStore.committedMessages(threadId, 200));
+            int overlap = durableSuffixPrefixOverlap(recent, current);
+            int durableBoundary = Math.min(summarizedDurableCount, overlap);
+            if (durableBoundary <= 0) return;
+
+            ConversationMessage boundary = recent.get(
+                    recent.size() - overlap + durableBoundary - 1);
+            CompressionCheckpoint.DurableMessage durableMessage =
+                    CompressionCheckpoint.durableMessage(boundary.role(), boundary.content());
+            if (durableMessage == null) return;
+
+            conversationStore.updateContextCheckpoint(
+                    threadId, summaryMessage.text(), requireSequence(boundary),
+                    durableMessage.fingerprint(), CHECKPOINT_VERSION);
+            recordTelemetry("compression.checkpoint_persisted");
+        } catch (RuntimeException e) {
+            recordTelemetry("compression.checkpoint_persist_failed");
+            log.warn("持久化上下文 checkpoint 失败，继续使用内存 checkpoint: "
+                            + "memoryId={}, errorType={}",
+                    safeMemoryId(memoryId), rootCauseType(e));
+        }
+    }
+
+    /** 清除与当前内存同步失效的持久化 checkpoint。 */
+    void clearPersistedCheckpoint(String memoryId) {
+        if (conversationStore == null) return;
+        try {
+            conversationStore.clearContextCheckpoint(threadIdFromMemoryId(memoryId));
+        } catch (RuntimeException e) {
+            recordTelemetry("compression.checkpoint_clear_failed");
+            log.debug("清除上下文 checkpoint 失败: memoryId={}, errorType={}",
+                    safeMemoryId(memoryId), e.getClass().getSimpleName());
+        }
+    }
+
+    private CompressionResult doCompress(String memoryId,
+                                         List<ChatMessage> messages,
+                                         int maxRemovableTokens,
+                                         int currentTokens) {
         int accumulated = 0;
         int endIdx = Math.min(MAX_MESSAGES_PER_COMPRESSION, messages.size());
         for (int i = 0; i < endIdx; i++) {
-            int msgTokens = tokenEstimator.estimateTokenCountInMessage(messages.get(i));
-            if (accumulated + msgTokens > maxRemovableTokens) {
+            int messageTokens = tokenEstimator.estimateTokenCountInMessage(messages.get(i));
+            if (accumulated + messageTokens > maxRemovableTokens) {
                 endIdx = i;
                 break;
             }
-            accumulated += msgTokens;
+            accumulated += messageTokens;
         }
-        if (endIdx == 0) return messages;
+        if (endIdx == 0) {
+            recordTelemetry("compression.skipped_no_removable_messages");
+            return CompressionResult.unchanged(messages);
+        }
 
         List<ChatMessage> toCompress = new ArrayList<>(messages.subList(0, endIdx));
         List<ChatMessage> remaining = new ArrayList<>(messages.subList(endIdx, messages.size()));
 
-        // ── 调用 LLM 生成摘要 ──
         String summary;
         try {
             summary = summarize(toCompress);
-        } catch (Exception e) {
-            log.warn("上下文压缩 LLM 调用失败: {}，跳过本次压缩", e.getMessage());
-            return messages;
+        } catch (RuntimeException e) {
+            recordTelemetry("compression.failed");
+            log.warn("上下文压缩失败，保留原上下文: memoryId={}, errorType={}",
+                    safeMemoryId(memoryId), rootCauseType(e));
+            return CompressionResult.failed(messages);
         }
-        if (summary == null || summary.isBlank()) return messages;
+        if (summary == null || summary.isBlank()) {
+            recordTelemetry("compression.failed");
+            log.warn("上下文压缩返回空摘要，保留原上下文: memoryId={}",
+                    safeMemoryId(memoryId));
+            return CompressionResult.failed(messages);
+        }
 
-        // ── 构建压缩后的消息列表 ──
-        int savedTokens = currentTokens - tokenEstimator.estimateTokenCountInMessages(remaining)
-                - tokenEstimator.estimateTokenCountInText(summary);
-        log.info("上下文压缩完成: memoryId 从 {}→{} token, 压缩 {} 条消息→{} 字符摘要, 节省约 {}K token",
-                extractMemoryIdForLog(messages), savedTokens,
-                toCompress.size(), summary.length(), savedTokens / 1000);
-
-        List<ChatMessage> result = new ArrayList<>();
-        result.add(new SystemMessage("[历史摘要]\n" + summary));
+        SystemMessage summaryMessage = new SystemMessage("[历史摘要]\n" + summary.trim());
+        List<ChatMessage> result = new ArrayList<>(remaining.size() + 1);
+        result.add(summaryMessage);
         result.addAll(remaining);
-        return result;
+
+        int afterTokens = tokenEstimator.estimateTokenCountInMessages(result);
+        int savedTokens = Math.max(0, currentTokens - afterTokens);
+        log.info("上下文压缩完成: memoryId={}, beforeTokens={}, afterTokens={}, "
+                        + "messages={}→{}, summarizedMessages={}, savedTokens={}",
+                safeMemoryId(memoryId), currentTokens, afterTokens,
+                messages.size(), result.size(), endIdx, savedTokens);
+        recordTelemetry("compression.succeeded");
+
+        return CompressionResult.compressed(
+                result, summaryMessage, endIdx, currentTokens, afterTokens);
     }
 
-    /**
-     * 调用非流式 LLM 将消息段总结为精炼摘要。
-     */
+    /** 调用非流式 LLM 将消息段总结为精炼摘要。 */
     private String summarize(List<ChatMessage> messages) {
         StringBuilder input = new StringBuilder("请将以下对话历史压缩为精炼的技术摘要，保留以下关键信息：\n");
         input.append("- puppet 目标的操作系统、中间件、核心服务版本\n");
@@ -143,13 +293,13 @@ public class ContextCompressionService {
         input.append("- 失败尝试和错误原因\n\n");
         input.append("只输出摘要正文，不要加解释性前缀。\n\n---\n\n");
 
-        int msgCount = 0;
-        for (ChatMessage msg : messages) {
-            if (msgCount >= MAX_MESSAGES_PER_COMPRESSION) break;
-            String text = messageToText(msg);
+        int messageCount = 0;
+        for (ChatMessage message : messages) {
+            if (messageCount >= MAX_MESSAGES_PER_COMPRESSION) break;
+            String text = messageToText(message);
             if (!text.isBlank()) {
-                input.append(text).append("\n");
-                msgCount++;
+                input.append(text).append('\n');
+                messageCount++;
             }
         }
 
@@ -162,49 +312,148 @@ public class ContextCompressionService {
             var response = chatModel.chat(
                     dev.langchain4j.model.chat.request.ChatRequest.builder()
                             .messages(new SystemMessage(
-                                    "你是一名后渗透侦察信息压缩专家。请将以下对话历史提炼为最关键的技术信息摘要。"),
+                                            "你是一名后渗透侦察信息压缩专家。请将以下对话历史提炼为最关键的技术信息摘要。"),
                                     UserMessage.from(userInput))
                             .build());
             var aiMessage = response.aiMessage();
             return aiMessage != null ? aiMessage.text() : "";
         } catch (Exception e) {
-            throw new RuntimeException("上下文压缩 LLM 调用失败", e);
+            throw new IllegalStateException("context compression model call failed", e);
         }
     }
 
-    /** 将单条消息转为可读文本，用于拼装压缩输入。 */
-    private String messageToText(ChatMessage msg) {
-        if (msg instanceof SystemMessage sm) return sm.text();
-        if (msg instanceof UserMessage um) {
-            String text = "";
-            for (var c : um.contents()) {
-                if (c instanceof dev.langchain4j.data.message.TextContent tc) text += tc.text();
-            }
-            return text;
-        }
-        if (msg instanceof dev.langchain4j.data.message.AiMessage am) {
-            if (am.text() != null && !am.text().isBlank()) return am.text();
-        }
-        if (msg instanceof dev.langchain4j.data.message.ToolExecutionResultMessage trm) {
-            String text = trm.text();
-            if (text != null && text.length() > 500) text = text.substring(0, 500) + "...";
-            return "工具结果(" + trm.toolName() + "): " + text;
-        }
-        return msg.toString();
-    }
-
-    /** 从消息列表中提取 memoryId 用于日志（取第一条用户消息截断）。 */
-    private String extractMemoryIdForLog(List<ChatMessage> messages) {
-        for (ChatMessage msg : messages) {
-            if (msg instanceof UserMessage um) {
-                for (var c : um.contents()) {
-                    if (c instanceof dev.langchain4j.data.message.TextContent tc) {
-                        String t = tc.text();
-                        return t.length() > 40 ? t.substring(0, 40) + "..." : t;
-                    }
+    private String messageToText(ChatMessage message) {
+        if (message instanceof SystemMessage systemMessage) return systemMessage.text();
+        if (message instanceof UserMessage userMessage) {
+            StringBuilder text = new StringBuilder();
+            for (var content : userMessage.contents()) {
+                if (content instanceof dev.langchain4j.data.message.TextContent textContent) {
+                    text.append(textContent.text());
                 }
             }
+            return text.toString();
         }
-        return "unknown";
+        if (message instanceof dev.langchain4j.data.message.AiMessage aiMessage) {
+            if (aiMessage.text() != null && !aiMessage.text().isBlank()) return aiMessage.text();
+        }
+        if (message instanceof dev.langchain4j.data.message.ToolExecutionResultMessage toolResult) {
+            String text = toolResult.text();
+            if (text != null && text.length() > 500) text = text.substring(0, 500) + "...";
+            return "工具结果(" + toolResult.toolName() + "): " + text;
+        }
+        return message.toString();
+    }
+
+    private Object lockFor(String memoryId) {
+        int hash = memoryId == null ? 0 : memoryId.hashCode();
+        return compressionLocks[Math.floorMod(hash, compressionLocks.length)];
+    }
+
+    private void recordTelemetry(String event) {
+        if (telemetryRegistry != null) telemetryRegistry.recordRuntimeEvent(event);
+    }
+
+    private static List<CompressionCheckpoint.DurableMessage> durableMessages(
+            List<ChatMessage> messages) {
+        List<CompressionCheckpoint.DurableMessage> durable = new ArrayList<>();
+        for (ChatMessage message : messages) {
+            CompressionCheckpoint.DurableMessage item =
+                    CompressionCheckpoint.durableMessage(message);
+            if (item != null) durable.add(item);
+        }
+        return durable;
+    }
+
+    private static List<ConversationMessage> visibleMessages(
+            List<ConversationMessage> messages) {
+        if (messages == null || messages.isEmpty()) return List.of();
+        return messages.stream()
+                .filter(message -> message != null
+                        && message.sequence() != null
+                        && CompressionCheckpoint.durableMessage(
+                                message.role(), message.content()) != null)
+                .toList();
+    }
+
+    private static int durableSuffixPrefixOverlap(
+            List<ConversationMessage> stored,
+            List<CompressionCheckpoint.DurableMessage> current) {
+        int max = Math.min(stored.size(), current.size());
+        for (int length = max; length > 0; length--) {
+            int storedOffset = stored.size() - length;
+            boolean matches = true;
+            for (int i = 0; i < length; i++) {
+                CompressionCheckpoint.DurableMessage storedMessage =
+                        CompressionCheckpoint.durableMessage(
+                                stored.get(storedOffset + i).role(),
+                                stored.get(storedOffset + i).content());
+                if (storedMessage == null
+                        || !storedMessage.fingerprint().equals(current.get(i).fingerprint())) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return length;
+        }
+        return 0;
+    }
+
+    private static long requireSequence(ConversationMessage message) {
+        if (message == null || message.sequence() == null) {
+            throw new IllegalStateException("committed message sequence is missing");
+        }
+        return message.sequence();
+    }
+
+    private static String threadIdFromMemoryId(String memoryId) {
+        if (memoryId == null) return "";
+        int separator = memoryId.lastIndexOf(':');
+        return separator >= 0 && separator < memoryId.length() - 1
+                ? memoryId.substring(separator + 1)
+                : memoryId;
+    }
+
+    private static String safeMemoryId(String memoryId) {
+        if (memoryId == null || memoryId.isBlank()) return "unknown";
+        String sanitized = memoryId.replace('\n', '_').replace('\r', '_');
+        return sanitized.length() > 96 ? sanitized.substring(0, 96) + "..." : sanitized;
+    }
+
+    private static String rootCauseType(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current.getClass().getSimpleName();
+    }
+
+    public record CompressionResult(
+            List<ChatMessage> messages,
+            SystemMessage summaryMessage,
+            int compressedMessageCount,
+            int beforeTokens,
+            int afterTokens,
+            boolean attempted,
+            boolean succeeded) {
+
+        static CompressionResult unchanged(List<ChatMessage> messages) {
+            return new CompressionResult(messages, null, 0, 0, 0, false, false);
+        }
+
+        static CompressionResult failed(List<ChatMessage> messages) {
+            return new CompressionResult(messages, null, 0, 0, 0, true, false);
+        }
+
+        static CompressionResult compressed(List<ChatMessage> messages,
+                                            SystemMessage summaryMessage,
+                                            int compressedMessageCount,
+                                            int beforeTokens,
+                                            int afterTokens) {
+            return new CompressionResult(messages, summaryMessage, compressedMessageCount,
+                    beforeTokens, afterTokens, true, true);
+        }
+    }
+
+    record RestoredCheckpoint(SystemMessage summaryMessage, int summarizedSourceCount) {
     }
 }

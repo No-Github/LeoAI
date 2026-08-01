@@ -54,8 +54,9 @@ public class SkillFileService {
             "gitignore", "dockerignore", "editorconfig"
     );
 
-    /** SKILL.md 是必需文件，禁止删除。 */
+    /** SKILL.md 与 manifest.yaml 是必需文件，禁止删除或重命名。 */
     public static final String SKILL_FILE = "SKILL.md";
+    public static final String MANIFEST_FILE = "manifest.yaml";
 
     /**
      * 列出 skill 目录下所有文件（深度限制 {@link #MAX_DEPTH}），按路径升序。
@@ -163,8 +164,8 @@ public class SkillFileService {
      * 文件不存在不报错。
      */
     public void deleteFile(Path skillDir, String relativePath) throws IOException {
-        if (SKILL_FILE.equalsIgnoreCase(relativePath.replace('\\', '/'))) {
-            throw new SkillFileException("SKILL.md 不可删除（请使用整 skill 删除接口）");
+        if (isRequiredMetadataFile(relativePath)) {
+            throw new SkillFileException("SKILL.md 和 manifest.yaml 不可删除（请使用整 skill 删除接口）");
         }
         Path target = resolveSafe(skillDir, relativePath);
         if (Files.isDirectory(target)) {
@@ -190,8 +191,8 @@ public class SkillFileService {
      * 重命名/移动文件或目录。SKILL.md 禁止重命名。
      */
     public void moveFile(Path skillDir, String fromPath, String toPath) throws IOException {
-        if (SKILL_FILE.equalsIgnoreCase(fromPath.replace('\\', '/'))) {
-            throw new SkillFileException("SKILL.md 不可重命名");
+        if (isRequiredMetadataFile(fromPath)) {
+            throw new SkillFileException("SKILL.md 和 manifest.yaml 不可重命名");
         }
         Path src = resolveSafe(skillDir, fromPath);
         Path dst = resolveSafe(skillDir, toPath);
@@ -227,6 +228,14 @@ public class SkillFileService {
             throw new SkillFileException("path 越界");
         }
         return target;
+    }
+
+    public static boolean isRequiredMetadataFile(String relativePath) {
+        if (relativePath == null) return false;
+        String normalized = relativePath.replace('\\', '/').trim();
+        while (normalized.startsWith("./")) normalized = normalized.substring(2);
+        return SKILL_FILE.equalsIgnoreCase(normalized)
+                || MANIFEST_FILE.equalsIgnoreCase(normalized);
     }
 
     /**

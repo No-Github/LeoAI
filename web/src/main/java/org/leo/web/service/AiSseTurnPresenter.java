@@ -159,7 +159,7 @@ public class AiSseTurnPresenter {
                 AiTurnTransaction.CompletedTurn completed) throws Exception {
             context.beforeCompleted().run();
             context.refreshRuntime().run();
-            transport.emitStatus(STATUS_COMPLETED);
+            transport.emitStatus(context.runtime().getRunStatus());
             transport.emitSafely("turn", turnEvent(completed));
             AiControllerUtil.safeComplete(context.emitter());
         }

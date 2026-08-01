@@ -23,6 +23,8 @@ public class AiTurnTelemetryRegistry {
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LongAdder> errorCategories =
             new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LongAdder> runtimeEvents =
+            new ConcurrentHashMap<>();
     private final LongAdder completedTurns = new LongAdder();
     private final LongAdder totalDurationMs = new LongAdder();
     private final LongAccumulator maxDurationMs =
@@ -58,10 +60,16 @@ public class AiTurnTelemetryRegistry {
         result.put("maxDurationMs", maxDurationMs.get());
         result.put("outcomes", counterSnapshot(outcomes));
         result.put("errorCategories", counterSnapshot(errorCategories));
+        result.put("runtimeEvents", counterSnapshot(runtimeEvents));
         synchronized (recent) {
             result.put("recent", new ArrayList<>(recent));
         }
         return result;
+    }
+
+    public void recordRuntimeEvent(String event) {
+        if (event == null || event.isBlank()) return;
+        runtimeEvents.computeIfAbsent(event, ignored -> new LongAdder()).increment();
     }
 
     private Map<String, Long> counterSnapshot(

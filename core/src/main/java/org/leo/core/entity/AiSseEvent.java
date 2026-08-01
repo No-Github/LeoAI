@@ -7,7 +7,6 @@ package org.leo.core.entity;
  * <ul>
  *   <li>{@code node}    — 节点事件，payload 含 {@code kind} 字段（thinking / tool / plan / subtask）</li>
  *   <li>{@code patch}   — 节点补丁，payload 含 {@code kind} 字段（tool 更新结果）</li>
- *   <li>{@code confirm} — 工具确认请求（{@link AiConfirmationRequest}）</li>
  *   <li>{@code status}  — 任务状态文本（{@link String}）</li>
  *   <li>{@code warn}    — 系统告警文本（{@link String}）</li>
  *   <li>{@code subagent} — 子 Agent 派发事件（序列化的 AiSubagentInvocation）</li>

@@ -57,7 +57,7 @@ class PlatformPuppetAiBridgeToolsTest {
         PuppetNodeSessionContainer.addSession(session.getSessionId(), session);
 
         when(fixture.puppetAiService.createChildThread(
-                eq(session), any(), eq(7), eq("auto"), eq(PARENT_THREAD_ID)))
+                eq(session), any(), eq(7), eq(PARENT_THREAD_ID)))
                 .thenAnswer(invocation -> {
                     var thread = session.createAiThread("child-1", "child");
                     thread.setParentThreadId(PARENT_THREAD_ID);

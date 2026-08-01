@@ -247,9 +247,8 @@ public class ControllerUtil {
     /**
      * 将执行上下文注入本轮用户消息，为 Agent 提供身份和权限范围说明。
      *
-     * <p>确认流程由平台拦截器统一管控（前端弹窗），AI 对此完全无感知，
-     * 工具调用结果对 AI 是透明的：放行时正常返回，拒绝时返回 user_rejected 信号。
-     * 因此提示词中无需包含任何让 AI 主动请求用户确认的指令。
+     * <p>真实权限由服务端工具授权层强制执行。提示词只用于帮助模型选择合理工具，
+     * 不能扩大当前用户的角色或资源访问范围。
      */
     public static String buildAiPolicyPrompt(AiExecutionPolicy policy, String message) {
         AiExecutionPolicy safePolicy = policy != null ? policy : AiExecutionPolicy.defaultPolicy();
@@ -265,7 +264,7 @@ public class ControllerUtil {
                 执行规范：
                 1. 信息收集、只读分析、侦察类操作：直接调用工具执行，不要等待用户二次确认。
                 2. 高影响操作（命令执行、文件写入、扫描、数据库写入、脚本、插件调用、容器卸载、平台配置变更）：
-                   直接调用对应工具，平台会在必要时自动向用户请求确认，无需在回复中等待用户文字指令。
+                   只能调用当前工具列表中已授权的能力；若工具返回权限不足，立即停止重试并向用户说明。
                 3. 任何操作都只能在当前角色权限和用户明确目标范围内执行。
                 4. 如果这是多步任务，先用自然语言简短说明当前阶段，再直接行动；不要固定写成模板化的计划清单。
 

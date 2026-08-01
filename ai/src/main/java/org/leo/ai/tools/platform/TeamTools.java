@@ -5,6 +5,7 @@ import org.leo.core.entity.User;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,6 +20,7 @@ import java.util.Map;
  * 只有 admin 可创建/删除团队；内置团队 system-admin 不可删除。
  */
 @Component("platformTeamTools")
+@AiToolAccess(AiToolAccess.Level.ADMIN)
 public class TeamTools {
 
     private final TeamService teamService;

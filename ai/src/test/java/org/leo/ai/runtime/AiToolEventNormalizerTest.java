@@ -71,4 +71,38 @@ class AiToolEventNormalizerTest {
         assertFalse(arguments.contains("url-secret"));
         assertEquals(true, arguments.contains("***"));
     }
+
+    @Test
+    void exposesProtocolProtectionMetadataForTraceAndSse() {
+        ToolExecution execution = ToolExecution.builder()
+                .request(ToolExecutionRequest.builder()
+                        .id("call-timeout")
+                        .name("getSlow")
+                        .arguments("{}")
+                        .build())
+                .result(ToolExecutionResult.builder()
+                        .resultText("""
+                                {"ok":false,"protocol":"leo.tool.error.v1",
+                                "code":"TOOL_TIMEOUT","retryable":true,
+                                "metadata":{"operation":"READ_ONLY","timeoutMs":50,
+                                "recoverableBy":"MODEL","attempt":1,"maxAttempts":3}}
+                                """)
+                        .isError(true)
+                        .build())
+                .startTime(LocalDateTime.now().minusNanos(50_000_000))
+                .finishTime(LocalDateTime.now())
+                .invocationContext(InvocationContext.builder()
+                        .chatMemoryId("memory-1")
+                        .build())
+                .build();
+
+        Map<String, Object> event = AiToolEventNormalizer.completed(execution);
+
+        assertEquals("TOOL_TIMEOUT", event.get("code"));
+        assertEquals(true, event.get("retryable"));
+        assertEquals("READ_ONLY", event.get("operation"));
+        assertEquals(50, event.get("timeoutMs"));
+        assertEquals("MODEL", event.get("recoverableBy"));
+        assertEquals(1, event.get("attempt"));
+    }
 }

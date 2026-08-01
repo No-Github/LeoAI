@@ -46,8 +46,10 @@ public class SessionTools {
             - append: 把 content 追加到摘要末尾（推荐方式，用于增量记录新发现）。
 
             重要规则：
-            - 不要主动脱敏凭据 / Token / 密钥 / 证书路径，按原文保存
-            - content 应为 Markdown 格式，append 示例: "## 新发现\\n- 凭据 user:pass\\n- 端口 8080 暴露"
+            - 默认不要保存完整密码、Token、Cookie、私钥正文等秘密值；保存掩码、指纹、来源路径和用途
+            - 用户明确要求保留某一秘密原值时，只记录用户指定的最小范围，并在写入前说明摘要会长期保存该内容
+            - 证书、公钥和凭据文件路径可按原文保存，但要避免把路径误当成秘密正文
+            - content 应为 Markdown 格式，append 示例: "## 新发现\\n- 凭据 DB_PASSWORD: ab****yz（来源 env）\\n- 端口 8080 暴露"
             - 当摘要超过阈值时，append 会自动触发 AI 整理压缩
             """)
     public Map<String, Object> manageReconSummary(

@@ -1,0 +1,93 @@
+package org.leo.core.entity;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class AiPlanTest {
+
+    @Test
+    void dependencyMustBeCompletedRatherThanMerelyTerminated() {
+        AiPlan plan = new AiPlan("test", "goal", List.of(
+                step(0, null, 1, List.of()),
+                step(1, null, 1, List.of(0))));
+
+        assertTrue(plan.startStep(0));
+        assertTrue(plan.failStep(0, "failed"));
+
+        assertFalse(plan.startStep(1));
+    }
+
+    @Test
+    void cannotCompletePlanWhileStepsAreStillActive() {
+        AiPlan plan = new AiPlan("test", "goal", List.of(
+                step(0, null, 1, List.of())));
+
+        assertThrows(IllegalStateException.class,
+                () -> plan.complete("too early"));
+    }
+
+    @Test
+    void reconcilesSuccessfulAndFailedTerminalStates() {
+        AiPlan successful = new AiPlan("success", "goal", List.of(
+                step(0, null, 1, List.of())));
+        assertTrue(successful.startStep(0));
+        assertTrue(successful.completeStep(0, "done"));
+        assertEquals(AiPlanStatus.COMPLETED, successful.getStatus());
+
+        AiPlan failed = new AiPlan("failed", "goal", List.of(
+                step(0, null, 0, List.of())));
+        assertTrue(failed.startStep(0));
+        assertTrue(failed.failStep(0, "boom"));
+        failed.complete("finished with failure");
+        assertEquals(AiPlanStatus.FAILED, failed.getStatus());
+    }
+
+    @Test
+    void enforcesRetryLimitAndTracksAttempts() {
+        AiPlan plan = new AiPlan("retry", "goal", List.of(
+                step(0, null, 1, List.of())));
+
+        assertTrue(plan.startStep(0));
+        assertTrue(plan.failStep(0, "first"));
+        assertTrue(plan.startStep(0));
+        assertTrue(plan.failStep(0, "second"));
+        assertFalse(plan.startStep(0));
+        assertEquals(2, plan.getStep(0).getAttemptCount());
+    }
+
+    @Test
+    void requiresEvidenceWhenSuccessCriteriaIsDeclared() {
+        AiPlan plan = new AiPlan("criteria", "goal", List.of(
+                step(0, "返回主机列表", 1, List.of())));
+
+        assertTrue(plan.startStep(0));
+        assertFalse(plan.completeStep(0, null));
+        assertTrue(plan.completeStep(0, "发现 3 台主机"));
+    }
+
+    @Test
+    void marksExpiredInProgressStepAsFailed() throws Exception {
+        AiPlan plan = new AiPlan("timeout", "goal", List.of(
+                step(0, null, 0, List.of())));
+        plan.setStepTimeoutMs(1);
+        assertTrue(plan.startStep(0));
+
+        Thread.sleep(5L);
+
+        assertEquals(1, plan.checkStepTimeouts());
+        assertEquals(AiStepStatus.FAILED, plan.getStep(0).getStatus());
+        assertEquals(AiPlanStatus.FAILED, plan.getStatus());
+    }
+
+    private static AiPlanStep step(int index, String successCriteria,
+                                   int maxRetries, List<Integer> dependsOn) {
+        return new AiPlanStep(index, "step-" + index,
+                null, false, successCriteria, maxRetries, dependsOn);
+    }
+}

@@ -63,17 +63,7 @@ public class PlatformPlanTools {
                     "将 action 改为 start、complete、fail 或 skip。");
         };
         if (!updated) {
-            if ("start".equals(normalizedAction)
-                    && plan.getSteps().stream().anyMatch(step -> step.getIndex() == stepIndex)) {
-                throw AiToolException.modelCorrectable(
-                        "PLAN_DEPENDENCY_INCOMPLETE",
-                        "步骤 " + stepIndex + " 的依赖步骤尚未完成，无法启动。",
-                        "先完成 dependsOn 依赖步骤，再重新启动该步骤。");
-            }
-            throw AiToolException.modelCorrectable(
-                    "PLAN_STEP_NOT_FOUND",
-                    "未找到指定步骤: " + stepIndex,
-                    "检查当前计划中的步骤索引后重新调用。");
+            throw transitionError(plan, stepIndex, normalizedAction, text);
         }
         state.notifyPlanUpdated();
         return success(plan);
@@ -83,7 +73,14 @@ public class PlatformPlanTools {
     public Map<String, Object> completePlan(@P("最终结论") String finalSummary) {
         PlatformAiState state = requireState();
         AiPlan plan = requirePlan(state);
-        plan.complete(finalSummary);
+        try {
+            plan.complete(finalSummary);
+        } catch (IllegalStateException error) {
+            throw AiToolException.modelCorrectable(
+                    "PLAN_STEPS_ACTIVE",
+                    error.getMessage(),
+                    "先将所有 PENDING/IN_PROGRESS 步骤完成、失败或跳过，再结束计划。");
+        }
         state.notifyPlanUpdated();
         return success(plan);
     }
@@ -109,6 +106,44 @@ public class PlatformPlanTools {
                     "先调用 createPlan 创建计划，再操作计划步骤。");
         }
         return plan;
+    }
+
+    private static AiToolException transitionError(
+            AiPlan plan, int stepIndex, String action, String text) {
+        AiPlanStep step = plan.getStep(stepIndex);
+        if (step == null) {
+            return AiToolException.modelCorrectable(
+                    "PLAN_STEP_NOT_FOUND",
+                    "未找到指定步骤: " + stepIndex,
+                    "检查当前计划中的步骤索引后重新调用。");
+        }
+        if ("start".equals(action)) {
+            if (step.getStatus() == org.leo.core.entity.AiStepStatus.FAILED
+                    && !step.canStart()) {
+                return AiToolException.modelCorrectable(
+                        "PLAN_RETRY_EXHAUSTED",
+                        "步骤 " + stepIndex + " 已达到最大重试次数。",
+                        "不要再次启动；请结束失败计划并在最终结论中说明原因。");
+            }
+            return AiToolException.modelCorrectable(
+                    "PLAN_DEPENDENCY_INCOMPLETE",
+                    "步骤 " + stepIndex + " 的依赖步骤尚未成功完成，无法启动。",
+                    "dependsOn 中的步骤必须为 COMPLETED；失败或跳过不视为满足依赖。");
+        }
+        if ("complete".equals(action)
+                && step.getSuccessCriteria() != null
+                && !step.getSuccessCriteria().isBlank()
+                && (text == null || text.isBlank())) {
+            return AiToolException.modelCorrectable(
+                    "PLAN_SUCCESS_EVIDENCE_REQUIRED",
+                    "步骤 " + stepIndex + " 定义了成功标准，完成时必须提供结果摘要。",
+                    "在 resultText 中写明满足 successCriteria 的实际证据。");
+        }
+        return AiToolException.modelCorrectable(
+                "PLAN_INVALID_TRANSITION",
+                "步骤 " + stepIndex + " 当前状态为 " + step.getStatus()
+                        + "，不能执行 " + action + "。",
+                "先按 PENDING → IN_PROGRESS → COMPLETED/FAILED 的顺序更新；skip 可用于放弃未完成步骤。");
     }
 
     private static Map<String, Object> success(AiPlan plan) {

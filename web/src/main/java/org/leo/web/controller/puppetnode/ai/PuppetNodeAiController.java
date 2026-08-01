@@ -1,7 +1,6 @@
 package org.leo.web.controller.puppetnode.ai;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.leo.ai.tools.puppetnode.PlanTools;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.session.AiThread;
@@ -33,18 +32,15 @@ import java.util.concurrent.RejectedExecutionException;
 public class PuppetNodeAiController {
 
     private final PuppetNodeAiThreadService aiThreadService;
-    private final PlanTools planTools;
     private final AiEventSubscriptionService eventSubscriptionService;
     private final AiTurnProtocolService turnProtocolService;
     private final AiTurnQueueService turnQueueService;
 
     public PuppetNodeAiController(PuppetNodeAiThreadService aiThreadService,
-                                  PlanTools planTools,
                                   AiEventSubscriptionService eventSubscriptionService,
                                   AiTurnProtocolService turnProtocolService,
                                   AiTurnQueueService turnQueueService) {
         this.aiThreadService = aiThreadService;
-        this.planTools = planTools;
         this.eventSubscriptionService = eventSubscriptionService;
         this.turnProtocolService = turnProtocolService;
         this.turnQueueService = turnQueueService;
@@ -82,13 +78,14 @@ public class PuppetNodeAiController {
                 AiTurnCommandPayload.SCOPE_PUPPET, sessionId,
                 message, guardedMessage, body.configId(),
                 body.reasoningEffort(),
-                AiAttachmentPrompt.metadata(body.attachments()), policy);
+                AiAttachmentPrompt.metadata(body.attachments()), policy)
+                .answerTo(body.answerToQuestionId());
         AiTurnProtocolService.Reservation reservation;
         try {
             reservation = turnProtocolService.begin(
                     threadId, body.clientUserMessageId(),
                     command.getScope(), command.toJson(),
-                    message, body.attachments());
+                    message, body.attachments(), body.answerToQuestionId());
         } catch (RuntimeException error) {
             throw ApiException.badRequest(error.getMessage());
         }
@@ -153,15 +150,14 @@ public class PuppetNodeAiController {
      * 创建新的 AI 对话线程。
      *
      * @param params {@code sessionId}, {@code title}（可选）
-     * @return {@code threadId}, {@code reconSummaryLoaded}, {@code grantedTypesCount}
+     * @return {@code threadId}, {@code reconSummaryLoaded}
      */
     @RequestMapping("/thread/create")
     public HashMap<String, Object> createThread(@RequestBody AiThreadCreateRequest body) {
         PuppetNodeSession session = requiredSession(body != null ? body.sessionId() : null);
         String title = body != null ? body.title() : null;
         Integer configId = body != null ? body.configId() : null;
-        String mode = body != null ? body.mode() : null;
-        return ApiResponse.success(aiThreadService.createThread(session, title, configId, mode));
+        return ApiResponse.success(aiThreadService.createThread(session, title, configId));
     }
 
     /**
@@ -258,14 +254,6 @@ public class PuppetNodeAiController {
         return ApiResponse.success(true);
     }
 
-    @RequestMapping("/thread/switchMode")
-    public HashMap<String, Object> switchMode(@RequestBody AiThreadModeRequest body) {
-        PuppetNodeSession session = requiredSession(body != null ? body.sessionId() : null);
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
-        String mode = body != null ? body.mode() : null;
-        return ApiResponse.success(aiThreadService.switchMode(session, threadId, mode));
-    }
-
     // ─── 任务计划查询 ─────────────────────────────────────────────────────────
 
     /**
@@ -294,25 +282,6 @@ public class PuppetNodeAiController {
         AiThread thread = aiThreadService.requireThread(session, threadId);
         List<AiPlan> history = thread.getPlanHistory();
         return ApiResponse.success(history);
-    }
-
-    // ─── 计划预批准 ─────────────────────────────────────────────────────────
-
-    /**
-     * 预批准指定计划步骤，步骤执行时高影响工具调用跳过用户确认。
-     *
-     * @param body {@code sessionId}, {@code threadId}, {@code stepIndex}（null 则预批准全部）
-     */
-    @RequestMapping("/plan/preApprove")
-    public HashMap<String, Object> preApprovePlanStep(@RequestBody AiPlanPreApproveRequest body) {
-        String sessionId = requiredText(body != null ? body.sessionId() : null, "缺少 sessionId");
-        String threadId = requiredText(body != null ? body.threadId() : null, "缺少 threadId");
-        requiredSession(sessionId);
-        if (body.stepIndex() != null) {
-            return ApiResponse.success(planTools.preApproveStep(sessionId, threadId, body.stepIndex()));
-        } else {
-            return ApiResponse.success(planTools.preApproveAllSteps(sessionId, threadId));
-        }
     }
 
     private PuppetNodeSession requiredSession(String sessionId) {

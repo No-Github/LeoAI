@@ -1,8 +1,13 @@
 package org.leo.ai.runtime;
 
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.TokenUsage;
+import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import org.leo.core.util.json.JsonUtil;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -20,6 +25,8 @@ public final class AiTurnTrace {
     private final String conversationId;
     private final long startedAt;
     private final LinkedHashMap<String, Long> checkpoints = new LinkedHashMap<>();
+    private final List<Map<String, Object>> toolExecutions = new ArrayList<>();
+    private final LinkedHashMap<String, Object> modelUsage = new LinkedHashMap<>();
     private final AtomicBoolean recorded = new AtomicBoolean(false);
 
     private String turnId;
@@ -72,6 +79,45 @@ public final class AiTurnTrace {
         this.errorMessage = blankToNull(errorMessage);
     }
 
+    public synchronized void recordEvent(AiTurnEvent event) {
+        if (event == null || event.type() != AiTurnEvent.Type.TOOL_COMPLETED
+                || !(event.data() instanceof Map<?, ?> raw)) {
+            return;
+        }
+        Map<String, Object> tool = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+            tool.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        toolExecutions.add(tool);
+    }
+
+    public synchronized void recordModelResponse(ChatResponse response) {
+        if (response == null) return;
+        if (response.id() != null) modelUsage.put("responseId", response.id());
+        if (response.modelName() != null) modelUsage.put("model", response.modelName());
+        if (response.finishReason() != null) {
+            modelUsage.put("finishReason", response.finishReason().name().toLowerCase());
+        }
+        TokenUsage usage = response.tokenUsage();
+        if (usage != null) {
+            modelUsage.put("inputTokens", usage.inputTokenCount());
+            modelUsage.put("outputTokens", usage.outputTokenCount());
+            modelUsage.put("totalTokens", usage.totalTokenCount());
+            if (usage instanceof OpenAiTokenUsage openaiUsage) {
+                if (openaiUsage.inputTokensDetails() != null
+                        && openaiUsage.inputTokensDetails().cachedTokens() != null) {
+                    modelUsage.put("cachedInputTokens",
+                            openaiUsage.inputTokensDetails().cachedTokens());
+                }
+                if (openaiUsage.outputTokensDetails() != null
+                        && openaiUsage.outputTokensDetails().reasoningTokens() != null) {
+                    modelUsage.put("reasoningTokens",
+                            openaiUsage.outputTokensDetails().reasoningTokens());
+                }
+            }
+        }
+    }
+
     public synchronized Map<String, Object> eventPayload() {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("traceId", traceId);
@@ -92,6 +138,8 @@ public final class AiTurnTrace {
         if (errorMessage != null) result.put("errorMessage", errorMessage);
         result.put("checkpoints", new LinkedHashMap<>(checkpoints));
         result.put("phaseDurations", phaseDurations());
+        if (!modelUsage.isEmpty()) result.put("modelUsage", new LinkedHashMap<>(modelUsage));
+        result.put("toolMetrics", toolMetrics());
         return result;
     }
 
@@ -154,6 +202,43 @@ public final class AiTurnTrace {
             previousOffset = entry.getValue();
         }
         return phases;
+    }
+
+    private Map<String, Object> toolMetrics() {
+        Map<String, Object> metrics = new LinkedHashMap<>();
+        long totalDurationMs = 0L;
+        int successCount = 0;
+        int failureCount = 0;
+        int timeoutCount = 0;
+        int truncatedCount = 0;
+        int deduplicatedCount = 0;
+        int retryableFailureCount = 0;
+        int maxAttempt = 0;
+        for (Map<String, Object> tool : toolExecutions) {
+            Object duration = tool.get("durationMs");
+            if (duration instanceof Number number) totalDurationMs += number.longValue();
+            if (Boolean.FALSE.equals(tool.get("success"))) failureCount++;
+            else successCount++;
+            String code = tool.get("code") != null ? String.valueOf(tool.get("code")) : "";
+            if (code.contains("TIMEOUT")) timeoutCount++;
+            if (Boolean.TRUE.equals(tool.get("truncated"))) truncatedCount++;
+            if (Boolean.TRUE.equals(tool.get("deduplicated"))) deduplicatedCount++;
+            if (Boolean.TRUE.equals(tool.get("retryable"))) retryableFailureCount++;
+            if (tool.get("attempt") instanceof Number attempt) {
+                maxAttempt = Math.max(maxAttempt, attempt.intValue());
+            }
+        }
+        metrics.put("count", toolExecutions.size());
+        metrics.put("successCount", successCount);
+        metrics.put("failureCount", failureCount);
+        metrics.put("totalDurationMs", totalDurationMs);
+        metrics.put("timeoutCount", timeoutCount);
+        metrics.put("truncatedCount", truncatedCount);
+        metrics.put("deduplicatedCount", deduplicatedCount);
+        metrics.put("retryableFailureCount", retryableFailureCount);
+        metrics.put("maxAttempt", maxAttempt);
+        metrics.put("executions", new ArrayList<>(toolExecutions));
+        return metrics;
     }
 
     private static String requireText(String value, String name) {

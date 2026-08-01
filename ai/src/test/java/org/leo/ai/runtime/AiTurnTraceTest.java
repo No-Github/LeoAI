@@ -1,5 +1,8 @@
 package org.leo.ai.runtime;
 
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -56,5 +59,59 @@ class AiTurnTraceTest {
         assertEquals(1L,
                 ((Map<?, ?>) snapshot.get("errorCategories"))
                         .get("tool_calling"));
+    }
+
+    @Test
+    void persistsModelUsageAndAggregatedToolProtectionMetrics() {
+        AiTurnTrace trace = AiTurnTrace.testTrace(
+                "trace-2", "platform", "thread-2",
+                System.currentTimeMillis());
+        trace.recordModelResponse(ChatResponse.builder()
+                .aiMessage(AiMessage.from("done"))
+                .modelName("test-model")
+                .tokenUsage(new TokenUsage(120, 30, 150))
+                .build());
+        trace.recordEvent(AiTurnEvent.toolCompleted(Map.of(
+                "toolName", "getSlow",
+                "success", false,
+                "durationMs", 50L,
+                "code", "TOOL_TIMEOUT",
+                "retryable", true,
+                "attempt", 2,
+                "truncated", false,
+                "deduplicated", false)));
+        trace.recordEvent(AiTurnEvent.toolCompleted(Map.of(
+                "toolName", "createRecord",
+                "success", true,
+                "durationMs", 10L,
+                "code", "OK",
+                "retryable", false,
+                "attempt", 0,
+                "truncated", true,
+                "deduplicated", true)));
+
+        Map<String, Object> snapshot = trace.snapshot();
+        Map<?, ?> usage = (Map<?, ?>) snapshot.get("modelUsage");
+        Map<?, ?> metrics = (Map<?, ?>) snapshot.get("toolMetrics");
+
+        assertEquals("test-model", usage.get("model"));
+        assertEquals(150, usage.get("totalTokens"));
+        assertEquals(2, metrics.get("count"));
+        assertEquals(60L, metrics.get("totalDurationMs"));
+        assertEquals(1, metrics.get("timeoutCount"));
+        assertEquals(1, metrics.get("truncatedCount"));
+        assertEquals(1, metrics.get("deduplicatedCount"));
+        assertEquals(1, metrics.get("retryableFailureCount"));
+        assertEquals(2, metrics.get("maxAttempt"));
+    }
+
+    @Test
+    void telemetryIncludesCompressionRuntimeEvents() {
+        AiTurnTelemetryRegistry registry = new AiTurnTelemetryRegistry();
+        registry.recordRuntimeEvent("compression.checkpoint_restored");
+        registry.recordRuntimeEvent("compression.checkpoint_restored");
+
+        Map<?, ?> events = (Map<?, ?>) registry.snapshot().get("runtimeEvents");
+        assertEquals(2L, events.get("compression.checkpoint_restored"));
     }
 }

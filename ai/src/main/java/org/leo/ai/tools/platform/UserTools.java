@@ -4,6 +4,7 @@ import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.user.UserService;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -16,11 +17,12 @@ import java.util.UUID;
 /**
  * 平台用户管理 AI 工具。
  *
- * <p>这些工具以平台管理员权限运行，不受前端角色限制。
+ * <p>这些工具只对平台管理员开放，权限由 Agent 工具授权层强制校验。
  * 角色值：admin / leader / normal。
  * 密码以 PBKDF2-SHA256 形式存储，工具层自动处理哈希。
  */
 @Component("platformUserTools")
+@AiToolAccess(AiToolAccess.Level.ADMIN)
 public class UserTools {
 
     private static final String USERNAME_ADMIN = "admin";

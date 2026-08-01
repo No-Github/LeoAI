@@ -8,7 +8,7 @@ public enum AiPlanStatus {
     PLANNING,
     /** 正在执行中 */
     IN_PROGRESS,
-    /** 所有步骤完成，已输出最终结论 */
+    /** 所有步骤已成功完成或明确跳过 */
     COMPLETED,
     /** 执行过程中出现不可恢复的失败 */
     FAILED

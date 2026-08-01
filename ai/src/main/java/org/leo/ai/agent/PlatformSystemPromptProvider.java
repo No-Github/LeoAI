@@ -1,6 +1,5 @@
 package org.leo.ai.agent;
 
-import dev.langchain4j.skills.Skills;
 import org.leo.ai.service.LeoSkillsProvider;
 import org.leo.ai.service.SkillRegistryService;
 import org.springframework.stereotype.Component;
@@ -11,8 +10,8 @@ import org.springframework.stereotype.Component;
  * <p>通过 {@code AgentConfig} 中的 {@code .systemMessageProvider(this::getSystemMessage)}
  * 以方法引用形式注册到 AiServices。
  *
- * <p>Skills 列表通过 {@link LeoSkillsProvider#getSkills(String)} 动态读取，
- * 并使用 {@link Skills#formatAvailableSkills()} 标准格式化，符合 Agent Skills 规范。
+ * <p>Skills 列表通过 {@link LeoSkillsProvider#getFormattedSkills(String)} 动态读取，
+ * 正文由 {@code activate_skill} 按需激活。
  */
 @Component
 public class PlatformSystemPromptProvider {
@@ -46,6 +45,9 @@ public class PlatformSystemPromptProvider {
             4. 对相互独立的工具调用优先并发执行；存在前后依赖的操作保持串行。
             5. 委派前先明确目标 Puppet。目标不清楚时先调用 list_puppet_ai_targets 或查询 Puppet 列表；
                委派完成后根据子 Agent 返回的真实 summary 继续分析，并向用户说明实际执行目标。
+            6. 当缺少会显著改变结果的用户意图，或高风险/破坏性动作需要确认时，
+               调用 request_user_input。能枚举答案时必须提供 2 到 4 个结构化选项（label/value/intent），并将 allowFreeText 设为 false；只有需要用户提供路径、名称、标识或具体描述时才允许 allowFreeText=true。调用后立即停止其他工具并结束本轮，等待用户回答。
+               能通过只读工具查明的信息、低风险可逆操作和普通偏好不要询问。
 
             ReAct 循环：
             - THINK：先在脑中快速判断当前信息缺口和下一步。
@@ -68,7 +70,8 @@ public class PlatformSystemPromptProvider {
             - 包含查询、变更、验证等存在依赖关系的阶段；
             - 用户明确要求先规划再执行。
 
-            创建计划后立即 updatePlanStep(..., "start", null) 启动第一步，不要停下来等待。
+            创建计划后立即 updatePlanStep(..., "start", null) 启动第一步；只有确实触发
+            request_user_input 时才暂停等待用户。
             每一步完成、失败或跳过时及时更新真实结果；全部步骤结束后调用 completePlan 写入最终结论。
             简单单步查询不创建计划。计划用于展示真实进度，不能代替实际工具执行。
 
@@ -91,12 +94,11 @@ public class PlatformSystemPromptProvider {
     // ── 动态部分 ──────────────────────────────────────────────────────────────
 
     private String buildSkillsSection() {
-        Skills skills = skillsProvider.getSkills(SkillRegistryService.SCOPE_PLATFORM);
         StringBuilder sb = new StringBuilder();
         sb.append("════════════════════════════════════════\n");
         sb.append("【可用 Skills】\n");
         sb.append("════════════════════════════════════════\n\n");
-        String formatted = skills.formatAvailableSkills();
+        String formatted = skillsProvider.getFormattedSkills(SkillRegistryService.SCOPE_PLATFORM);
         if (formatted == null || formatted.isBlank()) {
             sb.append("（当前暂无可用 skill）\n");
         } else {

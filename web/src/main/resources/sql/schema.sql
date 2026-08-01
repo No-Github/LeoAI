@@ -294,8 +294,8 @@ CREATE TABLE IF NOT EXISTS ai_threads (
     run_status VARCHAR(32) NOT NULL DEFAULT 'idle',
     parent_thread_id VARCHAR(64),
     profile VARCHAR(64) NOT NULL DEFAULT 'default',
-    mode VARCHAR(16) NOT NULL DEFAULT 'auto',
     context_summary TEXT,
+    context_checkpoint_json TEXT,
     root_plan_id VARCHAR(64),
     FOREIGN KEY (parent_thread_id) REFERENCES ai_threads(thread_id) ON DELETE SET NULL
 );
@@ -325,6 +325,7 @@ CREATE TABLE IF NOT EXISTS ai_turns (
     started_at INTEGER,
     interrupt_requested INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
+    answer_to_question_id VARCHAR(64),
     FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
 );
 
@@ -464,3 +465,37 @@ CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
 
 CREATE INDEX IF NOT EXISTS idx_ai_subagent_parent
     ON ai_subagent_invocations(parent_thread_id, created_at);
+
+-- 22. Agent 等待用户输入记录
+CREATE TABLE IF NOT EXISTS ai_user_input_requests (
+    request_id VARCHAR(64) PRIMARY KEY,
+    thread_id VARCHAR(64) NOT NULL,
+    turn_id VARCHAR(64),
+    item_id VARCHAR(64),
+    request_type VARCHAR(32) NOT NULL
+        CHECK (request_type IN ('CLARIFICATION', 'CONFIRMATION')),
+    prompt TEXT NOT NULL,
+    options_json TEXT,
+    allow_free_text INTEGER NOT NULL DEFAULT 1,
+    action_summary TEXT,
+    tool_name VARCHAR(128),
+    arguments_hash VARCHAR(128),
+    risk VARCHAR(32),
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'ANSWERED', 'CANCELLED', 'EXPIRED')),
+    answer TEXT,
+    created_at INTEGER NOT NULL,
+    answered_at INTEGER,
+    confirmation_consumed_at INTEGER,
+    expires_at INTEGER,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+    FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE SET NULL,
+    FOREIGN KEY (item_id) REFERENCES ai_messages(message_id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
+    ON ai_user_input_requests(thread_id)
+    WHERE status = 'PENDING';
+
+CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
+    ON ai_user_input_requests(thread_id, created_at);

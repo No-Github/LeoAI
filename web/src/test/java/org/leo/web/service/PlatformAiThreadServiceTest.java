@@ -36,7 +36,6 @@ class PlatformAiThreadServiceTest {
                 fixture.service.activateThread(session, user("user-1"), THREAD_ID);
 
         assertEquals(7, state.getAiConfigId());
-        assertEquals("plan", state.getMode());
         verify(session).setAttribute("platformAiStateId", THREAD_ID);
     }
 
@@ -61,7 +60,6 @@ class PlatformAiThreadServiceTest {
         record.setScope(AiConversationStoreService.SCOPE_PLATFORM);
         record.setUserId(ownerId);
         record.setConfigId(7);
-        record.setMode("plan");
         when(conversationStore.findThread(THREAD_ID)).thenReturn(record);
         PlatformAiThreadService service = new PlatformAiThreadService(
                 mock(AiModelConfigService.class), conversationStore,

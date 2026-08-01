@@ -149,6 +149,7 @@ public class AiEventSubscriptionService {
     private boolean isTerminal(String status) {
         return "completed".equals(status)
                 || "failed".equals(status)
-                || "cancelled".equals(status);
+                || "cancelled".equals(status)
+                || "waiting_for_user".equals(status);
     }
 }

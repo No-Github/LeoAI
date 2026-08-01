@@ -78,8 +78,9 @@ public class PlanTools {
         }
 
         boolean ok;
+        String normalizedAction = action == null ? "" : action.trim();
         String text = (resultText == null || resultText.isBlank()) ? null : resultText.trim();
-        switch (action == null ? "" : action.trim()) {
+        switch (normalizedAction) {
             case "start"    -> ok = plan.startStep(stepIndex);
             case "complete" -> ok = plan.completeStep(stepIndex, text);
             case "fail"     -> ok = plan.failStep(stepIndex, text);
@@ -91,20 +92,10 @@ public class PlanTools {
                     "将 action 改为 start、complete、fail 或 skip。");
         }
         if (!ok) {
-            if ("start".equals(action) && plan.getSteps().stream().anyMatch(s -> s.getIndex() == stepIndex)) {
-                throw AiToolException.modelCorrectable(
-                        "PLAN_DEPENDENCY_INCOMPLETE",
-                        "步骤 " + stepIndex
-                                + " 的依赖步骤尚未完成，无法启动。",
-                        "先完成该步骤的 dependsOn 依赖步骤，再重新启动。");
-            }
-            throw AiToolException.modelCorrectable(
-                    "PLAN_STEP_NOT_FOUND",
-                    "未找到指定步骤: " + stepIndex,
-                    "检查当前计划中的步骤索引后重新调用。");
+            throw transitionError(plan, stepIndex, normalizedAction, text);
         }
 
-        emitPlanStep(thread, plan, stepIndex, action, text);
+        emitPlanStep(thread, plan, stepIndex, normalizedAction, text);
         emitPlan(thread, plan, false);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
@@ -126,52 +117,18 @@ public class PlanTools {
                     "当前没有可完成的计划。",
                     "先调用 createPlan 创建计划；如果无需计划，请不要调用 completePlan。");
         }
-        plan.complete(finalSummary);
+        try {
+            plan.complete(finalSummary);
+        } catch (IllegalStateException error) {
+            throw AiToolException.modelCorrectable(
+                    "PLAN_STEPS_ACTIVE",
+                    error.getMessage(),
+                    "先将所有 PENDING/IN_PROGRESS 步骤完成、失败或跳过，再结束计划。");
+        }
         emitPlan(thread, plan, false);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("plan", plan);
-        return result;
-    }
-
-    // ── 计划预批准（供 REST API 调用） ──────────────────────────────────────
-
-    /**
-     * 预批准指定步骤（非 @Tool 方法，仅供 REST 控制器调用）。
-     */
-    public Map<String, Object> preApproveStep(String sessionId, String threadId, int stepIndex) {
-        AiThread thread = resolveThreadByIds(sessionId, threadId);
-        Map<String, Object> result = new LinkedHashMap<>();
-        if (thread == null) return fail(result, "会话或线程不存在");
-        AiPlan plan = thread.getCurrentPlan();
-        if (plan == null) return fail(result, "当前没有活跃计划");
-        int totalSteps = plan.getSteps() == null ? 0 : plan.getSteps().size();
-        if (stepIndex < 0 || stepIndex >= totalSteps) {
-            return fail(result, String.format("步骤序号越界：传入 %d，当前计划共 %d 步", stepIndex, totalSteps));
-        }
-        if (!plan.setStepPreApproved(stepIndex, true)) {
-            return fail(result, "未找到步骤: " + stepIndex);
-        }
-        emitPlan(thread, plan, false);
-        result.put("success", true);
-        result.put("stepIndex", stepIndex);
-        result.put("preApproved", true);
-        return result;
-    }
-
-    /**
-     * 预批准所有待执行步骤（非 @Tool 方法，仅供 REST 控制器调用）。
-     */
-    public Map<String, Object> preApproveAllSteps(String sessionId, String threadId) {
-        AiThread thread = resolveThreadByIds(sessionId, threadId);
-        Map<String, Object> result = new LinkedHashMap<>();
-        if (thread == null) return fail(result, "会话或线程不存在");
-        AiPlan plan = thread.getCurrentPlan();
-        if (plan == null) return fail(result, "当前没有活跃计划");
-        int count = plan.preApproveAllPending();
-        emitPlan(thread, plan, false);
-        result.put("success", true);
-        result.put("preApprovedCount", count);
         return result;
     }
 
@@ -200,15 +157,41 @@ public class PlanTools {
                 "不要重复调用；请向用户说明当前 AI/Puppet 会话需要重新建立。");
     }
 
-    private AiThread resolveThreadByIds(String sessionId, String threadId) {
-        if (sessionId == null || sessionId.isBlank()) return null;
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
-        if (session == null) return null;
-        if (threadId != null && !threadId.isBlank()) {
-            AiThread thread = session.getAiThread(threadId);
-            if (thread != null) return thread;
+    private AiToolException transitionError(AiPlan plan, int stepIndex,
+                                             String action, String text) {
+        AiPlanStep step = plan.getStep(stepIndex);
+        if (step == null) {
+            return AiToolException.modelCorrectable(
+                    "PLAN_STEP_NOT_FOUND",
+                    "未找到指定步骤: " + stepIndex,
+                    "检查当前计划中的步骤索引后重新调用。");
         }
-        return session.getActiveThread();
+        if ("start".equals(action)) {
+            if (step.getStatus() == AiStepStatus.FAILED && !step.canStart()) {
+                return AiToolException.modelCorrectable(
+                        "PLAN_RETRY_EXHAUSTED",
+                        "步骤 " + stepIndex + " 已达到最大重试次数。",
+                        "不要再次启动；请结束失败计划并在最终结论中说明原因。");
+            }
+            return AiToolException.modelCorrectable(
+                    "PLAN_DEPENDENCY_INCOMPLETE",
+                    "步骤 " + stepIndex + " 的依赖步骤尚未成功完成，无法启动。",
+                    "dependsOn 中的步骤必须为 COMPLETED；失败或跳过不视为满足依赖。");
+        }
+        if ("complete".equals(action)
+                && step.getSuccessCriteria() != null
+                && !step.getSuccessCriteria().isBlank()
+                && (text == null || text.isBlank())) {
+            return AiToolException.modelCorrectable(
+                    "PLAN_SUCCESS_EVIDENCE_REQUIRED",
+                    "步骤 " + stepIndex + " 定义了成功标准，完成时必须提供结果摘要。",
+                    "在 resultText 中写明满足 successCriteria 的实际证据。");
+        }
+        return AiToolException.modelCorrectable(
+                "PLAN_INVALID_TRANSITION",
+                "步骤 " + stepIndex + " 当前状态为 " + step.getStatus()
+                        + "，不能执行 " + action + "。",
+                "先按 PENDING → IN_PROGRESS → COMPLETED/FAILED 的顺序更新；skip 可用于放弃未完成步骤。");
     }
 
     /**
@@ -280,12 +263,6 @@ public class PlanTools {
             list.add(new AiPlanStep(index, description, toolHint, parallel, successCriteria, maxRetries, dependsOn));
         }
         return list;
-    }
-
-    private static Map<String, Object> fail(Map<String, Object> result, String message) {
-        result.put("success", false);
-        result.put("message", message);
-        return result;
     }
 
     private static String text(Object value) {

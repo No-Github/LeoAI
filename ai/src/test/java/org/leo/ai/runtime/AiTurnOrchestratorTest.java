@@ -208,7 +208,7 @@ class AiTurnOrchestratorTest {
                 new AiTurnTransaction.Context(
                         persistedTurn, 7, agent, "memory-1",
                         AiChatAuditEntry.platform(
-                                "user-1", "alice", "normal", "hello", false),
+                                "user-1", "alice", "normal", "hello"),
                         System.currentTimeMillis(),
                         boundTrace(persistedTurn)),
                 List.of(),

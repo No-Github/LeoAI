@@ -15,29 +15,28 @@ public final class PlatformAiDtos {
                               Integer configId,
                               String reasoningEffort,
                               List<AiFileAttachment> attachments,
-                              String clientUserMessageId) {
+                              String clientUserMessageId,
+                              String answerToQuestionId) {
         public ChatRequest(String threadId,
                            String message,
                            Integer configId,
                            String reasoningEffort,
                            List<AiFileAttachment> attachments) {
-            this(threadId, message, configId, reasoningEffort, attachments, null);
+            this(threadId, message, configId, reasoningEffort, attachments, null, null);
+        }
+
+        public ChatRequest(String threadId,
+                           String message,
+                           Integer configId,
+                           String reasoningEffort,
+                           List<AiFileAttachment> attachments,
+                           String clientUserMessageId) {
+            this(threadId, message, configId, reasoningEffort, attachments,
+                    clientUserMessageId, null);
         }
     }
 
-    public record AgentConfigRequest(String threadId, Integer configId, String mode) {
-    }
-
-    public record SwitchModeRequest(String threadId, String mode) {
-    }
-
-    public record AgentInfoResponse(int grantedTypesCount) {
-    }
-
-    public record ConfirmRequest(String callId, Boolean approved) {
-    }
-
-    public record GrantRequest(String toolType, Boolean grantAll) {
+    public record AgentConfigRequest(String threadId, Integer configId) {
     }
 
     public record EventsRequest(String threadId, Long afterSeq, Integer limit) {

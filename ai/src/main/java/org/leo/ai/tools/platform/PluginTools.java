@@ -7,6 +7,7 @@ import org.leo.core.util.aes.AesUtil;
 import org.leo.core.util.decompiler.DecompilerUtil;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolAccess;
 import org.leo.ai.agent.AiToolException;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 @Component
+@AiToolAccess(AiToolAccess.Level.ADMIN)
 public class PluginTools {
 
     private static final String PLUGIN_FILE_EXTENSION = ".plugin";

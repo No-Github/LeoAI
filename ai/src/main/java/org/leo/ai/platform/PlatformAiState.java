@@ -28,12 +28,12 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     public static final String STATUS_COMPLETED = "completed";
     public static final String STATUS_FAILED = "failed";
     public static final String STATUS_CANCELLED = "cancelled";
+    public static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
 
     private final String stateId;
     private final long createdAt;
     private volatile long lastActiveAt;
     private volatile Integer aiConfigId;
-    private volatile String mode = "auto";
     private final AiRuntimeStats runtimeStats = new AiRuntimeStats();
     private volatile AiExecutionPolicy executionPolicy = AiExecutionPolicy.defaultPolicy();
     private final AtomicInteger turnCount = new AtomicInteger(0);
@@ -41,10 +41,12 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     private volatile Thread executingThread;
     private final AtomicBoolean executionClaimed = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+    private final AtomicBoolean waitingForUserInput = new AtomicBoolean(false);
     private volatile String runStatus = STATUS_IDLE;
     private volatile String activeTurnId;
     private volatile String activeItemId;
     private volatile String activeRunId;
+    private volatile String activeConfirmationRequestId;
     private volatile String activeLeaseToken;
     private volatile String stopReason;
     private volatile Runnable stopCallback;
@@ -77,6 +79,7 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
         if (claimed) {
             currentRunStartSeq = sseEventSeq.get();
             stopRequested.set(false);
+            waitingForUserInput.set(false);
             stopReason = null;
             runStatus = STATUS_RUNNING;
         }
@@ -96,6 +99,7 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     }
 
     @Override public boolean isStopRequested() { return stopRequested.get(); }
+    public boolean isWaitingForUserInput() { return waitingForUserInput.get(); }
     public boolean isExecuting() { return executionClaimed.get() || executingThread != null; }
     public String getRunStatus() { return runStatus; }
     @Override public String getActiveTurnId() { return activeTurnId; }
@@ -104,13 +108,30 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     @Override public void bindActiveItemId(String itemId) { this.activeItemId = itemId; }
     @Override public String getActiveRunId() { return activeRunId; }
     @Override public void bindActiveRunId(String runId) { this.activeRunId = runId; }
+    public String getActiveConfirmationRequestId() { return activeConfirmationRequestId; }
+    public void bindActiveConfirmationRequestId(String requestId) {
+        this.activeConfirmationRequestId = requestId;
+    }
     @Override public String getActiveLeaseToken() { return activeLeaseToken; }
     @Override public void bindActiveLeaseToken(String leaseToken) { this.activeLeaseToken = leaseToken; }
     public String getStopReason() { return stopReason; }
 
-    public void markCompleted() { runStatus = STATUS_COMPLETED; }
-    public void markFailed() { runStatus = STATUS_FAILED; }
-    public void markCancelled() { runStatus = STATUS_CANCELLED; }
+    public void markCompleted() {
+        runStatus = waitingForUserInput.get()
+                ? STATUS_WAITING_FOR_USER : STATUS_COMPLETED;
+    }
+    public void markWaitingForUserInput() {
+        waitingForUserInput.set(true);
+        runStatus = STATUS_WAITING_FOR_USER;
+    }
+    public void markFailed() {
+        waitingForUserInput.set(false);
+        runStatus = STATUS_FAILED;
+    }
+    public void markCancelled() {
+        waitingForUserInput.set(false);
+        runStatus = STATUS_CANCELLED;
+    }
 
     public void stopGeneration() { stopGeneration("用户手动停止"); }
 
@@ -132,8 +153,6 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     public long getLastActiveAt() { return lastActiveAt; }
     public void touchLastActiveAt() { this.lastActiveAt = System.currentTimeMillis(); }
     public Integer getAiConfigId() { return aiConfigId; }
-    public String getMode() { return mode != null ? mode : "auto"; }
-    public void setMode(String mode) { this.mode = mode == null || mode.isBlank() ? "auto" : mode; }
     public void setAiConfigId(Integer aiConfigId) { this.aiConfigId = aiConfigId; }
     public void setExecutionPolicy(AiExecutionPolicy ep) { this.executionPolicy = ep != null ? ep : AiExecutionPolicy.defaultPolicy(); }
 
@@ -170,6 +189,7 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
         activeTurnId = null;
         activeItemId = null;
         activeRunId = null;
+        activeConfirmationRequestId = null;
         activeLeaseToken = null;
     }
 
@@ -183,6 +203,7 @@ public class PlatformAiState implements AiStateAccessor, AiEventStreamRuntime {
     public void resetTurnCount() {
         turnCount.set(0);
         executingThread = null; executionClaimed.set(false);
+        waitingForUserInput.set(false);
         runStatus = STATUS_IDLE; stopReason = null; stopRequested.set(false);
         activeTurnId = null;
         clearSseEvents();

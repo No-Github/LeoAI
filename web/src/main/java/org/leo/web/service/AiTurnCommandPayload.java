@@ -19,6 +19,7 @@ public class AiTurnCommandPayload {
     private String userId;
     private String userName;
     private String privilege;
+    private String answerToQuestionId;
 
     public static AiTurnCommandPayload create(
             String scope, String sessionId, String userMessage,
@@ -38,6 +39,12 @@ public class AiTurnCommandPayload {
             value.privilege = policy.getPrivilege();
         }
         return value;
+    }
+
+    public AiTurnCommandPayload answerTo(String questionId) {
+        this.answerToQuestionId = questionId == null || questionId.isBlank()
+                ? null : questionId.trim();
+        return this;
     }
 
     public String toJson() {
@@ -79,4 +86,8 @@ public class AiTurnCommandPayload {
     public void setUserName(String userName) { this.userName = userName; }
     public String getPrivilege() { return privilege; }
     public void setPrivilege(String privilege) { this.privilege = privilege; }
+    public String getAnswerToQuestionId() { return answerToQuestionId; }
+    public void setAnswerToQuestionId(String answerToQuestionId) {
+        this.answerToQuestionId = answerToQuestionId;
+    }
 }

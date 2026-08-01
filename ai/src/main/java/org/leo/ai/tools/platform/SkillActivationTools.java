@@ -3,6 +3,7 @@ package org.leo.ai.tools.platform;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolException;
+import org.leo.ai.service.SkillDescriptor;
 import org.leo.ai.service.SkillRegistryService;
 
 /**
@@ -36,14 +37,52 @@ public class SkillActivationTools {
                     "从当前系统提示提供的 Skill 列表中选择名称后重新调用。");
         }
 
-        String content = skillRegistry.getSkillContent(scope, name.trim());
+        String normalizedName = name.trim();
+        if (!SkillRegistryService.isValidSkillName(normalizedName)) {
+            throw AiToolException.modelCorrectable(
+                    "INVALID_SKILL_NAME",
+                    "skill 名称格式非法：name=" + name + "。",
+                    "只能使用当前 Skill 列表中的单个名称；不要传入路径、点目录或路径分隔符。");
+        }
+
+        String content = skillRegistry.getEnabledSkillContent(scope, normalizedName);
         if (content == null) {
+            if (skillRegistry.getSkillContent(scope, normalizedName) != null) {
+                throw AiToolException.modelCorrectable(
+                        "SKILL_UNAVAILABLE",
+                        "skill 已禁用或元数据无效，不能激活：name=" + normalizedName + "。",
+                        "从当前系统提示列出的已启用 Skill 中重新选择；不要绕过禁用状态或猜测隐藏 Skill。");
+            }
             throw AiToolException.modelCorrectable(
                     "SKILL_NOT_FOUND",
-                    "未找到 skill：name=" + name + "。",
+                    "未找到 skill：name=" + normalizedName + "。",
                     "检查当前可用 Skill 名称并注意大小写；不要猜测不存在的 Skill。");
         }
-        // 剥掉 frontmatter（enabled / description / tags 等元数据），只把正文交给 AI
-        return SkillRegistryService.stripFrontmatter(content);
+        SkillDescriptor descriptor = skillRegistry.getDescriptor(scope, normalizedName);
+        if (descriptor == null) {
+            throw AiToolException.modelCorrectable(
+                    "SKILL_METADATA_INVALID",
+                    "skill manifest 校验失败，不能激活：name=" + normalizedName + "。",
+                    "停止执行该 skill，并让管理员通过 Skill 健康检查修复 manifest。");
+        }
+
+        String policy = """
+                <skill_execution_policy>
+                id: %s
+                version: %s
+                category: %s
+                mode: %s
+                risk: %s
+                accessMode: %s
+                requiresExplicitApproval: %s
+                requiredFacts: %s
+                说明：启用表示能力可被发现，不代表本次任务已获授权。所有操作仍须遵守当前身份权限、ROE、目标范围和工具执行边界。
+                </skill_execution_policy>
+
+                """.formatted(
+                descriptor.id(), descriptor.version(), descriptor.category(), descriptor.mode(),
+                descriptor.risk(), descriptor.accessMode(), descriptor.requiresExplicitApproval(),
+                descriptor.requiredFacts());
+        return policy + SkillRegistryService.stripFrontmatter(content);
     }
 }

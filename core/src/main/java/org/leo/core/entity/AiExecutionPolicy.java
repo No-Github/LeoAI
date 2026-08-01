@@ -3,8 +3,8 @@ package org.leo.core.entity;
 /**
  * AI 请求的执行策略。
  *
- * <p>该对象由 Web 请求入口设置，由 Agent 拦截器读取，用于统一控制
- * 基于用户角色的工具可见性。高影响工具授权统一由运行时会话状态维护。
+ * <p>该对象由 Web 请求入口设置，由 Agent 读取，用于统一控制
+ * 基于用户角色的工具可见性。
  */
 public class AiExecutionPolicy {
 

@@ -28,14 +28,14 @@ import java.util.zip.ZipOutputStream;
  *
  * <p>导出格式：
  * <ul>
- *   <li>单条 .skill 文件：zip 包，内容平铺到根（SKILL.md 在根目录）</li>
- *   <li>批量 zip 文件：内含多个 {skillName}/ 目录，每个目录下是该 skill 的所有文件</li>
+ *   <li>单条 .skill 文件：zip 包，内容平铺到根（SKILL.md、manifest.yaml 在根目录）</li>
+ *   <li>批量 zip 文件：内含多个 {skillName}/ 目录，每个目录必须有两份必需元数据</li>
  * </ul>
  *
  * <p>导入格式自动识别：
  * <ul>
- *   <li>zip 根有 SKILL.md → 视为单 skill，目标 name 由调用方提供（如上传文件名）</li>
- *   <li>zip 根全是目录且每个子目录有 SKILL.md → 批量导入</li>
+ *   <li>zip 根有 SKILL.md 和 manifest.yaml → 视为单 skill，目标 name 由调用方提供</li>
+ *   <li>其他结构按批量包处理，每个顶层 skill 目录都必须含两份必需元数据</li>
  * </ul>
  *
  * <p>所有 zip entry 名称都做严格校验：禁止 {@code ..}、绝对路径、NUL，
@@ -47,6 +47,13 @@ public class SkillExportService {
     private static final Logger log = LoggerFactory.getLogger(SkillExportService.class);
 
     private static final String SKILL_FILE = "SKILL.md";
+    private static final String MANIFEST_FILE = "manifest.yaml";
+
+    private final SkillManifestService manifestService;
+
+    public SkillExportService(SkillManifestService manifestService) {
+        this.manifestService = manifestService;
+    }
 
     /** 单个 zip entry 最大尺寸，与 SkillFileService.MAX_FILE_BYTES 一致。 */
     private static final long MAX_ENTRY_BYTES = SkillFileService.MAX_FILE_BYTES;
@@ -56,14 +63,13 @@ public class SkillExportService {
     private static final int  MAX_FILES       = SkillFileService.MAX_FILES;
 
     public enum ConflictPolicy {
-        SKIP, OVERWRITE, RENAME;
+        SKIP, OVERWRITE;
 
         public static ConflictPolicy parse(String s) {
-            if (s == null) return RENAME;
+            if (s == null) return SKIP;
             return switch (s.toLowerCase()) {
-                case "skip" -> SKIP;
                 case "overwrite" -> OVERWRITE;
-                default -> RENAME;
+                default -> SKIP;
             };
         }
     }
@@ -113,7 +119,10 @@ public class SkillExportService {
             extractToTemp(file, tempRoot, defaultName);
 
             // 阶段 2：原子化移动到目标 scopeRoot/{name}/，按 policy 处理冲突
-            return commitFromTemp(tempRoot, scopeRoot, policy);
+            String scope = scopeRoot.getFileName() != null
+                    ? scopeRoot.getFileName().toString() : null;
+            SkillRegistryService.validateScope(scope);
+            return commitFromTemp(tempRoot, scopeRoot, scope, policy);
         } finally {
             deleteRecursively(tempRoot);
         }
@@ -239,7 +248,8 @@ public class SkillExportService {
         return false;
     }
 
-    private List<ImportResult> commitFromTemp(Path tempRoot, Path scopeRoot, ConflictPolicy policy) throws IOException {
+    private List<ImportResult> commitFromTemp(Path tempRoot, Path scopeRoot,
+                                              String scope, ConflictPolicy policy) throws IOException {
         List<ImportResult> results = new ArrayList<>();
         if (!Files.isDirectory(tempRoot)) return results;
 
@@ -252,11 +262,43 @@ public class SkillExportService {
                     results.add(ImportResult.failed(name, "skill 名含非法字符"));
                     continue;
                 }
-                // SKILL.md 必须存在
+                // SKILL.md 和 manifest.yaml 都必须存在，并在落盘前通过严格校验。
                 if (!Files.isRegularFile(skillTmpDir.resolve(SKILL_FILE))) {
                     results.add(ImportResult.failed(name, "缺少 SKILL.md"));
                     continue;
                 }
+                if (!Files.isRegularFile(skillTmpDir.resolve(MANIFEST_FILE))) {
+                    results.add(ImportResult.failed(name, "缺少 manifest.yaml"));
+                    continue;
+                }
+
+                String skillContent = Files.readString(
+                        skillTmpDir.resolve(SKILL_FILE), java.nio.charset.StandardCharsets.UTF_8);
+                String manifestContent = Files.readString(
+                        skillTmpDir.resolve(MANIFEST_FILE), java.nio.charset.StandardCharsets.UTF_8);
+                SkillInspection inspection = manifestService.inspect(
+                        scope, name, skillContent, manifestContent);
+                if (!inspection.valid()) {
+                    results.add(ImportResult.failed(name,
+                            "skill 校验失败: " + SkillManifestService.summarizeErrors(inspection)));
+                    continue;
+                }
+                String importedManifest;
+                try {
+                    importedManifest = manifestService.markImportedDraft(manifestContent);
+                } catch (IllegalArgumentException e) {
+                    results.add(ImportResult.failed(name, "manifest.yaml 无效: " + e.getMessage()));
+                    continue;
+                }
+                SkillInspection importedInspection = manifestService.inspect(
+                        scope, name, skillContent, importedManifest);
+                if (!importedInspection.valid()) {
+                    results.add(ImportResult.failed(name,
+                            "导入状态校验失败: " + SkillManifestService.summarizeErrors(importedInspection)));
+                    continue;
+                }
+                Files.writeString(skillTmpDir.resolve(MANIFEST_FILE), importedManifest,
+                        java.nio.charset.StandardCharsets.UTF_8);
 
                 Path target = scopeRoot.resolve(name).normalize();
                 if (!target.startsWith(scopeRoot)) {
@@ -277,12 +319,6 @@ public class SkillExportService {
                             deleteRecursively(target);
                             status = ImportResult.Status.OVERWRITTEN;
                         }
-                        case RENAME -> {
-                            String renamed = generateRenamed(scopeRoot, name);
-                            target = scopeRoot.resolve(renamed).normalize();
-                            finalName = renamed;
-                            status = ImportResult.Status.RENAMED;
-                        }
                     }
                 }
 
@@ -299,16 +335,6 @@ public class SkillExportService {
         return results;
     }
 
-    private static String generateRenamed(Path scopeRoot, String original) {
-        String base = original + "_imported_" + System.currentTimeMillis();
-        Path candidate = scopeRoot.resolve(base);
-        int suffix = 1;
-        while (Files.exists(candidate)) {
-            candidate = scopeRoot.resolve(base + "_" + suffix++);
-        }
-        return candidate.getFileName().toString();
-    }
-
     private static void validateEntryName(String name) {
         if (name == null || name.isBlank()) throw new SkillImportException("entry 名为空");
         if (name.contains("..")) throw new SkillImportException("entry 名含 .. : " + name);
@@ -317,7 +343,7 @@ public class SkillExportService {
     }
 
     private static boolean isSafeSkillName(String name) {
-        return name != null && name.matches("[A-Za-z0-9_-]+");
+        return SkillRegistryService.isValidSkillName(name);
     }
 
     private static void deleteRecursively(Path path) throws IOException {
@@ -359,7 +385,7 @@ public class SkillExportService {
     public record NamedSkill(String name, Path dir) {}
 
     public record ImportResult(String originalName, String finalName, Status status, String message) {
-        public enum Status { IMPORTED, OVERWRITTEN, RENAMED, SKIPPED, FAILED }
+        public enum Status { IMPORTED, OVERWRITTEN, SKIPPED, FAILED }
 
         public static ImportResult of(String original, String finalName, Status status) {
             return new ImportResult(original, finalName, status, null);

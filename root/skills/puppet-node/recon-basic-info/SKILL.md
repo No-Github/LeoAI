@@ -1,385 +1,118 @@
 ---
 name: recon-basic-info
-description: 对目标主机执行初始基础信息侦察，第一步完成主机与权限确认，判断当前 WebShell 所在系统、运行用户、应用权限、网络位置、容器状态、出网限制和服务器业务角色，并将发现自动保存为会话侦察摘要。这是进入新目标后的第一步标准操作。
-enabled: true
-tags:
-  - recon
-  - linux
-  - windows
+description: 对新的 Puppet 立足点执行低噪声基础侦察，判断当前权限、业务价值、网络位置、关键服务、容器边界和可用行动入口，并形成红队主机画像。当进入新目标、需要判断立足点价值或尚无可靠侦察摘要时使用。
 ---
 
-# 初始基础信息侦察
+# 立足点快速分诊
 
-当用户进入新目标会话、希望了解目标主机基本情况，或还没有侦察摘要时，使用这个 skill。
+用最少交互回答：这台主机是什么、当前身份能做什么、它通向哪里、是否值得继续投入。
 
----
+## 行动目标
 
-## 一、WebShell 环境约束
+- 确认当前身份、权限边界和执行环境。
+- 判断主机业务角色及演练目标价值。
+- 识别本地高价值服务、凭据来源、提权面和潜在跳板价值。
+- 生成最多 3 条按收益、成功率和噪声排序的后续路径。
 
-当前 AI 通过 WebShell 与目标交互，存在以下限制：
+## 授权与 ROE
 
-| 约束 | 影响 | 应对 |
-|---|---|---|
-| 非交互式 Shell | 无 TTY，无法使用 `sudo -S`、`passwd`、交互式编辑器 | 只用单行命令或管道 |
-| 输出可能截断 | 大量输出可能被 WebShell 截断 | 用 `head`/`tail`/`grep` 限制输出量 |
-| 字符编码 | 二进制输出或非 UTF-8 可能乱码 | 优先用文本格式输出 |
-| 命令超时 | 长时间运行的命令可能被 kill | 避免全盘搜索，用 `timeout` 包裹 |
-| 无持久会话 | 每次命令独立执行，无 cd/env 保持 | 用绝对路径，单行完成 |
-| 权限受限 | 通常以 Web 服务用户运行（www-data/tomcat/nobody） | 先确认权限边界再决定后续操作 |
+- 风险等级：low；访问模式：read-only。
+- 仅在当前 Puppet 主机执行被动检查，不写文件、不改配置。
+- 不主动访问云 metadata、公网地址或其他主机。
+- 端口扫描、登录验证、凭据使用和写操作必须交给对应 skill，并遵循用户授权范围。
+- 摘要不保存密码、Token、Cookie 或私钥正文。
 
----
+## OPSEC 预算
 
-## 二、OPSEC 指导
+- 默认最多调用一次 `getBasicInfo` 和两次合并后的 `exec`。
+- 进程、监听和路由输出各限制在 80 行内。
+- 禁止全盘搜索和高频探测；已有摘要中的可靠事实不要重复采集。
+- 记录命令缺失、权限拒绝和可见性盲区，不反复尝试同一失败动作。
 
-| 原则 | 说明 |
-|---|---|
-| 低噪声优先 | 优先使用读取 `/proc` 和环境变量的方式，减少进程创建 |
-| 避免触发 HIDS | 不要执行 `nmap`、`masscan`、`wget`、`nc` 等高告警命令 |
-| 不写文件 | 本 skill 仅读取和观察，不创建临时文件 |
-| 控制输出量 | 进程列表用 `ps aux --no-header` + `grep`，不要全量输出 |
-| 避免重复执行 | 已有侦察摘要时用 `manage_recon_summary(action="append")` 追加，不覆盖 |
+## 工作流
 
-**高噪声命令替代方案：**
+1. 调用 `manage_recon_summary(action="get")`，提取已有事实、任务目标和未解决问题。
+2. 创建 4 步以内计划：身份与环境、网络与服务、立足点价值、摘要与交接。
+3. 并行调用 `getBasicInfo` 和适配当前 OS 的受限 `exec`。
+4. 将发现归类为：事实、推断、行动入口、盲区。
+5. 按“目标价值、可达性、权限收益、噪声”对后续路径排序。
+6. 摘要为空时用一次 `set` 建立基线；否则用一次 `append` 写入增量。
 
-| 避免 | 替代 |
-|---|---|
-| `ifconfig`（部分系统已移除） | `ip addr` 或 `cat /proc/net/if_inet6` |
-| `netstat`（可能不存在） | `ss -tlnp` 或 `cat /proc/net/tcp` |
-| `ps aux`（全量） | `ps -eo pid,user,comm,args --no-header` + `grep java` |
-| `find / ...`（全盘） | 限定目录 + `timeout 10` |
+## 推荐采集
 
----
-
-## 三、目标
-
-第一步完成**主机与权限确认**，收集以下信息并保存为侦察摘要：
-
-- 操作系统类型、版本、内核
-- 主机名
-- 当前用户和权限（uid/gid/groups）
-- WebShell / 应用进程权限边界
-- 当前工作目录
-- 网络接口与 IP 地址
-- 默认网关、路由和 DNS / 代理线索
-- 监听端口（本地服务暴露面）
-- 是否运行在容器或虚拟化环境中
-- 是否存在出网限制或代理限制
-- 运行中的 Java 进程（如有）
-- 其他关键运行进程
-- 服务器业务角色判断
-
----
-
-## 四、工作流程
-
-### 执行前：制定计划
-
-在任何工具调用前，先输出：
-
-1. **目标**：对目标主机执行初始基础信息侦察，产出主机画像和侦察摘要
-2. **路径**：并发调用 BasicInfoTools + CommandTools 收集 OS/用户/网络/进程信息，整理后保存摘要
-3. **终止条件**：OS、当前用户、网络接口、监听端口、Java 进程、业务角色判断均已填充，或确认无法获取时停止
-
-### 执行步骤
-
-```
-1. 主机与权限确认（第一步，不可跳过）
-   ├─ 并发获取：BasicInfoTools + CommandTools
-   ├─ 确认 OS 类型 → 决定后续命令集（Linux vs Windows）
-   └─ 确认当前用户权限 → 决定可执行操作范围
-
-2. 网络与服务发现
-   ├─ 网络接口 + IP
-   ├─ 监听端口
-   ├─ 路由 / DNS / 代理
-   └─ 出网限制判断（被动优先）
-
-3. 进程与环境
-   ├─ Java 进程（重点）
-   ├─ 其他关键进程
-   └─ 容器 / 云环境判断
-
-4. 整理与保存
-   ├─ manage_recon_summary(action="set")（Markdown）
-   ├─ manage_recon_summary(action="append")（JSON）
-   └─ 输出给用户
-```
-
----
-
-## 五、工具优先级
-
-| 优先级 | 工具 | 用途 |
-|---|---|---|
-| 1 | `BasicInfoTools` | OS、用户、主机名、工作目录 |
-| 2 | `CommandTools` | 环境变量、Java 进程参数、监听端口 |
-| 3 | `NetworkInfoTools`（可选） | `collectAll` 结构化网络拓扑（网卡/ARP/路由/DNS/hosts） |
-| 4 | `ProcessTools`（可选） | `listProcesses`/`findProcesses` 进程枚举 |
-| 5 | `UserAccountTools`（可选） | `whoami`/`listUsers`/`listGroups` 用户权限信息 |
-| 6 | `MountDiskTools`（可选） | `listMountDisks` 磁盘挂载 |
-| 7 | `SessionTools` | `manage_recon_summary(action="set")`, `manage_recon_summary(action="append")` 保存摘要 |
-
-### 推荐命令集
-
-**Linux/macOS（并发执行）：**
+Linux/macOS：
 
 ```bash
-# 身份
-id && whoami && groups
-
-# 系统
-uname -a && cat /etc/os-release 2>/dev/null
-
-# 网络
-ip addr 2>/dev/null || ifconfig
-ip route 2>/dev/null || netstat -rn
-ss -tlnp 2>/dev/null || netstat -tlnp
-
-# 进程（限制输出）
-ps -eo pid,user,comm,args --no-header | grep -E "java|tomcat|nginx|mysql|redis|docker|python|node"
-
-# 容器检测
-test -f /.dockerenv && echo "DOCKER"; cat /proc/1/cgroup 2>/dev/null | head -5
-
-# 代理/DNS
-echo "HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY"; cat /etc/resolv.conf 2>/dev/null
+id; whoami; pwd; uname -a; cat /etc/os-release 2>/dev/null
+ip addr 2>/dev/null || ifconfig 2>/dev/null
+ip route 2>/dev/null || netstat -rn 2>/dev/null
+ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
+ps -eo pid,user,comm,args --no-header 2>/dev/null | grep -E 'java|tomcat|nginx|apache|mysql|postgres|redis|nacos|docker|containerd|kube|jenkins|gitlab|python|node' | head -80
+test -f /.dockerenv && echo IN_DOCKER; cat /proc/1/cgroup 2>/dev/null | head -10
+env | grep -iE '^(http|https|all|no)_proxy='; cat /etc/resolv.conf 2>/dev/null
 ```
 
-**Windows（并发执行）：**
+Windows：
 
 ```cmd
-whoami /all
-ver
-ipconfig /all
-route print
+whoami /all & ver & cd & ipconfig /all & route print
 netstat -ano | findstr LISTENING
-tasklist /v | findstr /i "java tomcat nginx mysql redis"
+tasklist /v | findstr /i "java tomcat nginx mysql postgres redis docker jenkins gitlab node python"
 ```
 
----
+## 红队判断
 
-## 六、收集项清单
+### 权限与边界
 
-### 操作系统
-- OS 名称与版本、内核版本、架构
+- 明确 root/SYSTEM、管理员、普通用户、关键组和容器能力。
+- 区分宿主机、普通容器、特权容器和未知状态；单一弱信号只能标为疑似。
+- 判断当前身份是否适合读取应用配置、执行提权侦察或作为横向源点。
 
-### 身份与权限
-- 当前用户名、UID/GID、所属组
-- 是否 root / SYSTEM / Administrator
-- 高价值组：sudo、docker、adm、wheel、Remote Management Users
-- 当前工作目录、HOME 目录
-- 读/写/执行能力（只读检查）
+### 目标价值
 
-### 主机信息
-- 主机名、FQDN
-- 云厂商线索（cloud-init、云 Agent、metadata 路由、主机名格式）
+按证据标注角色和价值：
 
-### 网络
-- 所有网络接口及 IP 地址
-- 默认网关
-- DNS、代理环境变量、内网网段
-- 出网限制判断：可直连 / 需代理 / DNS 受限 / 仅内网 / 未知
+- 应用节点：配置、服务账号、数据库和上游依赖入口。
+- 运维/CI 节点：部署密钥、制品仓库、云凭据和广泛网络可达性。
+- 数据节点：数据库、缓存、消息队列和敏感业务数据。
+- 跳板/边界节点：多网卡、额外路由、代理、VPN 或管理协议。
+- 容器节点：宿主挂载、socket、service account 或编排控制面线索。
 
-### 服务与进程
-- 本地监听端口及对应服务
-- Java 进程列表（PID、jar 路径、关键 JVM 参数）
-- 其他关键进程（Web 服务器、数据库等）
+### 行动入口
 
-### 容器与业务角色
-- 容器状态：是 / 否 / 疑似 / 未确认 + 证据
-- 云主机状态：是 / 否 / 疑似 / 未确认 + 证据
-- 业务角色：
+仅在证据支持时记录：
 
-| 角色 | 特征 |
-|---|---|
-| 跳板 | SSH/VPN/代理/堡垒机/大量内网路由 |
-| 应用服务器 | Tomcat/Spring Boot/Nginx/Apache/Node/PHP |
-| 中间件服务器 | MySQL/Redis/Nacos/Kafka/RabbitMQ/ES/ZK |
-| 运维节点 | Jenkins/Ansible/kubectl/docker/terraform/CI runner |
-| 云主机 | cloud-init/metadata 路由/云监控 agent |
+- 凭据入口：敏感环境变量、配置目录、服务账号进程。
+- 提权入口：当前为 Linux 普通用户、特殊组、容器边界异常。
+- 横向入口：已有明确 SSH 配置/目标/密钥路径；不自动连接。
+- 任务目标入口：与用户指定业务系统、数据或控制目标直接相关的服务。
 
----
+## 成功与停止条件
 
-## 七、侦察摘要格式
+成功：OS、身份、网络位置、关键服务、业务角色和至少一个“下一步或无需继续”结论均有证据。
 
-调用 `manage_recon_summary(action="set")` 时传入以下格式（字段按需填充，不要空占位）：
+立即停止并报告：
+
+- 当前会话或 Puppet 失效。
+- 输出显示目标不在授权范围。
+- 继续获取信息需要主动访问其他系统或修改目标。
+- 关键结果重复且没有新增行动价值。
+
+## 摘要与交接
 
 ```markdown
-## 目标基础信息
-
-**OS**：{os_name} {os_version}，内核 {kernel}，{arch}
-**主机名**：{hostname}
-**当前用户**：{username}（{uid}/{gid}）
-**权限级别**：{root/system/admin/普通用户}；关键组/特权：{privileges}
-**工作目录**：{cwd}
-**应用权限边界**：{read/write/exec summary}
-
-## 容器与云环境
-
-**容器状态**：{container_status}；证据：{container_evidence}
-**云主机状态**：{cloud_status}；证据：{cloud_evidence}
-
-## 网络接口
-
-| 接口 | IP 地址 |
-|------|---------|
-| {iface} | {ip} |
-
-## 监听端口
-
-| 端口 | 协议 | 服务/进程 |
-|------|------|---------|
-| {port} | TCP | {service} |
-
-## 出网与网络位置
-
-**默认网关 / 路由**：{route_summary}
-**DNS / 代理**：{dns_proxy_summary}
-**出网限制判断**：{egress_assessment}
-
-## Java 进程
-
-| PID | jar / 主类 | 关键参数摘要 |
-|-----|-----------|------------|
-| {pid} | {jar} | {args_summary} |
-
-## 其他关键进程
-
-{process_summary}
-
-## 业务角色判断
-
-| 角色 | 判断 | 证据 | 置信度 |
-|------|------|------|--------|
-| 跳板 | {yes/no/unknown} | {evidence} | {confidence} |
-| 应用服务器 | {yes/no/unknown} | {evidence} | {confidence} |
-| 中间件服务器 | {yes/no/unknown} | {evidence} | {confidence} |
-| 运维节点 | {yes/no/unknown} | {evidence} | {confidence} |
-| 云主机 | {yes/no/unknown} | {evidence} | {confidence} |
-
-## 初步判断
-
-{brief_assessment}
+## 立足点分诊更新
+- 身份与权限边界：...
+- 网络位置与可达性线索：...
+- 业务角色与目标价值：high / medium / low；证据：...
+- 关键服务和数据入口：...
+- 候选路径：skill / 前提 / 预期收益 / 噪声
+- 盲区和停止条件：...
 ```
 
-`初步判断` 必须简要说明：目标系统类型、当前权限是否足以进行后续操作、是否容器/云主机、出网是否受限、业务角色判断、建议的下一步侦察方向。
+输出一个简短行动矩阵：
 
----
+| 路径 | 证据 | 预期收益 | 成功率 | 噪声 | 下一步 |
+|---|---|---|---|---|---|
 
-## 八、结构化侦察摘要
-
-调用 `manage_recon_summary(action="append")` 时传入 JSON 对象字符串。未知项使用 `"unknown"`，不要编造：
-
-```json
-{
-  "schemaVersion": "1.0",
-  "hostProfile": {
-    "os": "Linux/Windows/macOS/unknown",
-    "osVersion": "",
-    "kernel": "",
-    "arch": "",
-    "hostname": "",
-    "fqdn": "",
-    "cwd": "",
-    "home": ""
-  },
-  "privilegeProfile": {
-    "username": "",
-    "uid": "",
-    "groups": [],
-    "level": "root/system/admin/user/unknown",
-    "notablePrivileges": [],
-    "appPermissionBoundary": "",
-    "evidence": []
-  },
-  "networkProfile": {
-    "interfaces": [],
-    "routes": [],
-    "dns": [],
-    "proxy": {},
-    "internalCidrs": [],
-    "egress": {
-      "status": "allowed/proxy_only/internal_only/restricted/unknown",
-      "evidence": []
-    }
-  },
-  "containerProfile": {
-    "status": "yes/no/suspected/unknown",
-    "runtime": "",
-    "evidence": []
-  },
-  "cloudProfile": {
-    "status": "yes/no/suspected/unknown",
-    "provider": "",
-    "evidence": []
-  },
-  "businessRole": {
-    "primary": "jump_host/app_server/middleware_server/ops_node/cloud_host/mixed/unknown",
-    "roles": [
-      {
-        "name": "app_server",
-        "matched": true,
-        "confidence": "high/medium/low",
-        "evidence": []
-      }
-    ]
-  },
-  "serviceProfile": {
-    "listeningPorts": [],
-    "javaProcesses": [],
-    "keyProcesses": []
-  },
-  "openQuestions": []
-}
-```
-
----
-
-## 九、决策规则
-
-| 场景 | 行为 |
-|---|---|
-| 目标是 Windows | 命令集切换为 Windows 命令 |
-| 某项信息获取失败 | 标注"未获取"，不留空不跳过 |
-| 不确定容器/云/出网 | 标注"未确认"，说明缺哪类证据 |
-| 判断业务角色 | 必须引用证据，不要只给结论 |
-| 出网探测 | 被动判断优先；主动探测需用户授权且低频 |
-| 已有侦察摘要 | 用 `manage_recon_summary(action="append")` 追加，不覆盖 |
-| 并发获取 | 不要串行等待，独立工具调用并发执行 |
-| 本 skill 完成后 | 侦察摘要保存完成后才输出最终结果 |
-| 只读原则 | 不执行任何写操作 |
-
----
-
-## 十、输出格式
-
-输出简洁 Markdown，包含：
-
-1. `主机与权限确认`
-2. `网络位置与出网`
-3. `容器与云环境`
-4. `监听端口`
-5. `Java 进程`（如有）
-6. `其他关键进程`
-7. `业务角色判断`
-8. `初步判断`
-9. `下一步建议`：2~3 条具体建议，例如：
-   - 发现 Spring Boot 进程 → "建议使用 collect-spring-boot-config skill 收集配置信息"
-   - 发现 Tomcat → "建议使用 discover-web-apps skill 发现已部署 Web 应用"
-   - 发现数据库监听端口 → "建议使用 collect-jdbc-connection-info skill 提取数据库连接信息"
-   - 发现容器环境 → "建议使用 detect-container-escape skill 评估逃逸面"
-   - 发现云主机特征 → "建议使用 collect-cloud-metadata skill 提取实例元数据"
-
-末尾注明：侦察摘要已保存，后续会话将自动使用。
-
----
-
-## Skill 元数据
-
-- `riskLevel`: low
-- `accessMode`: read_only
-- `requiredTools`: `BasicInfoTools`, `CommandTools`, `SessionTools`
-- `optionalTools`: `FileTools`, `NetworkInfoTools`, `ProcessTools`, `UserAccountTools`, `MountDiskTools`
-- `produces`: `reconSummary`
-- `forbiddenByDefault`: 文件写入、配置修改、主动公网探测、高频端口扫描、提权、持久化
-- `recommendedNextSkills`: `discover-web-apps`, `collect-spring-boot-config`, `collect-jdbc-connection-info`, `collect-cloud-metadata`, `detect-container-escape`, `recon-internal-network`, `recon-active-directory`, `collect-kubernetes-secrets`, `analyze-logs-intelligence`
+只推荐当前存在且满足前提的 skill：`hunt-credentials`、`escalate-linux-privilege`、`lateral-move-ssh`。如果继续行动对任务无新增价值，明确建议停止扩散。

@@ -230,6 +230,20 @@ public class AiToolErrorHandler {
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("ok", false);
         envelope.put("protocol", PROTOCOL);
+        envelope.put("code", code);
+        envelope.put("message", message);
+        envelope.put("data", null);
+        envelope.put("evidence", java.util.List.of());
+        envelope.put("retryable", retryable);
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("tool", toolName);
+        metadata.put("recoverableBy", recovery.name());
+        metadata.put("attempt", attempt);
+        if (hint != null && !hint.isBlank()) metadata.put("hint", hint);
+        if (recovery == AiToolException.Recovery.MODEL) {
+            metadata.put("maxAttempts", MAX_MODEL_CORRECTION_ATTEMPTS);
+        }
+        envelope.put("metadata", metadata);
         envelope.put("error", error);
         return envelope;
     }

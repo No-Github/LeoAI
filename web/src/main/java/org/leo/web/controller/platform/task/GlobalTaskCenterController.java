@@ -191,7 +191,6 @@ public class GlobalTaskCenterController {
             item.put("startedAt", thread.getLastActiveAt());
             item.put("updatedAt", thread.getLastActiveAt());
             item.put("progress", terminal(status) ? 100 : 50);
-            item.put("mode", thread.getMode());
             item.put("executing", thread.isExecuting());
             item.put("cancellable", active(status) || thread.isExecuting());
             target.add(item);
@@ -216,7 +215,6 @@ public class GlobalTaskCenterController {
             item.put("startedAt", firstLong(thread, "lastActiveAt", "createdAt"));
             item.put("updatedAt", firstLong(thread, "lastActiveAt", "createdAt"));
             item.put("progress", terminal(status) ? 100 : 50);
-            item.put("mode", thread.get("mode"));
             item.put("executing", executing);
             item.put("cancellable", active(status) || executing);
             target.add(item);
@@ -351,7 +349,6 @@ public class GlobalTaskCenterController {
             case "done", "completed", "success" -> "completed";
             case "running", "uploading", "downloading", "exporting", "scanning", "shell_running" -> "running";
             case "pending", "new" -> "pending";
-            case "waiting_confirmation" -> "waiting_confirmation";
             case "paused" -> "paused";
             case "failed", "error" -> "failed";
             case "cancelled", "canceled", "stopped" -> "cancelled";
@@ -362,7 +359,6 @@ public class GlobalTaskCenterController {
     private static boolean active(String status) {
         return "pending".equals(status)
                 || "running".equals(status)
-                || "waiting_confirmation".equals(status)
                 || "paused".equals(status);
     }
 

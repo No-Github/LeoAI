@@ -52,6 +52,9 @@ class DatabaseInitializerFreshStartTest {
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='status'"));
             assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_threads') "
+                            + "WHERE name='context_checkpoint_json'"));
+            assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM pragma_table_info('ai_runs') WHERE name='turn_id'"));
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_turns'"));
@@ -77,6 +80,28 @@ class DatabaseInitializerFreshStartTest {
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """));
             assertTrue(rejected.getMessage().contains("CHECK constraint"));
+        }
+    }
+
+    @Test
+    void upgradesLegacyAiThreadWithCheckpointMetadataColumn() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-checkpoint.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(
+                        "ALTER TABLE ai_threads DROP COLUMN context_checkpoint_json");
+            }
+        }
+
+        new DatabaseInitializer(dataSource).run();
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_threads') "
+                            + "WHERE name='context_checkpoint_json'"));
         }
     }
 

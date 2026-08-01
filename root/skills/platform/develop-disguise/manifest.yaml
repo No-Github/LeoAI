@@ -1,0 +1,20 @@
+schemaVersion: 1
+id: leo.platform.develop-disguise
+name: develop-disguise
+version: 1.0.0
+scope: platform
+domain: capability-development
+category: communication-profile
+mode: manage
+platforms: [leo-platform, java]
+targets: [disguise]
+pack: red-team-development
+risk: medium
+accessMode: write
+status: published
+source: builtin
+owner: leo
+enabled: true
+requires:
+  tools: [getDisguises, getDisguiseById, testDisguise, addDisguise, updateDisguise]
+produces: [disguise-profile]

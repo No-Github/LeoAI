@@ -28,7 +28,7 @@ public class AiPlan {
     private volatile AiPlanStatus status = AiPlanStatus.PLANNING;
     /** completePlan 时写入的最终结论摘要 */
     private volatile String finalSummary;
-    /** 单步骤超时时间（毫秒），0 表示不启用。超过此时间仍在 RUNNING 的步骤将被自动标记为失败 */
+    /** 单步骤超时时间（毫秒），0 表示不启用。超过此时间仍在执行的步骤将被自动标记为失败 */
     private volatile long stepTimeoutMs;
 
     private final long createdAt;
@@ -63,14 +63,6 @@ public class AiPlan {
 
     // ── 状态变更 ──────────────────────────────────────────────────────────────
 
-    /** 将计划状态推进到执行中（首次调用 updatePlanStep start 时触发）。 */
-    public void markInProgress() {
-        if (this.status == AiPlanStatus.PLANNING) {
-            this.status    = AiPlanStatus.IN_PROGRESS;
-            this.updatedAt = System.currentTimeMillis();
-        }
-    }
-
     /**
      * 更新指定步骤为执行中。
      *
@@ -80,20 +72,18 @@ public class AiPlan {
     public boolean startStep(int stepIndex) {
         AiPlanStep step = findStep(stepIndex);
         if (step == null) return false;
-        // 检查依赖步骤是否已终结
+        if (this.status == AiPlanStatus.COMPLETED) return false;
+        // 依赖步骤必须真实完成；FAILED/SKIPPED 不等价于满足依赖。
         if (step.getDependsOn() != null && !step.getDependsOn().isEmpty()) {
             for (int depIndex : step.getDependsOn()) {
                 AiPlanStep dep = findStep(depIndex);
-                if (dep != null) {
-                    AiStepStatus depStatus = dep.getStatus();
-                    if (depStatus == AiStepStatus.PENDING || depStatus == AiStepStatus.IN_PROGRESS) {
-                        return false; // 依赖步骤未完成，不能启动
-                    }
+                if (dep == null || dep.getStatus() != AiStepStatus.COMPLETED) {
+                    return false;
                 }
             }
         }
-        step.markInProgress();
-        markInProgress();
+        if (!step.markInProgress()) return false;
+        this.status = AiPlanStatus.IN_PROGRESS;
         this.updatedAt = System.currentTimeMillis();
         return true;
     }
@@ -108,30 +98,28 @@ public class AiPlan {
     public boolean completeStep(int stepIndex, String result) {
         AiPlanStep step = findStep(stepIndex);
         if (step == null) return false;
-        step.markCompleted(result);
+        String effectiveResult = result != null && !result.isBlank()
+                ? result : step.getResult();
+        if (step.getSuccessCriteria() != null
+                && !step.getSuccessCriteria().isBlank()
+                && (effectiveResult == null || effectiveResult.isBlank())) {
+            return false;
+        }
+        if (!step.markCompleted(effectiveResult)) return false;
+        reconcileStatus();
         this.updatedAt = System.currentTimeMillis();
         return true;
     }
 
     /**
-     * 更新指定步骤为失败。步骤失败不会自动将整个计划标记为失败；
-     * 仅当所有步骤均已终止且至少有一个步骤失败时，计划才会自动转为 FAILED。
-     * AI 也可以通过 {@link #fail(String)} 或 {@link #complete(String)} 显式决定计划终态。
+     * 更新指定步骤为失败。若仍有待处理步骤，计划保持 IN_PROGRESS；
+     * 所有步骤终结后，只要存在失败步骤，计划自动转为 FAILED。
      */
     public boolean failStep(int stepIndex, String reason) {
         AiPlanStep step = findStep(stepIndex);
         if (step == null) return false;
-        step.markFailed(reason);
-        // 自动检测：仅当所有步骤都已终止（无 PENDING/IN_PROGRESS）且至少有一个失败时才标记计划失败
-        if (allStepsTerminated()) {
-            boolean anyFailed = false;
-            for (AiPlanStep s : steps) {
-                if (s.getStatus() == AiStepStatus.FAILED) { anyFailed = true; break; }
-            }
-            if (anyFailed) {
-                this.status = AiPlanStatus.FAILED;
-            }
-        }
+        if (!step.markFailed(reason)) return false;
+        reconcileStatus();
         this.updatedAt = System.currentTimeMillis();
         return true;
     }
@@ -142,7 +130,8 @@ public class AiPlan {
     public boolean skipStep(int stepIndex, String reason) {
         AiPlanStep step = findStep(stepIndex);
         if (step == null) return false;
-        step.markSkipped(reason);
+        if (!step.markSkipped(reason)) return false;
+        reconcileStatus();
         this.updatedAt = System.currentTimeMillis();
         return true;
     }
@@ -151,8 +140,12 @@ public class AiPlan {
      * 完成整个计划，写入最终结论。
      */
     public void complete(String finalSummary) {
+        if (!allStepsTerminated()) {
+            throw new IllegalStateException("仍有未结束的计划步骤，不能完成计划");
+        }
         this.finalSummary = finalSummary;
-        this.status       = AiPlanStatus.COMPLETED;
+        this.status = hasFailedSteps()
+                ? AiPlanStatus.FAILED : AiPlanStatus.COMPLETED;
         this.updatedAt    = System.currentTimeMillis();
     }
 
@@ -174,50 +167,16 @@ public class AiPlan {
         return null;
     }
 
+    public AiPlanStep getStep(int index) {
+        return findStep(index);
+    }
+
     /** 返回第一个 PENDING 步骤的序号，全部完成时返回 -1。 */
     public int nextPendingStepIndex() {
         for (AiPlanStep s : steps) {
             if (s.getStatus() == AiStepStatus.PENDING) return s.getIndex();
         }
         return -1;
-    }
-
-    /**
-     * 当前是否有正在执行的且已预批准的步骤。
-     * 用于工具确认拦截器判断是否跳过确认。
-     */
-    public boolean hasPreApprovedActiveStep() {
-        for (AiPlanStep s : steps) {
-            if (s.getStatus() == AiStepStatus.IN_PROGRESS && s.isPreApproved()) return true;
-        }
-        return false;
-    }
-
-    /**
-     * 设置指定步骤的预批准状态。
-     *
-     * @return 找到步骤返回 true，否则 false
-     */
-    public boolean setStepPreApproved(int stepIndex, boolean preApproved) {
-        AiPlanStep step = findStep(stepIndex);
-        if (step == null) return false;
-        step.setPreApproved(preApproved);
-        this.updatedAt = System.currentTimeMillis();
-        return true;
-    }
-
-    /** 预批准所有尚未终结的步骤。 */
-    public int preApproveAllPending() {
-        int count = 0;
-        for (AiPlanStep s : steps) {
-            AiStepStatus st = s.getStatus();
-            if ((st == AiStepStatus.PENDING || st == AiStepStatus.IN_PROGRESS) && !s.isPreApproved()) {
-                s.setPreApproved(true);
-                count++;
-            }
-        }
-        if (count > 0) this.updatedAt = System.currentTimeMillis();
-        return count;
     }
 
     /** 是否所有步骤都已终结（COMPLETED / FAILED / SKIPPED）。 */
@@ -230,8 +189,8 @@ public class AiPlan {
     }
 
     /**
-     * 检查所有 RUNNING 状态步骤是否超时，超时则自动标记为失败。
-     * 在每次工具调用前由 AgentConfig 调用，确保卡住的步骤不会无限等待。
+     * 检查所有 IN_PROGRESS 状态步骤是否超时，超时则自动标记为失败。
+     * 在每次工具调用前由 Agent 调用，确保卡住的步骤不会无限等待。
      *
      * @return 因超时被自动失败的步骤数量
      */
@@ -243,26 +202,39 @@ public class AiPlan {
             if (s.getStatus() != AiStepStatus.IN_PROGRESS) continue;
             long elapsed = now - s.getStartedAt();
             if (elapsed > stepTimeoutMs) {
-                s.markFailed("步骤超时（已执行 " + elapsed + "ms，超过阈值 " + stepTimeoutMs + "ms）");
-                timedOut++;
+                if (s.markFailed("步骤超时（已执行 " + elapsed
+                        + "ms，超过阈值 " + stepTimeoutMs + "ms）")) {
+                    timedOut++;
+                }
             }
         }
         if (timedOut > 0) {
             this.updatedAt = now;
-            // 全部终止且存在失败 → 计划失败
-            if (allStepsTerminated()) {
-                boolean anyFailed = steps.stream().anyMatch(s -> s.getStatus() == AiStepStatus.FAILED);
-                if (anyFailed) {
-                    this.status = AiPlanStatus.FAILED;
-                }
-            }
+            reconcileStatus();
         }
         return timedOut;
     }
 
     /** 设置步骤超时时间（毫秒），0 表示不启用。 */
     public void setStepTimeoutMs(long stepTimeoutMs) {
-        this.stepTimeoutMs = stepTimeoutMs;
+        this.stepTimeoutMs = Math.max(0L, stepTimeoutMs);
+    }
+
+    private void reconcileStatus() {
+        boolean hasActive = steps.stream().anyMatch(step ->
+                step.getStatus() == AiStepStatus.PENDING
+                        || step.getStatus() == AiStepStatus.IN_PROGRESS);
+        if (hasActive) {
+            this.status = AiPlanStatus.IN_PROGRESS;
+        } else {
+            this.status = hasFailedSteps()
+                    ? AiPlanStatus.FAILED : AiPlanStatus.COMPLETED;
+        }
+    }
+
+    private boolean hasFailedSteps() {
+        return steps.stream().anyMatch(
+                step -> step.getStatus() == AiStepStatus.FAILED);
     }
 
     // ── Getters ───────────────────────────────────────────────────────────────
@@ -274,6 +246,7 @@ public class AiPlan {
     public String        getFinalSummary() { return finalSummary; }
     public long          getCreatedAt()    { return createdAt; }
     public long          getUpdatedAt()    { return updatedAt; }
+    public long          getStepTimeoutMs(){ return stepTimeoutMs; }
 
     public List<AiPlanStep> getSteps() {
         return Collections.unmodifiableList(steps);

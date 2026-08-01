@@ -1,5 +1,7 @@
 package org.leo.ai.agent;
 
+import org.leo.core.entity.AiExecutionPolicy;
+
 /**
  * ThreadLocal 工具执行上下文。
  *
@@ -13,9 +15,16 @@ public final class AiToolContext {
 
     private record Ctx(String sessionId, String threadId) {}
 
+    /** 跨执行器传播工具上下文所需的最小快照。 */
+    public record Snapshot(String sessionId, String threadId,
+                           int planStepIndex,
+                           AiExecutionPolicy executionPolicy,
+                           String confirmationRequestId) {}
+
     private static final ThreadLocal<Ctx> HOLDER = new ThreadLocal<>();
     private static final ThreadLocal<Integer> PLAN_STEP_INDEX = new ThreadLocal<>();
-    private static final ThreadLocal<Boolean> PLAN_STEP_PRE_APPROVED = new ThreadLocal<>();
+    private static final ThreadLocal<AiExecutionPolicy> EXECUTION_POLICY = new ThreadLocal<>();
+    private static final ThreadLocal<String> CONFIRMATION_REQUEST_ID = new ThreadLocal<>();
 
     private AiToolContext() {}
 
@@ -40,7 +49,28 @@ public final class AiToolContext {
     public static void clear() {
         HOLDER.remove();
         PLAN_STEP_INDEX.remove();
-        PLAN_STEP_PRE_APPROVED.remove();
+        EXECUTION_POLICY.remove();
+        CONFIRMATION_REQUEST_ID.remove();
+    }
+
+    public static Snapshot capture() {
+        Ctx ctx = HOLDER.get();
+        return new Snapshot(
+                ctx != null ? ctx.sessionId() : null,
+                ctx != null ? ctx.threadId() : null,
+                getPlanStepIndex(),
+                getExecutionPolicy(), getConfirmationRequestId());
+    }
+
+    public static void restore(Snapshot snapshot) {
+        clear();
+        if (snapshot == null) return;
+        if (snapshot.sessionId() != null || snapshot.threadId() != null) {
+            HOLDER.set(new Ctx(snapshot.sessionId(), snapshot.threadId()));
+        }
+        setPlanStepIndex(snapshot.planStepIndex());
+        setExecutionPolicy(snapshot.executionPolicy());
+        setConfirmationRequestId(snapshot.confirmationRequestId());
     }
 
     // ── 基本字段 ─────────────────────────────────────────────────────────────
@@ -68,11 +98,45 @@ public final class AiToolContext {
         return id;
     }
 
+    public static void setExecutionPolicy(AiExecutionPolicy policy) {
+        if (policy == null) {
+            EXECUTION_POLICY.remove();
+        } else {
+            EXECUTION_POLICY.set(policy);
+        }
+    }
+
+    public static AiExecutionPolicy getExecutionPolicy() {
+        AiExecutionPolicy policy = EXECUTION_POLICY.get();
+        return policy != null ? policy : AiExecutionPolicy.defaultPolicy();
+    }
+
+    public static AiExecutionPolicy requireExecutionPolicy() {
+        AiExecutionPolicy policy = EXECUTION_POLICY.get();
+        if (policy == null || policy.getUserId() == null || policy.getUserId().isBlank()) {
+            throw new SecurityException("AI 工具调用缺少已认证的执行身份");
+        }
+        return policy;
+    }
+
+    public static void setConfirmationRequestId(String requestId) {
+        if (requestId == null || requestId.isBlank()) CONFIRMATION_REQUEST_ID.remove();
+        else CONFIRMATION_REQUEST_ID.set(requestId.trim());
+    }
+
+    public static String getConfirmationRequestId() {
+        return CONFIRMATION_REQUEST_ID.get();
+    }
+
     // ── Plan 关联 ────────────────────────────────────────────────────────────
 
     /** 设置当前工具调用所属的 plan 步骤索引。 */
     public static void setPlanStepIndex(int stepIndex) {
-        PLAN_STEP_INDEX.set(stepIndex);
+        if (stepIndex < 0) {
+            PLAN_STEP_INDEX.remove();
+        } else {
+            PLAN_STEP_INDEX.set(stepIndex);
+        }
     }
 
     /** 获取当前工具调用所属的 plan 步骤索引，-1 表示无关联。 */
@@ -81,13 +145,4 @@ public final class AiToolContext {
         return v != null ? v : -1;
     }
 
-    /** 设置当前步骤是否已被预批准。 */
-    public static void setPlanStepPreApproved(boolean preApproved) {
-        PLAN_STEP_PRE_APPROVED.set(preApproved);
-    }
-
-    /** 当前步骤是否已被预批准。 */
-    public static boolean isPlanStepPreApproved() {
-        return Boolean.TRUE.equals(PLAN_STEP_PRE_APPROVED.get());
-    }
 }

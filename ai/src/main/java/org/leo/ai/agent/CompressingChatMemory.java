@@ -7,15 +7,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 带压缩能力的 ChatMemory 包装器。
+ * 带 checkpoint 压缩能力的 ChatMemory 包装器。
  *
- * <p>包装一个 {@link dev.langchain4j.memory.chat.MessageWindowChatMemory}，
- * 在每次 {@link #messages()} 调用时检查是否需要压缩旧消息为摘要，
- * 由 {@link ContextCompressionService#compressIfNeeded} 执行实际压缩。
- *
- * <p>压缩后的消息列表返回给 LangChain4j Agent，Agent 看到的是"摘要 + 最近 N 条消息"的视图。
- * 注意：压缩不会修改底层 ChatMemory 的存储（底层仍按 MessageWindow 淘汰），
- * 但通过 messages() 透明注入压缩视图，避免在 beforeToolExecution 等钩子中直接操作 ChatMemory。
+ * <p>底层记忆继续保存原始消息，Agent 读取时看到“历史摘要 + checkpoint 后消息”。
+ * 相同消息边界直接复用摘要；仅当摘要视图再次接近窗口上限时才继续压缩。
  */
 class CompressingChatMemory implements ChatMemory {
 
@@ -24,13 +19,25 @@ class CompressingChatMemory implements ChatMemory {
     private final ContextCompressionService compressionService;
     private final int maxTokens;
 
-    CompressingChatMemory(Object memoryId, ChatMemory delegate,
+    private CompressionCheckpoint checkpoint;
+    private String failedSourceHash;
+
+    CompressingChatMemory(Object memoryId,
+                          ChatMemory delegate,
                           ContextCompressionService compressionService,
                           int maxTokens) {
         this.memoryId = memoryId;
         this.delegate = delegate;
         this.compressionService = compressionService;
         this.maxTokens = maxTokens;
+        List<ChatMessage> current = new ArrayList<>(delegate.messages());
+        ContextCompressionService.RestoredCheckpoint restored =
+                compressionService.restoreCheckpoint(String.valueOf(memoryId), current);
+        if (restored != null) {
+            this.checkpoint = CompressionCheckpoint.restore(
+                    String.valueOf(memoryId), current,
+                    restored.summarizedSourceCount(), restored.summaryMessage());
+        }
     }
 
     @Override
@@ -39,28 +46,74 @@ class CompressingChatMemory implements ChatMemory {
     }
 
     @Override
-    public void add(ChatMessage message) {
+    public synchronized void add(ChatMessage message) {
         delegate.add(message);
-    }
-
-    @Override
-    public List<ChatMessage> messages() {
-        List<ChatMessage> current = new ArrayList<>(delegate.messages());
-        if (current.size() < 8) return current;
-
-        // 每次读取时触发压缩检查
-        List<ChatMessage> compressed = compressionService.compressIfNeeded(
-                String.valueOf(memoryId), current, maxTokens);
-
-        // 如果压缩发生了且消息列表有变化（摘要替换了旧消息），返回压缩后列表
-        if (compressed != current && compressed.size() < current.size()) {
-            return compressed;
+        failedSourceHash = null;
+        if (checkpoint != null) {
+            checkpoint = checkpoint.afterAppend(new ArrayList<>(delegate.messages()), message);
         }
-        return current;
     }
 
     @Override
-    public void clear() {
+    public synchronized List<ChatMessage> messages() {
+        List<ChatMessage> current = new ArrayList<>(delegate.messages());
+        CompressionCheckpoint.ProjectedView projected = null;
+        if (checkpoint != null) {
+            projected = checkpoint.project(current);
+            if (projected == null) checkpoint = null;
+        }
+
+        List<ChatMessage> candidate = projected != null ? projected.messages() : current;
+        String sourceHash = CompressionCheckpoint.sourceHash(candidate);
+        if (sourceHash.equals(failedSourceHash)) {
+            return candidate;
+        }
+
+        ContextCompressionService.CompressionResult result = compressionService.compressIfNeeded(
+                String.valueOf(memoryId), candidate, maxTokens);
+        if (!result.attempted()) {
+            return candidate;
+        }
+        if (!result.succeeded()) {
+            failedSourceHash = sourceHash;
+            return candidate;
+        }
+
+        int existingBoundary = projected != null ? projected.summarizedSourceCount() : 0;
+        int compressedCandidateMessages = result.compressedMessageCount();
+        int additionallySummarized = projected != null
+                ? Math.max(0, compressedCandidateMessages - 1)
+                : compressedCandidateMessages;
+        int newBoundary = Math.min(current.size(),
+                existingBoundary + additionallySummarized);
+        checkpoint = checkpoint != null
+                ? checkpoint.advance(current, existingBoundary, additionallySummarized,
+                        result.summaryMessage())
+                : CompressionCheckpoint.create(String.valueOf(memoryId), current,
+                        additionallySummarized, result.summaryMessage());
+        failedSourceHash = null;
+        compressionService.persistCheckpoint(
+                String.valueOf(memoryId), result.summaryMessage(), current, newBoundary);
+
+        CompressionCheckpoint.ProjectedView refreshed = checkpoint.project(current);
+        return refreshed != null ? refreshed.messages() : result.messages();
+    }
+
+    @Override
+    public synchronized void set(Iterable<ChatMessage> messages) {
+        delegate.set(messages);
+        resetCheckpoint();
+    }
+
+    @Override
+    public synchronized void clear() {
         delegate.clear();
+        resetCheckpoint();
+    }
+
+    private void resetCheckpoint() {
+        checkpoint = null;
+        failedSourceHash = null;
+        compressionService.clearPersistedCheckpoint(String.valueOf(memoryId));
     }
 }

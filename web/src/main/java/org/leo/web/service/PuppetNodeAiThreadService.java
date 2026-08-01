@@ -164,26 +164,21 @@ public class PuppetNodeAiThreadService {
 
     public Map<String, Object> createThread(
             PuppetNodeSession session, String title, Integer configId) {
-        return createThread(session, title, configId, null, null);
-    }
-
-    public Map<String, Object> createThread(
-            PuppetNodeSession session, String title, Integer configId, String mode) {
-        return createThread(session, title, configId, mode, null);
+        return createThread(session, title, configId, null);
     }
 
     public Map<String, Object> createChildThread(
             PuppetNodeSession session, String title, Integer configId,
-            String mode, String parentThreadId) {
+            String parentThreadId) {
         if (parentThreadId == null || parentThreadId.isBlank()) {
             throw ApiException.badRequest("缺少 parentThreadId");
         }
-        return createThread(session, title, configId, mode, parentThreadId.trim());
+        return createThread(session, title, configId, parentThreadId.trim());
     }
 
     private Map<String, Object> createThread(
             PuppetNodeSession session, String requestedTitle, Integer configId,
-            String mode, String parentThreadId) {
+            String parentThreadId) {
         String threadId = UUID.randomUUID().toString();
         String title = requestedTitle != null && !requestedTitle.isBlank()
                 ? requestedTitle : "对话 " + (session.listAiThreads().size() + 1);
@@ -192,7 +187,6 @@ public class PuppetNodeAiThreadService {
 
         AiThread thread = session.createAiThread(threadId, title);
         thread.setAiConfigId(resolvedConfigId);
-        thread.setMode(mode);
         thread.setParentThreadId(parentThreadId);
         sessionWarmupService.warmupAsync(session.getSessionId());
 
@@ -207,7 +201,6 @@ public class PuppetNodeAiThreadService {
         info.put("threadId", threadId);
         info.put("title", title);
         info.put("configId", resolvedConfigId);
-        info.put("mode", thread.getMode());
         info.put("parentThreadId", parentThreadId);
         info.put("reconSummaryLoaded", session.hasReconSummary());
         return info;
@@ -322,22 +315,6 @@ public class PuppetNodeAiThreadService {
         updateThreadConfig(session, thread, config);
     }
 
-    public Map<String, Object> switchMode(
-            PuppetNodeSession session, String threadId, String mode) {
-        AiThreadRecord persisted = findPersistedThread(session, threadId);
-        AiThread thread = session.getAiThread(threadId);
-        if (thread == null) thread = restorePersistedThread(session, threadId, persisted);
-        if (thread == null) {
-            throw ApiException.notFound("线程不存在，threadId: " + threadId);
-        }
-        if (mode != null) thread.setMode(mode);
-        conversationStore.updateMode(threadId, thread.getMode());
-        Map<String, Object> info = new HashMap<>();
-        info.put("threadId", threadId);
-        info.put("mode", thread.getMode());
-        return info;
-    }
-
     public void updateThreadMeta(PuppetNodeSession session, AiThread thread) {
         try {
             conversationStore.updateRuntime(session.getSessionId(), thread);
@@ -364,7 +341,6 @@ public class PuppetNodeAiThreadService {
                 record.getCreatedAt() != null ? record.getCreatedAt() : 0L,
                 record.getLastActiveAt() != null ? record.getLastActiveAt() : 0L);
         thread.setAiConfigId(record.getConfigId());
-        thread.setMode(record.getMode());
         thread.setParentThreadId(record.getParentThreadId());
         restoreLatestPlan(thread, threadId);
         conversationStore.attachEventJournal(threadId, thread);
@@ -489,7 +465,6 @@ public class PuppetNodeAiThreadService {
         item.put("configId", thread.getAiConfigId());
         item.put("runStatus", thread.getRunStatus());
         item.put("executing", thread.isExecuting());
-        item.put("mode", thread.getMode());
         item.put("parentThreadId", thread.getParentThreadId());
         item.put("inMemory", true);
         return item;
@@ -509,8 +484,6 @@ public class PuppetNodeAiThreadService {
         item.put("runStatus", record.getRunStatus() != null
                 ? record.getRunStatus() : AiThread.STATUS_IDLE);
         item.put("executing", false);
-        item.put("mode", record.getMode() != null
-                ? record.getMode() : AiThread.MODE_AUTO);
         item.put("parentThreadId", record.getParentThreadId());
         item.put("inMemory", false);
         return item;

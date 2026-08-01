@@ -3,6 +3,7 @@ package org.leo.web.service;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
+import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
@@ -27,6 +28,7 @@ public class AiTurnApplicationService {
     private final PuppetNodeAiThreadService puppetThreads;
     private final PuppetNodeAiTurnService puppetTurns;
     private final AiAuditLogStore auditLogStore;
+    private final AiUserInputService userInputService;
 
     public AiTurnApplicationService(
             AiTurnProtocolService protocol,
@@ -35,7 +37,8 @@ public class AiTurnApplicationService {
             PlatformAiTurnService platformTurns,
             PuppetNodeAiThreadService puppetThreads,
             PuppetNodeAiTurnService puppetTurns,
-            AiAuditLogStore auditLogStore) {
+            AiAuditLogStore auditLogStore,
+            AiUserInputService userInputService) {
         this.protocol = protocol;
         this.store = store;
         this.platformThreads = platformThreads;
@@ -43,6 +46,7 @@ public class AiTurnApplicationService {
         this.puppetThreads = puppetThreads;
         this.puppetTurns = puppetTurns;
         this.auditLogStore = auditLogStore;
+        this.userInputService = userInputService;
     }
 
     /**
@@ -83,12 +87,12 @@ public class AiTurnApplicationService {
         PlatformAiState state = existingState != null
                 ? existingState : PlatformAiStateStore.create(turn.threadId());
         state.setAiConfigId(persisted.getConfigId());
-        state.setMode(persisted.getMode());
         store.attachEventJournal(turn.threadId(), state);
         String executionLeaseToken = null;
 
         try {
             bind(state, turn);
+            state.bindActiveConfirmationRequestId(command.getAnswerToQuestionId());
             if (command.getConfigId() != null) {
                 platformThreads.switchChannel(state, command.getConfigId());
             }
@@ -104,9 +108,12 @@ public class AiTurnApplicationService {
             AiChatAuditEntry audit =
                     platformTurns.appendChatAudit(policy, command.getUserMessage());
             state.offerSseEvent("turn/started", Map.of("turn", turn.toMap()));
+            String messageForAgent = userInputService.resumePrompt(
+                    turn.threadId(), command.getAnswerToQuestionId(),
+                    command.getGuardedMessage());
             return platformTurns.executeChat(
                             state, command.getSessionId(), command.getUserMessage(),
-                            command.getGuardedMessage(), audit, null, startMs,
+                            messageForAgent, audit, null, startMs,
                             command.getReasoningEffort(), command.getAttachments(),
                             turn.id(), turn.userItemId(), turn.assistantItemId())
                     .handle((terminal, error) -> {
@@ -115,7 +122,10 @@ public class AiTurnApplicationService {
                                     turn, state, rootMessage(error), leaseToken);
                         } else {
                             completePlatform(
-                                    turn, state, terminal.runtimeStatus(),
+                                    turn, state,
+                                    state.isWaitingForUserInput()
+                                            ? PlatformAiState.STATUS_WAITING_FOR_USER
+                                            : terminal.runtimeStatus(),
                                     terminal.errorMessage(), leaseToken);
                         }
                         return true;
@@ -148,6 +158,7 @@ public class AiTurnApplicationService {
         String executionLeaseToken = null;
         try {
             bind(thread, turn);
+            thread.bindActiveConfirmationRequestId(command.getAnswerToQuestionId());
             if (command.getConfigId() != null) {
                 puppetThreads.switchChannel(
                         session, turn.threadId(), command.getConfigId());
@@ -164,12 +175,15 @@ public class AiTurnApplicationService {
             AiChatAuditEntry audit = AiChatAuditEntry.puppet(
                     session.getSessionId(), policy.getUserId(),
                     policy.getUserName(), policy.getPrivilege(),
-                    command.getUserMessage(), false);
+                    command.getUserMessage());
             auditLogStore.append(audit);
             thread.offerSseEvent("turn/started", Map.of("turn", turn.toMap()));
+            String messageForAgent = userInputService.resumePrompt(
+                    turn.threadId(), command.getAnswerToQuestionId(),
+                    command.getGuardedMessage());
             return puppetTurns.executeChat(
                             session, thread, turn.threadId(),
-                            command.getGuardedMessage(), audit, null, startMs,
+                            messageForAgent, audit, null, startMs,
                             command.getReasoningEffort(), command.getUserMessage(),
                             command.getAttachments(), turn.id(),
                             turn.userItemId(), turn.assistantItemId())
@@ -179,7 +193,10 @@ public class AiTurnApplicationService {
                                     turn, thread, rootMessage(error), leaseToken);
                         } else {
                             completePuppet(
-                                    turn, thread, terminal.runtimeStatus(),
+                                    turn, thread,
+                                    thread.isWaitingForUserInput()
+                                            ? AiThread.STATUS_WAITING_FOR_USER
+                                            : terminal.runtimeStatus(),
                                     terminal.errorMessage(), leaseToken);
                         }
                         return true;
@@ -205,6 +222,7 @@ public class AiTurnApplicationService {
             state.offerSseEvent(
                     "turn/completed", Map.of("turn", completed.toMap()));
         } finally {
+            state.bindActiveConfirmationRequestId(null);
             platformTurns.releaseExecutionLease(state);
         }
     }
@@ -223,6 +241,7 @@ public class AiTurnApplicationService {
             thread.offerSseEvent(
                     "turn/completed", Map.of("turn", completed.toMap()));
         } finally {
+            thread.bindActiveConfirmationRequestId(null);
             puppetTurns.releaseExecutionLease(thread);
         }
     }
@@ -242,6 +261,7 @@ public class AiTurnApplicationService {
                         "turn/completed", Map.of("turn", failed.toMap()));
             }
         } finally {
+            if (owns) state.bindActiveConfirmationRequestId(null);
             if (owns) platformTurns.releaseExecutionLease(state);
         }
     }
@@ -261,6 +281,7 @@ public class AiTurnApplicationService {
                         "turn/completed", Map.of("turn", failed.toMap()));
             }
         } finally {
+            if (owns) thread.bindActiveConfirmationRequestId(null);
             if (owns) puppetTurns.releaseExecutionLease(thread);
         }
     }

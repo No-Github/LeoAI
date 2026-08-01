@@ -218,7 +218,7 @@ public class PuppetNodeLifecycleService {
         try {
             // 与 /puppet-node/ai/thread/create 完全复用同一条创建链路：
             // 内存线程、数据库记录、模型配置和会话预热保持一致。
-            aiThreadService.createThread(session, "对话 1", null, null);
+            aiThreadService.createThread(session, "对话 1", null);
         } catch (Exception ex) {
             logger.warn("创建初始 AI 线程失败, puppetId={}, sessionId={}: {}",
                     puppetId, session.getSessionId(), ex.getMessage());

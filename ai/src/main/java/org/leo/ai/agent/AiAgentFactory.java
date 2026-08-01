@@ -5,38 +5,14 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.leo.ai.service.AutoReconAppendService;
-import org.leo.ai.tools.platform.DisguiseTools;
-import org.leo.ai.tools.platform.FingerprintTools;
-import org.leo.ai.tools.platform.PluginTools;
-import org.leo.ai.tools.platform.PlatformPlanTools;
-import org.leo.ai.tools.platform.PuppetTools;
-import org.leo.ai.tools.platform.ShellGeneratorTools;
-import org.leo.ai.tools.platform.SkillActivationTools;
-import org.leo.ai.tools.platform.TeamTools;
-import org.leo.ai.tools.platform.UserTools;
-import org.leo.ai.tools.puppetnode.BasicInfoTools;
-import org.leo.ai.tools.puppetnode.BrowserDataTools;
-import org.leo.ai.tools.puppetnode.WebRuntimeTools;
-import org.leo.ai.tools.puppetnode.ClipboardTools;
-import org.leo.ai.tools.puppetnode.CommandTools;
-import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
-import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
-import org.leo.ai.tools.puppetnode.FileTools;
-import org.leo.ai.tools.puppetnode.HttpRequestTools;
-import org.leo.ai.tools.puppetnode.JavaPluginTools;
-import org.leo.ai.tools.puppetnode.PlanTools;
-import org.leo.ai.tools.puppetnode.ResourceTools;
-import org.leo.ai.tools.puppetnode.ReverseTunnelTools;
-import org.leo.ai.tools.puppetnode.ScanTools;
-import org.leo.ai.tools.puppetnode.ScriptTools;
-import org.leo.ai.tools.puppetnode.SessionTools;
-import org.leo.ai.tools.puppetnode.SqlTools;
-import org.leo.ai.tools.puppetnode.UtilTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+
+import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PLATFORM;
+import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE;
 
 /**
  * Agent 构建工厂。
@@ -51,108 +27,38 @@ public class AiAgentFactory {
     private final AiChatMemoryProviderFactory memoryProviderFactory;
     private final PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider;
     private final PlatformSystemPromptProvider platformSystemPromptProvider;
-    private final CommandTools commandTools;
-    private final BasicInfoTools basicInfoTools;
-    private final ReverseTunnelTools reverseTunnelTools;
-    private final UtilTools utilTools;
-    private final FileTools fileTools;
-    private final ScanTools scanTools;
-    private final BrowserDataTools browserDataTools;
-    private final CredentialHarvestTools credentialHarvestTools;
-    private final DatabaseConnectionTools databaseConnectionTools;
-    private final ClipboardTools clipboardTools;
-    private final WebRuntimeTools webRuntimeTools;
-    private final JavaPluginTools javaPluginTools;
-    private final HttpRequestTools httpRequestTools;
-    private final ScriptTools scriptTools;
-    private final SqlTools sqlTools;
-    private final ResourceTools resourceTools;
-    private final SessionTools sessionTools;
-    private final PlanTools planTools;
-    private final SkillActivationTools puppetNodeSkillActivationTools;
+    private final PuppetNodeToolBundle puppetNodeToolBundle;
+    private final PlatformToolBundle platformToolBundle;
     private final AutoReconAppendService autoReconAppendService;
-    private final PuppetTools puppetTools;
-    private final UserTools userTools;
-    private final TeamTools teamTools;
-    private final PluginTools pluginTools;
-    private final FingerprintTools fingerprintTools;
-    private final DisguiseTools disguiseTools;
-    private final ShellGeneratorTools shellGeneratorTools;
-    private final SkillActivationTools platformSkillActivationTools;
-    private final PlatformPlanTools platformPlanTools;
     private final AiToolErrorHandler toolErrorHandler;
-    private final ExecutorService aiToolExecutor;
+    private final AiToolAuthorizationPolicy toolAuthorizationPolicy;
+    private final ExecutorService puppetNodeToolExecutor;
+    private final ExecutorService platformToolExecutor;
 
     public AiAgentFactory(ChatMemoryProvider memoryProvider,
                           AiChatMemoryProviderFactory memoryProviderFactory,
                           PuppetNodeSystemPromptProvider puppetNodeSystemPromptProvider,
                           PlatformSystemPromptProvider platformSystemPromptProvider,
-                          CommandTools commandTools,
-                          BasicInfoTools basicInfoTools,
-                          ReverseTunnelTools reverseTunnelTools,
-                          UtilTools utilTools,
-                          FileTools fileTools,
-                          ScanTools scanTools,
-                          BrowserDataTools browserDataTools,
-                          CredentialHarvestTools credentialHarvestTools,
-                          DatabaseConnectionTools databaseConnectionTools,
-                          ClipboardTools clipboardTools,
-                          WebRuntimeTools webRuntimeTools,
-                          JavaPluginTools javaPluginTools,
-                          HttpRequestTools httpRequestTools,
-                          ScriptTools scriptTools,
-                          SqlTools sqlTools,
-                          ResourceTools resourceTools,
-                          SessionTools sessionTools,
-                          PlanTools planTools,
-                          @Qualifier("puppetNodeSkillActivationTools") SkillActivationTools puppetNodeSkillActivationTools,
+                          PuppetNodeToolBundle puppetNodeToolBundle,
+                          PlatformToolBundle platformToolBundle,
                           AutoReconAppendService autoReconAppendService,
-                          PuppetTools puppetTools,
-                          UserTools userTools,
-                          TeamTools teamTools,
-                          PluginTools pluginTools,
-                          FingerprintTools fingerprintTools,
-                          DisguiseTools disguiseTools,
-                          ShellGeneratorTools shellGeneratorTools,
-                          @Qualifier("platformSkillActivationTools") SkillActivationTools platformSkillActivationTools,
-                          PlatformPlanTools platformPlanTools,
                           AiToolErrorHandler toolErrorHandler,
-                          ExecutorService aiToolExecutor) {
+                          AiToolAuthorizationPolicy toolAuthorizationPolicy,
+                          @Qualifier("puppetNodeAiToolExecutor")
+                          ExecutorService puppetNodeToolExecutor,
+                          @Qualifier("platformAiToolExecutor")
+                          ExecutorService platformToolExecutor) {
         this.memoryProvider = memoryProvider;
         this.memoryProviderFactory = memoryProviderFactory;
         this.puppetNodeSystemPromptProvider = puppetNodeSystemPromptProvider;
         this.platformSystemPromptProvider = platformSystemPromptProvider;
-        this.commandTools = commandTools;
-        this.basicInfoTools = basicInfoTools;
-        this.reverseTunnelTools = reverseTunnelTools;
-        this.utilTools = utilTools;
-        this.fileTools = fileTools;
-        this.scanTools = scanTools;
-        this.browserDataTools = browserDataTools;
-        this.credentialHarvestTools = credentialHarvestTools;
-        this.databaseConnectionTools = databaseConnectionTools;
-        this.clipboardTools = clipboardTools;
-        this.webRuntimeTools = webRuntimeTools;
-        this.javaPluginTools = javaPluginTools;
-        this.httpRequestTools = httpRequestTools;
-        this.scriptTools = scriptTools;
-        this.sqlTools = sqlTools;
-        this.resourceTools = resourceTools;
-        this.sessionTools = sessionTools;
-        this.planTools = planTools;
-        this.puppetNodeSkillActivationTools = puppetNodeSkillActivationTools;
+        this.puppetNodeToolBundle = puppetNodeToolBundle;
+        this.platformToolBundle = platformToolBundle;
         this.autoReconAppendService = autoReconAppendService;
-        this.puppetTools = puppetTools;
-        this.userTools = userTools;
-        this.teamTools = teamTools;
-        this.pluginTools = pluginTools;
-        this.fingerprintTools = fingerprintTools;
-        this.disguiseTools = disguiseTools;
-        this.shellGeneratorTools = shellGeneratorTools;
-        this.platformSkillActivationTools = platformSkillActivationTools;
-        this.platformPlanTools = platformPlanTools;
         this.toolErrorHandler = toolErrorHandler;
-        this.aiToolExecutor = aiToolExecutor;
+        this.toolAuthorizationPolicy = toolAuthorizationPolicy;
+        this.puppetNodeToolExecutor = puppetNodeToolExecutor;
+        this.platformToolExecutor = platformToolExecutor;
     }
 
     public PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel, ChatModel chatModel) {
@@ -182,7 +88,7 @@ public class AiAgentFactory {
                 .chatModel(chatModel)
                 .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(puppetNodeSystemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(aiToolExecutor)
+                .executeToolsConcurrently(puppetNodeToolExecutor)
                 .toolArgumentsErrorHandler(
                         toolErrorHandler::handleArguments)
                 .toolExecutionErrorHandler(
@@ -191,8 +97,11 @@ public class AiAgentFactory {
                         toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
                     if (execution != null && execution.invocationContext() != null) {
-                        AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
+                        toolAuthorizationPolicy.bindContext(
+                                PUPPET_NODE,
+                                execution.invocationContext().chatMemoryId());
                     }
+                    checkPuppetPlanTimeouts();
                     autoAssociatePlanStep();
                 })
                 .afterToolExecution(execution -> {
@@ -210,14 +119,8 @@ public class AiAgentFactory {
                     }
                 });
         if (enableTools) {
-            builder.tools(commandTools, basicInfoTools,
-                    reverseTunnelTools,
-                    utilTools, fileTools,
-                    scanTools, browserDataTools, credentialHarvestTools,
-                    databaseConnectionTools, clipboardTools,
-                    webRuntimeTools, javaPluginTools,
-                    httpRequestTools, scriptTools, sqlTools, resourceTools,
-                    sessionTools, planTools, puppetNodeSkillActivationTools);
+            builder.toolProvider(toolAuthorizationPolicy.toolProvider(
+                    PUPPET_NODE, puppetNodeToolBundle.tools().toArray()));
         }
         return builder.build();
     }
@@ -264,7 +167,7 @@ public class AiAgentFactory {
                 .streamingChatModel(streamingModel)
                 .chatMemoryProvider(selectedMemoryProvider)
                 .systemMessageProvider(platformSystemPromptProvider::getSystemMessage)
-                .executeToolsConcurrently(aiToolExecutor)
+                .executeToolsConcurrently(platformToolExecutor)
                 .toolArgumentsErrorHandler(
                         toolErrorHandler::handleArguments)
                 .toolExecutionErrorHandler(
@@ -273,8 +176,11 @@ public class AiAgentFactory {
                         toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
                     if (execution != null && execution.invocationContext() != null) {
-                        AiToolContext.setFromMemoryId(execution.invocationContext().chatMemoryId());
+                        toolAuthorizationPolicy.bindContext(
+                                PLATFORM,
+                                execution.invocationContext().chatMemoryId());
                     }
+                    checkPlatformPlanTimeouts();
                 })
                 .afterToolExecution(execution -> {
                     try {
@@ -289,13 +195,8 @@ public class AiAgentFactory {
                     }
                 });
         if (enableTools) {
-            builder.tools(puppetTools, userTools, teamTools,
-                    pluginTools, fingerprintTools, disguiseTools,
-                    shellGeneratorTools, platformPlanTools,
-                    platformSkillActivationTools);
-            if (additionalTools != null) {
-                builder.tools(additionalTools);
-            }
+            builder.toolProvider(toolAuthorizationPolicy.toolProvider(
+                    PLATFORM, platformToolBundle.toolsWith(additionalTools).toArray()));
         }
         return builder.build();
     }
@@ -303,7 +204,7 @@ public class AiAgentFactory {
     private static final java.util.Set<String> AUTO_RECON_APPEND_SKIPPED_TOOLS = java.util.Set.of(
             "manage_recon_summary",
             "createPlan", "updatePlan", "getPlan", "deletePlan",
-            "activate_skill"
+            "activate_skill", "request_user_input"
     );
 
     private void triggerAutoReconAppend(dev.langchain4j.service.tool.ToolExecution execution) {
@@ -315,7 +216,7 @@ public class AiAgentFactory {
         String sessionId = AiToolContext.getSessionId();
         if (sessionId == null || sessionId.isBlank()) return;
 
-        String result = execution.result();
+        String result = resultForInternalUse(execution);
         if (result == null || result.isBlank()) return;
 
         try {
@@ -330,35 +231,71 @@ public class AiAgentFactory {
     private static final java.util.Set<String> PLAN_TOOLS = java.util.Set.of(
             "createPlan", "updatePlanStep", "completePlan");
 
+    private static void checkPuppetPlanTimeouts() {
+        try {
+            var thread = resolveCurrentPuppetThread();
+            if (thread == null || thread.getCurrentPlan() == null) return;
+            var plan = thread.getCurrentPlan();
+            if (plan.checkStepTimeouts() <= 0) return;
+            java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("kind", "plan");
+            payload.put("planId", plan.getPlanId());
+            payload.put("title", plan.getTitle());
+            payload.put("goal", plan.getGoal());
+            payload.put("status", plan.getStatus().name());
+            payload.put("steps", plan.getSteps());
+            thread.offerSseEvent("patch", payload);
+        } catch (Exception ignored) {
+            // 超时检查不应阻断工具调用
+        }
+    }
+
+    private static void checkPlatformPlanTimeouts() {
+        try {
+            String stateId = AiToolContext.getSessionId();
+            if (stateId == null || stateId.isBlank()) return;
+            var state = org.leo.ai.platform.PlatformAiStateStore.get(stateId);
+            if (state == null || state.getCurrentPlan() == null) return;
+            if (state.getCurrentPlan().checkStepTimeouts() > 0) {
+                state.notifyPlanUpdated();
+            }
+        } catch (Exception ignored) {
+            // 超时检查不应阻断工具调用
+        }
+    }
+
     private static void autoAssociatePlanStep() {
         try {
-            String sessionId = AiToolContext.getSessionId();
-            String threadId = AiToolContext.getThreadId();
-            if (sessionId == null || sessionId.isBlank()) return;
-
-            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
-            if (session == null) return;
-
-            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
+            var thread = resolveCurrentPuppetThread();
             if (thread == null) return;
 
             var plan = thread.getCurrentPlan();
             if (plan == null) return;
-
-            var steps = plan.getSteps();
-            if (steps == null) return;
-
-            for (int i = 0; i < steps.size(); i++) {
-                var step = steps.get(i);
-                if (step.getStatus().name().equals("RUNNING")) {
-                    AiToolContext.setPlanStepIndex(step.getIndex());
-                    AiToolContext.setPlanStepPreApproved(step.isPreApproved());
-                    return;
-                }
-            }
+            int stepIndex = findInProgressStepIndex(plan);
+            if (stepIndex >= 0) AiToolContext.setPlanStepIndex(stepIndex);
         } catch (Exception ignored) {
             // best-effort，失败不影响工具执行
         }
+    }
+
+    private static org.leo.core.session.AiThread resolveCurrentPuppetThread() {
+        String sessionId = AiToolContext.getSessionId();
+        String threadId = AiToolContext.getThreadId();
+        if (sessionId == null || sessionId.isBlank()) return null;
+        var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
+        if (session == null) return null;
+        return threadId != null && !threadId.isBlank()
+                ? session.getAiThread(threadId) : session.getActiveThread();
+    }
+
+    static int findInProgressStepIndex(org.leo.core.entity.AiPlan plan) {
+        if (plan == null || plan.getSteps() == null) return -1;
+        for (var step : plan.getSteps()) {
+            if (step.getStatus() == org.leo.core.entity.AiStepStatus.IN_PROGRESS) {
+                return step.getIndex();
+            }
+        }
+        return -1;
     }
 
     private static void autoAppendToolResultToPlanStep(
@@ -416,7 +353,7 @@ public class AiAgentFactory {
             }
         } else {
             sb.append(" 完成");
-            String result = execution.result();
+            String result = resultForInternalUse(execution);
             if (result != null && !result.isBlank()) {
                 String firstLine = result.lines().findFirst().orElse("");
                 String shortResult = firstLine.length() > 80 ? firstLine.substring(0, 80) + "…" : firstLine;
@@ -424,6 +361,21 @@ public class AiAgentFactory {
             }
         }
         return sb.toString();
+    }
+
+    private static String resultForInternalUse(
+            dev.langchain4j.service.tool.ToolExecution execution) {
+        if (execution == null) return null;
+        Object raw = execution.resultObject();
+        if (raw instanceof String text) return text;
+        if (raw != null) {
+            try {
+                return org.leo.core.util.json.JsonUtil.toJsonString(raw);
+            } catch (RuntimeException ignored) {
+                return String.valueOf(raw);
+            }
+        }
+        return execution.result();
     }
 
     private static Map<String, Object> buildPlanStepPatch(

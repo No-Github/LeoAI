@@ -7,6 +7,7 @@ import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.runtime.AiTurnOrchestrator;
 import org.leo.ai.runtime.AiTurnOutcome;
+import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
@@ -91,13 +92,15 @@ class AiTurnApplicationServiceTest {
         PuppetNodeAiThreadService puppetThreads = mock(PuppetNodeAiThreadService.class);
         PuppetNodeAiTurnService puppetTurns = mock(PuppetNodeAiTurnService.class);
         AiAuditLogStore auditLogStore = mock(AiAuditLogStore.class);
+        AiUserInputService userInputService = mock(AiUserInputService.class);
+        when(userInputService.resumePrompt(anyString(), nullable(String.class), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(2));
         AiTurnApplicationService application = new AiTurnApplicationService(
                 protocol, store, platformThreads, platformTurns,
-                puppetThreads, puppetTurns, auditLogStore);
+                puppetThreads, puppetTurns, auditLogStore, userInputService);
 
         AiThreadRecord persisted = new AiThreadRecord();
         persisted.setThreadId("thread-1");
-        persisted.setMode("auto");
         when(store.findThread("thread-1")).thenReturn(persisted);
 
         PlatformAiState state = PlatformAiStateStore.create("thread-1");

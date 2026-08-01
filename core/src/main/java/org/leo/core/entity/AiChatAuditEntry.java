@@ -30,8 +30,6 @@ public class AiChatAuditEntry {
     private String messageSummary;
     /** 本轮触发的工具调用数 */
     private int toolCallCount;
-    /** 是否为确认执行请求 */
-    private boolean confirmed;
     /** 结果状态：ok / error */
     private String status;
     /** AI 回复摘要（最多 200 字符）或错误信息 */
@@ -45,18 +43,18 @@ public class AiChatAuditEntry {
     // ─── Builder-style factory ────────────────────────────────────────────────
 
     public static AiChatAuditEntry platform(String userId, String userName, String privilege,
-                                            String message, boolean confirmed) {
-        return create(SessionType.PLATFORM, null, userId, userName, privilege, message, confirmed);
+                                            String message) {
+        return create(SessionType.PLATFORM, null, userId, userName, privilege, message);
     }
 
     public static AiChatAuditEntry puppet(String sessionId, String userId, String userName,
-                                          String privilege, String message, boolean confirmed) {
-        return create(SessionType.PUPPET, sessionId, userId, userName, privilege, message, confirmed);
+                                          String privilege, String message) {
+        return create(SessionType.PUPPET, sessionId, userId, userName, privilege, message);
     }
 
     private static AiChatAuditEntry create(SessionType type, String sessionId,
                                             String userId, String userName, String privilege,
-                                            String message, boolean confirmed) {
+                                            String message) {
         AiChatAuditEntry e = new AiChatAuditEntry();
         e.id = UUID.randomUUID().toString();
         e.timestamp = System.currentTimeMillis();
@@ -66,7 +64,6 @@ public class AiChatAuditEntry {
         e.userName = userName;
         e.privilege = privilege;
         e.messageSummary = truncate(message, 200);
-        e.confirmed = confirmed;
         e.status = "pending";
         return e;
     }
@@ -100,7 +97,6 @@ public class AiChatAuditEntry {
     public String getPrivilege() { return privilege; }
     public String getMessageSummary() { return messageSummary; }
     public int getToolCallCount() { return toolCallCount; }
-    public boolean isConfirmed() { return confirmed; }
     public String getStatus() { return status; }
     public String getReplySummary() { return replySummary; }
     public long getDurationMs() { return durationMs; }

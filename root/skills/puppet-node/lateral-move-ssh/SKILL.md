@@ -1,353 +1,125 @@
 ---
 name: lateral-move-ssh
-description: 利用已收集的 SSH 私钥或密码凭据，尝试横向移动到内网其他主机。当发现 SSH 私钥、SSH 密码或内网存活主机开放 22 端口时使用。
-enabled: true
-tags:
-  - lateral-movement
-  - linux
+description: 使用已授权且已匹配的 SSH 私钥，对明确指定的内网 Linux 目标执行单跳登录和最小分诊，验证能否获得对任务有价值的新立足点。当红队人员已有目标、用户名、私钥路径并明确要求横向验证时使用；不得用于密码喷洒、用户名猜测或自动多跳。
 ---
 
-# SSH 横向移动
+# SSH 单跳横向验证
 
-当已收集到 SSH 凭据（私钥或密码）且内网存在开放 22 端口的主机时，使用本 skill 尝试横向移动建立新立足点。
+用一次受控认证回答：凭据是否有效、远端权限是什么、新立足点是否比当前主机更接近演练目标。
 
-> 前置条件：需已完成 `hunt-credentials`（获取 SSH 凭据）和 `recon-internal-network`（识别 22 端口存活主机）。
+## 行动目标
 
----
+- 验证一条明确的“源立足点—凭据—目标”路径。
+- 成功后在同一 SSH 会话中完成最小主机分诊。
+- 判断新主机的权限收益、网络收益、凭据收益和任务价值。
+- 达到目标或没有新增价值时停止，不自动继续下一跳。
 
-## 一、OPSEC 与约束
+## 必要输入
 
-| 原则 | 说明 |
-|---|---|
-| 最小尝试 | 每个目标最多尝试 3 组凭据，避免触发 fail2ban 或告警 |
-| 静默优先 | 不使用 SSH 交互模式，使用 `-o BatchMode=yes` 避免密码交互阻塞 |
-| 不修改 | 不修改目标 authorized_keys、不植入持久化，仅验证可达性和执行只读侦察 |
-| 不扩散 | 不在新主机上继续自动横向，每跳需用户确认 |
-| 日志意识 | SSH 登录会写入目标 auth.log/secure，提醒用户注意痕迹 |
+- 用户授权的目标主机和端口。
+- 明确用户名，不猜测常见账号。
+- 可直接引用的私钥路径或既有 SSH 配置。
+- 已知或待核验的主机密钥指纹。
+- 本次只读远端命令和成功标准。
 
-**确认机制：**
-- 首次 SSH 连接尝试需要用户确认（高影响操作）
-- 连接成功后执行的命令默认只读（whoami、id、hostname、ifconfig）
-- 任何写入操作需要再次确认
+缺少凭据时交接 `hunt-credentials`；缺少目标时请求用户提供，不自动扫描网段。
 
----
+## 授权与 ROE
 
-## 二、目标
+- 风险等级：high；访问模式：active-login。
+- 每次确认只覆盖一个目标和一组凭据。
+- 不通过命令行参数传递明文密码，不喷洒、不轮换账号或凭据。
+- 不跳过主机密钥校验，不进入交互 Shell。
+- 不修改远端文件、authorized_keys、任务、服务或日志。
+- 不在新主机自动继续横向；每一跳都要重新选择路径并确认。
+- 摘要记录凭据来源和指纹，不记录密码或私钥正文。
 
-- 验证已获取的 SSH 凭据在哪些内网主机上有效
-- 确认登录后的权限级别（root / 普通用户 / 受限 shell）
-- 收集新立足点的基础信息（OS、网络接口、用户身份）
-- 评估新立足点的横向移动价值（是否有新网段、新凭据、更高权限）
+## OPSEC 与失败预算
 
----
+- 主机指纹采集最多一次，登录认证最多一次。
+- `Permission denied` 后立即停止，不用其他用户名或密钥补试。
+- 超时或拒绝后不自动扫描替代端口。
+- 成功后所有分诊在一次连接中完成，减少认证和会话日志。
+- 预先说明目标 `auth.log`/`secure`、lastlog/wtmp 和网络监控可见性。
 
-## 三、Skill 元数据
+## 目标优先级
 
-- riskLevel: `high`
-- accessMode: `active_exploit`
-- requiredTools: `CommandTools`, `FileTools`
-- optionalTools: `ScanTools`, `CredentialHarvestTools`
-- produces: `lateralMovement.sshAccess[]`, `lateralMovement.newFootholds[]`, `openQuestions`
-- structuredPatchPaths: `lateralMovement.sshAccess[]`, `lateralMovement.newFootholds[]`
-- recommendedNextSkills: `recon-basic-info` (在新立足点), `hunt-credentials` (在新立足点), `escalate-linux-privilege` (如果非 root)
-- forbiddenByDefault: 修改 authorized_keys、植入后门、在新主机继续自动横向、删除日志
+只有满足必要输入的候选才可执行。优先选择：
 
----
+1. 与用户指定业务目标直接相关的主机。
+2. 已有 SSH config/known_hosts 关联且凭据映射明确的主机。
+3. 预计带来新网段、运维权限、关键服务或更高权限的主机。
+4. 成功率更高、失败锁定风险更低、噪声更可控的路径。
 
-## 四、工作流程
+不要仅因 22 端口开放就尝试登录。
 
-### 执行前：制定计划
+## 工作流
 
-在任何工具调用前，先输出：
+1. 读取摘要，确认源立足点、目标价值、凭据来源和授权边界。
+2. 创建计划：路径核验、用户确认、单次登录、价值评估与交接。
+3. 只读检查 SSH 客户端、私钥路径、权限、公钥指纹和 known_hosts。
+4. 主机密钥未知时低频采集一次指纹，并与登录动作一起请求确认。
+5. 调用 `request_user_input`，列明源/目标、端口、用户名、凭据来源、主机指纹、远端命令、认证次数、日志影响和停止条件；随后停止本轮。
+6. 用户确认后执行批准的单次登录和一次性分诊。
+7. 评估新立足点价值，用一次摘要追加保存结果并完成计划。
 
-1. **目标**：利用已收集的 SSH 凭据尝试横向移动到内网主机，验证凭据有效性并收集新立足点信息。
-2. **路径**：整理凭据-目标匹配矩阵 → 按优先级尝试连接 → 成功后执行只读侦察 → 评估价值。
-3. **终止条件**：至少成功建立一个新立足点，或所有高优先级目标均已尝试且失败时停止。
-
-必须先读取侦察摘要，提取：
-- `credentials.sshKeys` — SSH 私钥路径和内容
-- `credentials.generic` — 可能包含 SSH 密码的条目
-- `networkProfile.liveHosts` — 存活主机列表
-- `serviceProfile.openPorts` — 开放 22 端口的主机
-
-### 第一阶段：构建凭据-目标匹配矩阵
-
-从侦察摘要中提取并组合：
-
-**凭据来源：**
-
-| 类型 | 来源 | 使用方式 |
-|---|---|---|
-| SSH 私钥 | `~/.ssh/id_rsa`, `~/.ssh/id_ed25519` 等 | `-i <keyfile>` |
-| 明文密码 | 环境变量、配置文件、进程参数 | `sshpass -p` 或记录待手动输入 |
-| known_hosts | `~/.ssh/known_hosts` | 提取历史连接目标 |
-| SSH config | `~/.ssh/config` | 提取别名、用户名、端口映射 |
-
-**目标排序优先级：**
-
-| 优先级 | 条件 | 理由 |
-|---|---|---|
-| P0 | known_hosts 中存在 + 22 端口开放 | 历史连接过，凭据极可能有效 |
-| P1 | SSH config 中配置的主机 | 管理员预设，凭据匹配率高 |
-| P2 | 同网段 + 22 端口开放 | 内网同段常共享凭据 |
-| P3 | 跨网段 + 22 端口开放 | 可能是跳板机或管理网 |
-
-**用户名猜测顺序：**
-1. SSH config 中指定的用户名
-2. 当前主机的用户名（`whoami`）
-3. 私钥文件所在目录的属主
-4. 常见用户名：`root`、`admin`、`deploy`、`app`、`ops`
-
-### 第二阶段：准备与验证
-
-在尝试连接前，先做环境检查：
+## 确认前核验
 
 ```bash
-# 确认 ssh 客户端可用
-which ssh
-
-# 确认私钥文件权限（权限过宽会被拒绝）
-ls -la ~/.ssh/id_*
-
-# 如果私钥权限不对，需修复（需确认）
-# chmod 600 <keyfile>
-
-# 检查 known_hosts 中的历史目标
-cat ~/.ssh/known_hosts | awk '{print $1}' | sort -u
-
-# 检查 SSH config
-cat ~/.ssh/config
+command -v ssh; ls -l <keyfile>; ssh-keygen -lf <keyfile>.pub 2>/dev/null
+ssh-keygen -F <target> 2>/dev/null
 ```
 
-如果 `ssh` 不可用，尝试定位其他路径（`/usr/bin/ssh`、`/usr/local/bin/ssh`）；如果确实没有 SSH 客户端，skill 无法继续，报告终止。
+只有私钥时，可用 `ssh-keygen -y -f <keyfile>` 派生公钥并计算指纹；不要输出或保存私钥正文。
 
-### 第三阶段：连接尝试（需用户确认）
-
-按优先级逐个尝试，每个目标最多 3 组凭据。
-
-**私钥方式：**
+主机密钥未知时：
 
 ```bash
-# BatchMode 避免交互阻塞；StrictHostKeyChecking=no 避免首次连接确认阻塞
-ssh -o BatchMode=yes \
-    -o StrictHostKeyChecking=no \
-    -o ConnectTimeout=5 \
-    -i <keyfile> \
-    <user>@<target> \
-    "echo SSH_OK && whoami && hostname && id"
+ssh-keyscan -T 5 -p <port> <target> 2>/dev/null | ssh-keygen -lf -
 ```
 
-**密码方式（需要 sshpass）：**
+指纹在确认前后发生变化时停止，报告潜在中间人风险。
+
+## 单次登录与分诊
 
 ```bash
-# 先确认 sshpass 可用
-which sshpass
-
-sshpass -p '<password>' ssh \
-    -o StrictHostKeyChecking=no \
-    -o ConnectTimeout=5 \
-    <user>@<target> \
-    "echo SSH_OK && whoami && hostname && id"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=5 \
+  -p <port> -i <keyfile> <user>@<target> \
+  "echo SSH_OK; whoami; id; hostname; uname -a; cat /etc/os-release 2>/dev/null; ip addr 2>/dev/null || ifconfig 2>/dev/null; ip route 2>/dev/null || netstat -rn 2>/dev/null; ss -tln 2>/dev/null || netstat -tln 2>/dev/null; sudo -n -l 2>/dev/null; ps -eo pid,user,comm --no-header 2>/dev/null | head -60"
 ```
 
-**结果判断：**
+如果需要临时 `known_hosts` 文件，创建、使用和清理都必须包含在确认范围内，且严格绑定采集到的指纹。
 
-| 输出 | 含义 | 下一步 |
-|---|---|---|
-| `SSH_OK` + 身份信息 | 登录成功 | 进入第四阶段 |
-| `Permission denied` | 凭据无效 | 换下一组凭据或下一个目标 |
-| `Connection refused` | 端口未开放或被防火墙拦截 | 跳过该目标 |
-| `Connection timed out` | 网络不可达 | 跳过该目标 |
-| `Host key verification failed` | 主机密钥变更 | `-o StrictHostKeyChecking=no` 已处理 |
-| `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED` | 中间人风险 | 标注警告，由用户决定是否继续 |
+## 新立足点价值评估
 
-### 第四阶段：新立足点快速侦察（只读）
+- 权限收益：root、sudo NOPASSWD、特殊组或仅普通用户。
+- 网络收益：新接口、路由、DNS、代理或当前源主机不可见网段。
+- 目标收益：是否托管指定业务、数据库、运维或控制服务。
+- 凭据收益：是否存在值得后续定向猎取的配置或账号线索；不读取正文。
+- 继续成本：下一步的认证、写入、日志和检测风险。
 
-连接成功后，在单次 SSH 命令中执行只读侦察（避免多次连接增加日志条目）：
+## 成功与停止条件
 
-```bash
-ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-    -i <keyfile> <user>@<target> \
-    "echo '=== IDENTITY ===' && whoami && id && hostname && \
-     echo '=== OS ===' && (cat /etc/os-release 2>/dev/null || uname -a) && \
-     echo '=== NETWORK ===' && (ip addr 2>/dev/null || ifconfig) && \
-     echo '=== ROUTES ===' && (ip route 2>/dev/null || netstat -rn) && \
-     echo '=== LISTENING ===' && (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) && \
-     echo '=== USERS ===' && (cat /etc/passwd | grep -v nologin | grep -v false) && \
-     echo '=== SUDO ===' && (sudo -l 2>/dev/null || echo 'sudo not available') && \
-     echo '=== SSH_KEYS ===' && (ls -la ~/.ssh/ 2>/dev/null || echo 'no .ssh dir') && \
-     echo '=== DOCKER ===' && (docker ps 2>/dev/null || echo 'no docker')"
-```
+成功：收到 `SSH_OK` 和远端身份，且完成价值评估；即使新主机价值低，也视为路径验证完成。
 
-**评估维度：**
+立即停止并报告：
 
-| 维度 | 高价值信号 |
-|---|---|
-| 权限 | root 或有 sudo NOPASSWD |
-| 新网段 | 发现当前主机不可达的网段 |
-| 凭据跳板 | .ssh 目录有更多私钥或 known_hosts |
-| 服务 | 运行数据库、配置中心等高价值服务 |
-| 容器 | Docker 环境可能逃逸 |
+- 凭据拒绝、网络超时、端口拒绝或主机密钥异常。
+- 目标或远端身份超出授权范围。
+- 登录成功但无新增权限、网络或任务价值。
+- 下一步需要写入、提权利用或继续横向。
 
----
-
-## 五、工具优先级
-
-| 优先级 | 工具 | 用途 |
-|---|---|---|
-| 1 | `CommandTools.exec` | SSH 连接尝试（设置合理超时，避免阻塞） |
-| 2 | `FileTools.readTextFile` | 读取 known_hosts、SSH config、私钥文件 |
-| 3 | `CommandTools.exec` | 快速环境检查（which ssh、ls .ssh） |
-| 4 | `ScanTools` | 补充确认目标 22 端口状态 |
-
-**超时设置：**
-- SSH 连接尝试使用 `exec`，timeout 建议 15-20 秒（含网络延迟 + 认证）
-- 快速检查使用 `exec`
-
----
-
-## 六、失败回退
-
-| 场景 | 回退策略 |
-|---|---|
-| ssh 客户端不存在 | 检查 /usr/bin/ssh、/usr/local/bin/ssh；不可用则终止 |
-| sshpass 不存在 | 跳过密码方式，仅使用私钥；提示用户密码目标需手动验证 |
-| 私钥权限过宽 (0644) | 请求确认后 chmod 600（写操作需确认） |
-| 所有凭据均失败 | 检查用户名是否匹配、端口是否非标准（从 SSH config 或 nmap 获取） |
-| 目标使用非标端口 | 从扫描结果或 SSH config 获取实际端口，加 `-p <port>` |
-| 连接被 fail2ban 封禁 | 停止对该目标的尝试，等待或换源 IP |
-| SSH 版本不兼容 | 添加 `-o KexAlgorithms=+diffie-hellman-group1-sha1` 等兼容选项 |
-
----
-
-## 七、输出格式
+## 摘要与交接
 
 ```markdown
-## SSH 横向移动摘要
-
-**尝试目标数**：{n}
-**成功登录数**：{n}
-**新立足点数**：{n}
-
----
-
-## 凭据-目标匹配矩阵
-
-| 目标 IP | 端口 | 用户名 | 凭据类型 | 凭据来源 | 结果 |
-|---------|------|--------|---------|---------|------|
-| 10.0.0.12 | 22 | root | 私钥 | ~/.ssh/id_rsa | 成功 |
-| 10.0.0.15 | 22 | app | 密码 | env:SSH_PASS | 拒绝 |
-
-## 成功立足点
-
-### {IP} — {hostname}
-
-- **登录用户**：{user}
-- **权限级别**：{root / sudo / 普通用户}
-- **操作系统**：{os_info}
-- **新发现网段**：{new_cidrs or "无"}
-- **监听服务**：{key_services}
-- **二次横向潜力**：{high / medium / low}
-- **理由**：{assessment}
-
-## 失败记录
-
-| 目标 | 失败原因 | 备注 |
-|------|---------|------|
-| 10.0.0.15 | Permission denied (3/3) | 所有凭据无效 |
-
-## 风险提示
-
-- 登录行为已写入目标主机 /var/log/auth.log（或 /var/log/secure）
-- {other_opsec_notes}
-
-## 下一步建议
-
-根据成功的立足点情况给出 2~3 条建议：
-- 新立足点发现更多网段 → "建议在新立足点执行 recon-internal-network 探测新网段"
-- 新立足点有更多 SSH 私钥 → "建议在新立足点执行 hunt-credentials 继续凭据收集"
-- 新立足点为普通用户 → "建议执行 escalate-linux-privilege 尝试提权"
-- 新立足点运行数据库 → "建议执行 collect-jdbc-connection-info 收集本地数据库信息"
+## SSH 横向路径更新
+- 源立足点 → 目标：...
+- 用户名、凭据来源和指纹：...
+- 主机指纹与认证结果：...
+- 远端身份和权限：...
+- 权限/网络/目标/凭据收益：...
+- 已产生痕迹：SSH 认证与登录记录
+- 建议：继续分诊 / 提权评估 / 凭据猎取 / 停止扩散
 ```
 
----
-
-## 八、结构化摘要写入
-
-完成后必须：
-
-1. `manage_recon_summary(action="append")` — 记录成功/失败的目标、使用的凭据类型、新立足点关键信息
-2. `manage_recon_summary(action="append")` — 合并机器可读字段
-
-结构化 patch 示例：
-
-```json
-{
-  "lateralMovement": {
-    "sshAccess": [
-      {
-        "target": "10.0.0.12",
-        "port": 22,
-        "user": "root",
-        "credentialType": "privateKey",
-        "credentialSource": "/home/app/.ssh/id_rsa",
-        "result": "success",
-        "privilegeLevel": "root",
-        "hostname": "db-server-01"
-      },
-      {
-        "target": "10.0.0.15",
-        "port": 22,
-        "user": "app",
-        "credentialType": "password",
-        "credentialSource": "env:SSH_PASS",
-        "result": "denied",
-        "attempts": 3
-      }
-    ],
-    "newFootholds": [
-      {
-        "target": "10.0.0.12",
-        "hostname": "db-server-01",
-        "os": "Ubuntu 20.04",
-        "privilegeLevel": "root",
-        "newCidrs": ["10.0.1.0/24"],
-        "keyServices": ["mysql:3306", "redis:6379"],
-        "lateralPotential": "high",
-        "reason": "root 权限 + 发现新网段 + 本地数据库服务"
-      }
-    ]
-  },
-  "openQuestions": ["recon-basic-info (on 10.0.0.12)", "hunt-credentials (on 10.0.0.12)"]
-}
-```
-
----
-
-## 九、决策规则
-
-| 场景 | 行为 |
-|---|---|
-| 无 SSH 凭据 | 终止，建议先执行 hunt-credentials |
-| 无 22 端口目标 | 终止，建议先执行 recon-internal-network |
-| 首次连接尝试 | 必须用户确认（高影响操作） |
-| 凭据连续失败 3 次 | 停止该目标，标注为凭据不匹配 |
-| 成功登录 | 立即执行只读侦察，不要等待 |
-| 发现 root 权限 | 标记为高价值，优先报告 |
-| 新主机有更多私钥 | 记录但不自动使用，提示用户决定是否继续 |
-| 目标出现异常响应 | 停止，可能是蜜罐，标注警告 |
-| 连续多目标 Connection refused | 可能有网络策略拦截，停止并报告 |
-
----
-
-## 十、OPSEC 痕迹提示
-
-每次成功登录后，提醒用户以下痕迹已产生：
-
-| 痕迹位置 | 内容 |
-|---|---|
-| 目标 `/var/log/auth.log` 或 `/var/log/secure` | 登录成功记录（IP、用户名、时间） |
-| 目标 `lastlog` / `wtmp` | 登录历史 |
-| 目标 `~/.bash_history` | 如果进入交互 shell |
-| 源主机 `~/.ssh/known_hosts` | 新增目标主机指纹（已用 StrictHostKeyChecking=no 跳过） |
-| 网络层 | SSH 流量特征（加密但可识别协议） |
+新立足点信息不足时交接 `recon-basic-info`；普通 Linux 用户且提权能推进任务时交接 `escalate-linux-privilege`；出现明确凭据入口时，经用户决定交接 `hunt-credentials`。

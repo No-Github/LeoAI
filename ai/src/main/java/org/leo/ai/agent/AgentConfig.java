@@ -8,7 +8,9 @@ import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.ai.channel.DelegatingStreamingChatModel;
 import org.leo.ai.config.AiAgentProperties;
+import org.leo.ai.runtime.AiTurnTelemetryRegistry;
 import org.leo.ai.service.SkillRegistryService;
+import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -31,7 +33,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>线程池架构：
  * <ul>
  *   <li>{@code rawAiToolExecutor} — 底层固定 12 线程池，承载所有工具执行</li>
- *   <li>{@code aiToolExecutor}    — 主 Agent 工具执行器（限流包装，maxParallelTools=5）</li>
+ *   <li>{@code puppetNodeAiToolExecutor} — Puppet Agent 独立限流器</li>
+ *   <li>{@code platformAiToolExecutor} — Platform Agent 独立限流器</li>
  * </ul>
  *
  * <p>所有工具直接附着到主 Agent，无子 Agent 调度层。
@@ -42,6 +45,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AgentConfig {
 
     private static final int TOOL_EXECUTOR_THREADS = 12;
+    private static final int TOOL_BOUNDARY_THREADS = 16;
 
     // ── 注入依赖 ──────────────────────────────────────────────────────────────
 
@@ -68,13 +72,33 @@ public class AgentConfig {
         });
     }
 
+    /** 独立保护池，避免工具外层并发池等待自身子任务造成线程池饥饿。 */
+    @Bean(name = "aiToolBoundaryExecutor", destroyMethod = "shutdown")
+    public ExecutorService aiToolBoundaryExecutor() {
+        AtomicInteger counter = new AtomicInteger(1);
+        return Executors.newFixedThreadPool(TOOL_BOUNDARY_THREADS, runnable -> {
+            Thread thread = new Thread(runnable,
+                    "ai-tool-boundary-" + counter.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
     /**
-     * 主 Agent 工具执行器：限流包装，最大并发数由 maxParallelTools 配置控制。
+     * Puppet Agent 工具执行器。
      */
-    @Bean
-    @Primary
-    public ExecutorService aiToolExecutor(@Qualifier("rawAiToolExecutor") ExecutorService raw) {
+    @Bean("puppetNodeAiToolExecutor")
+    public ExecutorService puppetNodeAiToolExecutor(
+            @Qualifier("rawAiToolExecutor") ExecutorService raw) {
         int maxParallel = agentProps.getPuppetNode().getMain().getMaxParallelTools();
+        return new ThrottledExecutorService(raw, maxParallel);
+    }
+
+    /** Platform Agent 工具执行器。 */
+    @Bean("platformAiToolExecutor")
+    public ExecutorService platformAiToolExecutor(
+            @Qualifier("rawAiToolExecutor") ExecutorService raw) {
+        int maxParallel = agentProps.getPlatform().getMain().getMaxParallelTools();
         return new ThrottledExecutorService(raw, maxParallel);
     }
 
@@ -94,8 +118,12 @@ public class AgentConfig {
      */
     @Bean
     public ContextCompressionService contextCompressionService(
-            DelegatingChatModel chatModel, TokenCountEstimator tokenEstimator) {
-        return new ContextCompressionService(chatModel, tokenEstimator);
+            DelegatingChatModel chatModel,
+            TokenCountEstimator tokenEstimator,
+            AiConversationStoreService conversationStore,
+            AiTurnTelemetryRegistry telemetryRegistry) {
+        return new ContextCompressionService(
+                chatModel, tokenEstimator, conversationStore, telemetryRegistry);
     }
 
     /**

@@ -14,9 +14,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * 启动时将 classpath:skills/** 下的内置 skill 文件复制到 VFS/skills/。
- * 已存在的文件不覆盖，允许用户后续修改。
- * 目录结构保持原样：skills/{scope}/{skill-name}/SKILL.md [+ assets/]
+ * 启动时将 classpath:skills/** 下的内置 skill 文件同步到 VFS/skills/。
+ * 开发阶段以 classpath 内置 catalog 为唯一真源，始终覆盖同路径运行副本；
+ * 自定义 skill 应使用不同目录名且 manifest.source=custom/imported。
+ * 目录结构保持原样：skills/{scope}/{skill-name}/{SKILL.md,manifest.yaml} [+ resources/]
  */
 @Component
 public class SkillSeedInitializer implements CommandLineRunner {
@@ -40,7 +41,7 @@ public class SkillSeedInitializer implements CommandLineRunner {
         }
 
         int copied  = 0;
-        int skipped = 0;
+        int updated = 0;
         for (Resource seed : seeds) {
             // isReadable() 为 false 表示这是目录条目，跳过
             if (!seed.isReadable()) {
@@ -64,19 +65,16 @@ public class SkillSeedInitializer implements CommandLineRunner {
                 continue;
             }
 
-            if (Files.exists(destFile)) {
-                skipped++;
-                continue;
-            }
-
             Files.createDirectories(destFile.getParent());
             try (InputStream in = seed.getInputStream()) {
+                boolean existed = Files.exists(destFile);
                 Files.copy(in, destFile, StandardCopyOption.REPLACE_EXISTING);
-                copied++;
+                if (existed) updated++;
+                else copied++;
             } catch (Exception e) {
                 log.warn("[SkillSeed] 拷贝失败: {} - {}", relativePath, e.getMessage());
             }
         }
-        log.info("[SkillSeed] 内置 skill 同步完成: 新增 {} 个文件, 跳过 {} 个 (已存在)", copied, skipped);
+        log.info("[SkillSeed] 内置 skill 同步完成: 新增 {} 个文件, 覆盖 {} 个文件", copied, updated);
     }
 }
