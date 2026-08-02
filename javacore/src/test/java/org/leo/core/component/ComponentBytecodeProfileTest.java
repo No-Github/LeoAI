@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ComponentBytecodeProfileTest {
 
     private static final String[] ALL_COMPONENTS = {
-            "BasicInfoComponent", "ClipboardComponent", "CompressComponent",
+            "BasicInfoComponent", "CompressComponent",
             "CredentialHarvestComponent", "DatabaseComponent", "DecompressComponent",
             "ExecCommandComponent", "ExecCommandSimpleComponent", "ExecScriptComponent",
             "FileComponent", "FileDownloadComponent", "FileEnhanceComponent",

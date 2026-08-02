@@ -96,7 +96,8 @@ public class PlatformSystemPromptProvider {
 
     private static final String FOOTER = """
 
-            遇到对应场景时主动套用相应 skill 的工作流程，执行前先调用 activate_skill 获取完整指令，不要凭空生成方案。
+            基础管理工具常驻，Skill 专项工具在激活后动态提供。遇到对应场景时先调用
+            activate_skill 获取完整指令和所需工具，不要凭空生成方案。
 
             ════════════════════════════════════════
             【最终输出格式】

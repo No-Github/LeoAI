@@ -18,6 +18,6 @@ source: builtin
 owner: leo
 enabled: false
 requires:
-  tools: [exec, queryTask, stopTask, manage_recon_summary]
+  tools: [exec, queryTask, stopTask]
   facts: [target.authorized, roe.persistence-approved, cleanup.owner, cleanup.deadline]
 produces: [persistence-change-ledger, cleanup-plan]

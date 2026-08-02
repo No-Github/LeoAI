@@ -41,11 +41,16 @@ public class PluginTools {
         this.pluginManager = pluginManager;
     }
 
-    @Tool("获取当前平台所有插件摘要。默认不返回 bytecode，适用于浏览插件列表。")
+    @Tool("列出平台插件摘要。pluginType 可选；为空返回全部插件。默认不返回 bytecode。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Map<String, Object>> getPlugins() {
-        return toPluginSummaries(pluginManager.getPluginAsList(), false);
+    public List<Map<String, Object>> listPlugins(
+            @P(value = "可选插件类型，如 java/js/groovy/python", required = false)
+            String pluginType) {
+        List<Plugin> plugins = isBlank(pluginType)
+                ? pluginManager.getPluginAsList()
+                : pluginManager.getPluginAsListByType(pluginType.trim());
+        return toPluginSummaries(plugins, false);
     }
 
     @Tool("根据 pluginId 获取插件详情。includeBytecodeBase64=true 时额外返回 base64 编码后的 bytecode。")
@@ -57,13 +62,6 @@ public class PluginTools {
             throw new IllegalArgumentException("插件不存在");
         }
         return toPluginMap(plugin, Boolean.TRUE.equals(includeBytecodeBase64));
-    }
-
-    @Tool("根据 pluginType 获取插件摘要列表。默认不返回 bytecode。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Map<String, Object>> getPluginsByType(String pluginType) {
-        return toPluginSummaries(pluginManager.getPluginAsListByType(requireNonBlank(pluginType, "pluginType不能为空")), false);
     }
 
     @Tool(name = "addPlugin",

@@ -4,11 +4,11 @@ import org.leo.core.entity.Team;
 import org.leo.core.entity.User;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,47 +33,33 @@ public class TeamTools {
         this.userService = userService;
     }
 
-    @Tool("获取当前平台所有团队。")
+    @Tool("列出平台团队。leaderId 可选；为空时返回全部团队。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Team> getAllTeam() {
+    public List<Team> listTeams(
+            @P(value = "可选 leaderId；为空返回全部团队", required = false)
+            String leaderId) {
+        String normalizedLeaderId = trimToNull(leaderId);
+        if (normalizedLeaderId != null) {
+            return teamService.getTeamsByLeader(normalizedLeaderId);
+        }
         return teamService.getAllTeam();
     }
 
-    @Tool("获取当前平台所有团队名称。")
+    @Tool("按 teamId 或 teamName 获取团队详情；两者必须且只能提供一个。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<String> getAllTeamName() {
-        List<String> names = new ArrayList<>();
-        for (Team t : teamService.getAllTeam()) {
-            if (t != null && t.getTeamName() != null) names.add(t.getTeamName());
+    public Team getTeam(
+            @P(value = "团队 ID，与 teamName 二选一", required = false) String teamId,
+            @P(value = "团队名称，与 teamId 二选一", required = false) String teamName) {
+        String id = trimToNull(teamId);
+        String name = trimToNull(teamName);
+        if ((id == null) == (name == null)) {
+            throw new IllegalArgumentException("teamId 与 teamName 必须且只能提供一个");
         }
-        return names;
-    }
-
-    @Tool("根据 teamId 获取团队详情。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Team getTeamById(String teamId) {
-        Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
+        Team team = id != null ? teamService.getTeamById(id) : teamService.getTeamByName(name);
         if (team == null) throw new IllegalArgumentException("团队不存在");
         return team;
-    }
-
-    @Tool("根据 teamName 获取团队详情。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Team getTeamByName(String teamName) {
-        Team team = teamService.getTeamByName(requireNonBlank(teamName, "teamName不能为空"));
-        if (team == null) throw new IllegalArgumentException("团队不存在");
-        return team;
-    }
-
-    @Tool("获取指定 leaderId 负责的团队列表。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Team> getTeamsByLeader(String leaderId) {
-        return teamService.getTeamsByLeader(requireNonBlank(leaderId, "leaderId不能为空"));
     }
 
     @Tool("创建平台团队（仅 admin 可用）。teamName、leaderId 必填；未传 teamId 则自动生成 UUID。"

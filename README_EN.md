@@ -149,7 +149,7 @@ The exact PHP feature set depends on the target environment: database operations
 - **Application Manager**: runtime profiles for Tomcat 6–11, WebLogic 10/12/14, Jetty, Undertow, JBoss/WildFly, WebSphere, Spring MVC, and Spring WebFlux; supports removing Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### Security & Permissions
-- **Credential Harvesting**: System credentials, browser data, WiFi configurations
+- **Credential Harvesting**: System credentials and browser data
 - **SUID/Capability Check**: Quickly identify Linux privilege escalation vectors
 - **User Account Management**: Enumerate and manage users on target hosts
 - **Network Connection Viewer**: View active connections, network shares, and installed software
@@ -157,8 +157,6 @@ The exact PHP feature set depends on the target environment: database operations
 #### Other Tools
 - **Class Bytecode Viewer**: Extract and decompile classes loaded in the JVM
 - **Class & Resource Browser**: Read any classpath resource the puppet process can see (`.class` files inside jars, `application.yml`, `META-INF/MANIFEST.MF`, etc.) by class name or path. Auto-detects binary/text/`.class` and decompiles to Java source. When the puppet is injected into Tomcat's global ClassLoader, falls back to scanning every WebappClassLoader so webapp-private classes remain reachable.
-- **Clipboard Reader**: Retrieve clipboard contents from the target system
-- **Disk Mount Manager**: View and manage disk mount points
 - **HostId Switching**: Manage multiple intranet hosts under a single node
 
 <img src="docs/images/screenshot-console.png" alt="Operations Console Screenshot" width="800" />

@@ -1,0 +1,121 @@
+package org.leo.ai.agent;
+
+import dev.langchain4j.agent.tool.Tool;
+import org.junit.jupiter.api.Test;
+import org.leo.ai.tools.common.AgentSandboxTools;
+import org.leo.ai.tools.common.AgentWorkspaceTools;
+import org.leo.ai.tools.common.PlanTools;
+import org.leo.ai.tools.common.UserInputTools;
+import org.leo.ai.tools.common.WebResearchTools;
+import org.leo.ai.tools.platform.DisguiseTools;
+import org.leo.ai.tools.platform.FingerprintTools;
+import org.leo.ai.tools.platform.PluginTools;
+import org.leo.ai.tools.platform.PuppetTools;
+import org.leo.ai.tools.platform.ShellGeneratorTools;
+import org.leo.ai.tools.platform.SkillActivationTools;
+import org.leo.ai.tools.platform.TeamTools;
+import org.leo.ai.tools.platform.UserTools;
+import org.leo.ai.tools.puppetnode.BasicInfoTools;
+import org.leo.ai.tools.puppetnode.BrowserDataTools;
+import org.leo.ai.tools.puppetnode.CommandTools;
+import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
+import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
+import org.leo.ai.tools.puppetnode.FileTools;
+import org.leo.ai.tools.puppetnode.HttpRequestTools;
+import org.leo.ai.tools.puppetnode.JavaPluginTools;
+import org.leo.ai.tools.puppetnode.ResourceTools;
+import org.leo.ai.tools.puppetnode.ReverseTunnelTools;
+import org.leo.ai.tools.puppetnode.ScanTools;
+import org.leo.ai.tools.puppetnode.ScriptTools;
+import org.leo.ai.tools.puppetnode.SqlTools;
+import org.leo.ai.tools.puppetnode.WebRuntimeTools;
+
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** 防止工具清单重新出现重名、无风险声明或无预算增长。 */
+class AiToolCatalogContractTest {
+
+    private static final List<Class<?>> TOOL_CLASSES = List.of(
+            AgentSandboxTools.class, AgentWorkspaceTools.class, PlanTools.class,
+            UserInputTools.class, WebResearchTools.class,
+            DisguiseTools.class, FingerprintTools.class, PluginTools.class,
+            PuppetTools.class, ShellGeneratorTools.class, SkillActivationTools.class,
+            TeamTools.class, UserTools.class,
+            BasicInfoTools.class, BrowserDataTools.class,
+            CommandTools.class, CredentialHarvestTools.class,
+            DatabaseConnectionTools.class, FileTools.class, HttpRequestTools.class,
+            JavaPluginTools.class, ResourceTools.class, ReverseTunnelTools.class,
+            ScanTools.class, ScriptTools.class, SqlTools.class, WebRuntimeTools.class,
+            AiToolResultArchiveTools.class
+    );
+
+    private static final Set<String> REMOVED_TOOL_NAMES = Set.of(
+            "getAllTeam", "getAllTeamName", "getTeamById", "getTeamByName",
+            "getTeamsByLeader", "getAllUser", "getAllNoTeamUser", "getAllUserName",
+            "getUserById", "getUserByName", "getPrivileges", "getAllPuppet",
+            "getPuppetsByCreateUserId", "getPuppetsByParentPuppetId",
+            "getPuppetsByPermission",
+            "getPlugins", "getPluginsByType", "getFingerprints",
+            "getFingerprintsByProtocol", "getJavaPlugins", "getJavaPluginsByType",
+            "getResource", "readSpringBootConfigResources", "readResourceCandidates",
+            "workspaceStat", "symmetricCrypto", "rsaCrypto", "manage_recon_summary",
+            "stopReverseTunnel", "stopAllReverseTunnels", "listReverseTunnels",
+            "getReverseTunnelStatistics",
+            "readClipboard", "writeClipboard", "monitorClipboard"
+    );
+
+    @Test
+    void toolInventoryHasUniqueNamesExplicitPoliciesAndFixedBudget() {
+        List<Declaration> declarations = declarations();
+        Set<String> names = new HashSet<>();
+
+        assertEquals(100, declarations.size(),
+                "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
+        for (Declaration declaration : declarations) {
+            assertTrue(names.add(declaration.name()),
+                    "工具名重复: " + declaration.name());
+            AiToolPolicy policy = declaration.policy();
+            assertNotNull(policy, "工具缺少 AiToolPolicy: " + declaration.name());
+            if (policy.operation() == AiToolOperation.READ_ONLY) {
+                assertTrue(policy.parallelizable(),
+                        "只读工具必须允许并行: " + declaration.name());
+            }
+            if (policy.operation() == AiToolOperation.DESTRUCTIVE) {
+                assertTrue(policy.exclusive(),
+                        "破坏性工具必须独占执行: " + declaration.name());
+            }
+        }
+        for (String removed : REMOVED_TOOL_NAMES) {
+            assertFalse(names.contains(removed), "已清理工具被重新暴露: " + removed);
+        }
+    }
+
+    private static List<Declaration> declarations() {
+        List<Declaration> result = new ArrayList<>();
+        for (Class<?> type : TOOL_CLASSES) {
+            AiToolPolicy classPolicy = type.getAnnotation(AiToolPolicy.class);
+            for (Method method : type.getDeclaredMethods()) {
+                Tool tool = method.getAnnotation(Tool.class);
+                if (tool == null) continue;
+                String name = tool.name() == null || tool.name().isBlank()
+                        ? method.getName() : tool.name();
+                AiToolPolicy methodPolicy = method.getAnnotation(AiToolPolicy.class);
+                result.add(new Declaration(name,
+                        methodPolicy != null ? methodPolicy : classPolicy));
+            }
+        }
+        return result;
+    }
+
+    private record Declaration(String name, AiToolPolicy policy) {
+    }
+}

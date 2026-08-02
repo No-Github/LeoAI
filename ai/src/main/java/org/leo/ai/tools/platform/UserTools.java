@@ -3,12 +3,12 @@ package org.leo.ai.tools.platform;
 import org.leo.core.entity.User;
 import org.leo.core.util.PasswordUtil;
 import org.leo.service.user.UserService;
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,17 +35,15 @@ public class UserTools {
         this.userService = userService;
     }
 
-    @Tool("获取当前平台所有用户。返回结果会清空 password 字段，避免泄露敏感信息。")
+    @Tool("列出平台用户。withoutTeam=true 时只返回尚未加入团队的用户。结果不会返回密码。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<User> getAllUser() {
-        return sanitize(userService.getAllUser());
-    }
-
-    @Tool("获取当前平台所有未加入团队的用户。适用于创建团队前挑选 leader。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<User> getAllNoTeamUser() {
+    public List<User> listUsers(
+            @P(value = "是否只返回未加入团队的用户", required = false)
+            Boolean withoutTeam) {
+        if (!Boolean.TRUE.equals(withoutTeam)) {
+            return sanitize(userService.getAllUser());
+        }
         List<User> filtered = new ArrayList<>();
         for (User u : userService.getAllUser()) {
             if (u != null && (u.getTeamId() == null || u.getTeamId().isBlank())) {
@@ -55,35 +53,21 @@ public class UserTools {
         return sanitize(filtered);
     }
 
-    @Tool("根据 userId 获取用户详情。返回结果会清空 password 字段。")
+    @Tool("按 userId 或 userName 获取用户详情；两者必须且只能提供一个。结果不会返回密码。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public User getUserById(String userId) {
-        User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
-        if (user == null) throw new IllegalArgumentException("用户不存在");
-        user.setPassword("");
-        return user;
-    }
-
-    @Tool("根据用户名获取用户详情。返回结果会清空 password 字段。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public User getUserByName(String userName) {
-        User user = userService.getUserByName(requireNonBlank(userName, "userName不能为空"));
-        if (user == null) throw new IllegalArgumentException("用户不存在");
-        user.setPassword("");
-        return user;
-    }
-
-    @Tool("获取当前平台所有用户名。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<String> getAllUserName() {
-        List<String> names = new ArrayList<>();
-        for (User u : userService.getAllUser()) {
-            if (u != null && u.getUserName() != null) names.add(u.getUserName());
+    public User getUser(
+            @P(value = "用户 ID，与 userName 二选一", required = false) String userId,
+            @P(value = "用户名，与 userId 二选一", required = false) String userName) {
+        String id = trimToNull(userId);
+        String name = trimToNull(userName);
+        if ((id == null) == (name == null)) {
+            throw new IllegalArgumentException("userId 与 userName 必须且只能提供一个");
         }
-        return names;
+        User user = id != null ? userService.getUserById(id) : userService.getUserByName(name);
+        if (user == null) throw new IllegalArgumentException("用户不存在");
+        user.setPassword("");
+        return user;
     }
 
     @Tool("创建平台用户。userName 和 password 必填；privilege 可选（admin/leader/normal，默认 normal）；"
@@ -174,17 +158,6 @@ public class UserTools {
         if (isBuiltInAdmin(user)) throw new IllegalArgumentException("admin用户为系统内置账户，禁止删除");
         boolean deleted = userService.delUser(user.getUserId());
         return buildResult("deleted", deleted, user.getUserId(), user.getUserName());
-    }
-
-    @Tool("获取平台可用角色列表：admin、leader、normal。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<String> getPrivileges() {
-        return Arrays.asList(
-                UserService.PRIVILEGE_ADMIN,
-                UserService.PRIVILEGE_LEADER,
-                UserService.PRIVILEGE_NORMAL
-        );
     }
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────────

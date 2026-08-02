@@ -76,7 +76,6 @@ class PhpScriptGeneratorProviderTest {
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ReverseTunnelComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ProcessComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkInfoComponent"));
-        assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("DiskComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("NetworkConnectionComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ScanComponent"));
         assertTrue(((List<?>) artifact.getMetadata().get("components")).contains("ServiceComponent"));

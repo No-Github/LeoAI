@@ -4,7 +4,6 @@ import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.puppet.capability.ComponentManageCapable;
-import org.leo.core.puppet.capability.DiskCapable;
 import org.leo.core.puppet.capability.EventLogCapable;
 import org.leo.core.puppet.capability.FileCapable;
 import org.leo.core.puppet.capability.FirewallCapable;
@@ -50,7 +49,7 @@ import java.util.function.Consumer;
 
 /** PHP implementation of the shared Puppet node and core capabilities. */
 public final class PhpPuppetNode extends AbstractPuppetNode implements
-        BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable,
+        BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable,
         ProcessCapable, NetworkConnectionCapable, ScanCapable, ServiceCapable,
         ScheduledTaskCapable, RegistryCapable, EventLogCapable, FirewallCapable,
         UserAccountCapable, ScriptCapable, SqlCapable,
@@ -224,11 +223,6 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     @Override
     public Map<String, Object> collectNetworkInfo() throws Exception {
         return invoke("NetworkInfoComponent", "collect", Map.of());
-    }
-
-    @Override
-    public Map<String, Object> listMountDisks() throws Exception {
-        return invoke("DiskComponent", "list", Map.of());
     }
 
     @Override

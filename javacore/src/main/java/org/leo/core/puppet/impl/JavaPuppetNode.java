@@ -13,11 +13,9 @@ import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.BrowserDataCapable;
 import org.leo.core.puppet.capability.WebRuntimeManageCapable;
-import org.leo.core.puppet.capability.ClipboardCapable;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.puppet.capability.ComponentManageCapable;
 import org.leo.core.puppet.capability.CredentialHarvestCapable;
-import org.leo.core.puppet.capability.DiskCapable;
 import org.leo.core.puppet.capability.DockerCapable;
 import org.leo.core.puppet.capability.EventLogCapable;
 import org.leo.core.puppet.capability.FileCapable;
@@ -46,7 +44,6 @@ import org.leo.core.puppet.capability.Socks5ProxyCapable;
 import org.leo.core.puppet.capability.SuidCapabilityCapable;
 import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.UserAccountCapable;
-import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.puppet.service.*;
 import org.leo.core.rpc.PuppetRpcErrorCodes;
 import org.leo.core.util.request.ComponentClassNameStrategy;
@@ -64,7 +61,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
-public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable, SqlCapable, ScriptCapable, ResourceCapable, ClipboardCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, WifiProfileCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
+public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, SqlCapable, ScriptCapable, ResourceCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
     /** 最大请求总数，包含首次请求。 */
     private int maxReqCount = Puppet.DEFAULT_MAX_REQUEST_COUNT;
@@ -105,11 +102,8 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     DockerContainerService dockerContainerService;
     SuidCapabilityService suidCapabilityService;
     BrowserDataService browserDataService;
-    WifiProfileService wifiProfileService;
     PersistenceService persistenceService;
     NetworkConnectionService networkConnectionService;
-    MountDiskService mountDiskService;
-    ClipboardService clipboardService;
     private volatile String hostId;
     private volatile Consumer<String> hostIdChangeListener = ignored -> { };
 
@@ -187,11 +181,8 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         dockerContainerService=new DockerContainerService(communication,requestLayers,responseLayers);
         suidCapabilityService=new SuidCapabilityService(communication,requestLayers,responseLayers);
         browserDataService=new BrowserDataService(communication,requestLayers,responseLayers);
-        wifiProfileService=new WifiProfileService(communication,requestLayers,responseLayers);
         persistenceService=new PersistenceService(communication,requestLayers,responseLayers);
         networkConnectionService=new NetworkConnectionService(communication,requestLayers,responseLayers);
-        mountDiskService=new MountDiskService(communication,requestLayers,responseLayers);
-        clipboardService=new ClipboardService(communication,requestLayers,responseLayers);
 
         serviceRegistry.replace(componentLoadRegistry,
                 basicInfoService, commandService, componentService, fileService,
@@ -202,8 +193,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 serviceManagerService, eventLogService, userAccountService,
                 firewallService, networkShareService, installedSoftwareService,
                 dockerContainerService, suidCapabilityService, browserDataService,
-                wifiProfileService, persistenceService, networkConnectionService,
-                mountDiskService, clipboardService);
+                persistenceService, networkConnectionService);
         serviceRegistry.setHostIdMismatchRecovery(this::recoverHostAffinity);
 
         if (hostId != null) {
@@ -1246,23 +1236,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         return browserDataService.listSensitiveFiles();
     }
 
-    // ==================== WiFi 配置提取 ====================
-
-    @Override
-    public Map<String, Object> listWifiProfiles() throws Exception {
-        return wifiProfileService.listProfiles();
-    }
-
-    @Override
-    public Map<String, Object> getWifiProfileDetail(String profileName) throws Exception {
-        return wifiProfileService.profileDetail(profileName);
-    }
-
-    @Override
-    public Map<String, Object> dumpAllWifiPasswords() throws Exception {
-        return wifiProfileService.dumpAllPasswords();
-    }
-
     // ==================== Persistence ====================
 
     @Override
@@ -1292,30 +1265,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public Map<String, Object> networkConnectionSummary() throws Exception {
         return networkConnectionService.summary();
-    }
-
-    // ==================== 挂载磁盘枚举 ====================
-
-    @Override
-    public Map<String, Object> listMountDisks() throws Exception {
-        return mountDiskService.list();
-    }
-
-    // ==================== 剪贴板操作 ====================
-
-    @Override
-    public Map<String, Object> readClipboard() throws Exception {
-        return clipboardService.read();
-    }
-
-    @Override
-    public Map<String, Object> writeClipboard(String content) throws Exception {
-        return clipboardService.write(content);
-    }
-
-    @Override
-    public Map<String, Object> monitorClipboard(int duration, int interval) throws Exception {
-        return clipboardService.monitor(duration, interval);
     }
 
     @Override

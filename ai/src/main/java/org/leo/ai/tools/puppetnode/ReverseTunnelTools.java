@@ -45,29 +45,33 @@ public class ReverseTunnelTools {
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
             operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
-    @Tool("停止指定反向隧道。listenId 由 startReverseTunnel 返回。")
-    public Map<String, Object> stopReverseTunnel(
-            @P("【必填】反向隧道 ID（startReverseTunnel 返回值）") String listenId) throws Exception {
+    @Tool("停止反向隧道。停止单个时传 listenId；停止当前 Puppet 全部隧道时设置 all=true。两者必须且只能选择一种。")
+    public Map<String, Object> stopReverseTunnels(
+            @P(value = "单个反向隧道 ID，与 all=true 二选一", required = false)
+            String listenId,
+            @P(value = "是否停止全部反向隧道", required = false)
+            Boolean all) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
-        return puppet.stopReverseTunnel(listenId);
+        boolean stopAll = Boolean.TRUE.equals(all);
+        boolean hasId = listenId != null && !listenId.isBlank();
+        if (stopAll == hasId) {
+            throw new IllegalArgumentException("listenId 与 all=true 必须且只能选择一种");
+        }
+        return stopAll ? puppet.stopAllReverseTunnels()
+                : puppet.stopReverseTunnel(listenId.trim());
     }
 
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
-            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
-    @Tool("停止当前 puppet 上所有反向隧道。")
-    public Map<String, Object> stopAllReverseTunnels() throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
-        return puppet.stopAllReverseTunnels();
-    }
-
-    @Tool("列出当前 puppet 上所有反向隧道：listenId、puppet 监听端口/绑定地址、C2 侧目标、运行状态。")
+    @Tool("查看反向隧道。listenId 为空时列出全部隧道；传入 listenId 时返回该隧道的连接和流量统计。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> listReverseTunnels() throws Exception {
+    public Map<String, Object> inspectReverseTunnels(
+            @P(value = "可选反向隧道 ID", required = false) String listenId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
+        if (listenId != null && !listenId.isBlank()) {
+            return tunnelStatistics(puppet, listenId.trim());
+        }
         List<Map<String, Object>> rules = puppet.listReverseTunnels();
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -76,19 +80,14 @@ public class ReverseTunnelTools {
         return result;
     }
 
-    @Tool("获取指定反向隧道的运行统计：活跃/累计连接数、上下行流量、连接列表。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> getReverseTunnelStatistics(
-            @P("【必填】反向隧道 ID") String listenId) throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
+    private Map<String, Object> tunnelStatistics(ReverseTunnelCapable puppet,
+                                                 String listenId) throws Exception {
         Socks5ProxyStatistics.StatisticsSnapshot snapshot = puppet.getReverseTunnelStatistics(listenId);
         if (snapshot == null) {
             throw AiToolException.modelCorrectable(
                     "RESOURCE_NOT_FOUND",
                     "反向隧道未启动或不存在: " + listenId,
-                    "先调用 listReverseTunnels 获取当前有效 listenId。");
+                    "先调用 inspectReverseTunnels 获取当前有效 listenId。");
         }
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);

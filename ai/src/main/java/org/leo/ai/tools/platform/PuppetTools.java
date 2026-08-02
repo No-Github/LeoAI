@@ -8,10 +8,12 @@ import org.leo.service.PuppetService;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.team.TeamService;
 import org.leo.service.user.UserService;
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,11 +51,25 @@ public class PuppetTools {
         return puppetConnService.testConnection(id);
     }
 
-    @Tool("获取当前平台所有 Puppet。")
+    @Tool("列出当前用户可见的 Puppet。createUserId、parentPuppetId、permission 都是可选过滤条件，可组合使用。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Puppet> getAllPuppet() {
-        return accessService.filterVisible(puppetService.getAllPuppet());
+    public List<Puppet> listPuppets(
+            @P(value = "可选创建人 userId", required = false) String createUserId,
+            @P(value = "可选父 Puppet ID", required = false) String parentPuppetId,
+            @P(value = "可选权限：private/team/public", required = false) String permission) {
+        String owner = trimToNull(createUserId);
+        String parent = trimToNull(parentPuppetId);
+        String visibility = trimToNull(permission);
+        List<Puppet> result = new ArrayList<>();
+        for (Puppet puppet : accessService.filterVisible(puppetService.getAllPuppet())) {
+            if (puppet == null) continue;
+            if (owner != null && !owner.equals(puppet.getCreateByUserId())) continue;
+            if (parent != null && !parent.equals(puppet.getParentPuppetId())) continue;
+            if (visibility != null && !visibility.equals(puppet.getPermission())) continue;
+            result.add(puppet);
+        }
+        return result;
     }
 
     @Tool("根据 puppetId 获取 Puppet 详情。")
@@ -62,30 +78,6 @@ public class PuppetTools {
     public Puppet getPuppetById(String puppetId) {
         return accessService.requireVisible(puppetService.findPuppetById(
                 requireNonBlank(puppetId, "puppetId不能为空")));
-    }
-
-    @Tool("根据创建人 userId 获取 Puppet 列表。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Puppet> getPuppetsByCreateUserId(String createUserId) {
-        return accessService.filterVisible(puppetService.findPuppetByCreateUserId(
-                requireNonBlank(createUserId, "createUserId不能为空")));
-    }
-
-    @Tool("根据 parentPuppetId 获取子 Puppet 列表。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Puppet> getPuppetsByParentPuppetId(String parentPuppetId) {
-        return accessService.filterVisible(puppetService.findPuppetByParentPuppetId(
-                requireNonBlank(parentPuppetId, "parentPuppetId不能为空")));
-    }
-
-    @Tool("根据权限获取 Puppet 列表，例如 read 或 write。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Puppet> getPuppetsByPermission(String permission) {
-        return accessService.filterVisible(puppetService.findPuppetByPermission(
-                requireNonBlank(permission, "permission不能为空")));
     }
 
     @Tool("创建平台 Puppet。puppetName、connLink 必填；创建人和团队范围由当前用户身份强制约束，未传 puppetId 会自动生成。maxReqCount 是包含首次请求的最大请求总数，范围 1-10，1 表示不重试。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")

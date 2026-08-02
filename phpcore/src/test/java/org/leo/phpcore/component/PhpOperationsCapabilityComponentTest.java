@@ -57,10 +57,6 @@ class PhpOperationsCapabilityComponentTest {
         assertEquals(200, code(connections));
         assertTrue(assertInstanceOf(List.class, connections.get("diagnostics")).contains("source=/proc/net"));
 
-        Map<String, Object> disks = invokeWithDisabledCommands("DiskComponent.php", "list", "array()");
-        assertEquals(200, code(disks));
-        assertFalse(assertInstanceOf(List.class,
-                assertInstanceOf(Map.class, disks.get("data")).get("disks")).isEmpty());
     }
 
     @Test

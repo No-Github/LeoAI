@@ -2,9 +2,11 @@ package org.leo.ai.tools.platform;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AgentRuntimeResolver;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.SkillDescriptor;
 import org.leo.ai.service.SkillRegistryService;
+import org.leo.core.ai.AiRuntimeState;
 
 /**
  * Skill 激活工具：让 AI 在运行时按需读取 VFS 中指定 skill 的完整指令（SKILL.md 正文）。
@@ -22,10 +24,17 @@ public class SkillActivationTools {
 
     private final SkillRegistryService skillRegistry;
     private final String scope;
+    private final AgentRuntimeResolver runtimeResolver;
 
     public SkillActivationTools(SkillRegistryService skillRegistry, String scope) {
+        this(skillRegistry, scope, null);
+    }
+
+    public SkillActivationTools(SkillRegistryService skillRegistry, String scope,
+                                AgentRuntimeResolver runtimeResolver) {
         this.skillRegistry = skillRegistry;
         this.scope         = scope;
+        this.runtimeResolver = runtimeResolver;
     }
 
     @Tool(name = "activate_skill",
@@ -69,6 +78,9 @@ public class SkillActivationTools {
                     "skill manifest 校验失败，不能激活：name=" + normalizedName + "。",
                     "停止执行该 skill，并让管理员通过 Skill 健康检查修复 manifest。");
         }
+        AiRuntimeState runtime = runtimeResolver != null
+                ? runtimeResolver.resolveCurrent() : null;
+        if (runtime != null) runtime.activateSkill(normalizedName);
 
         String policy = """
                 <skill_execution_policy>
@@ -79,6 +91,8 @@ public class SkillActivationTools {
                 risk: %s
                 accessMode: %s
                 requiresExplicitApproval: %s
+                requiredTools: %s
+                requiredSkills: %s
                 requiredFacts: %s
                 说明：启用表示能力可被发现，不代表本次任务已获授权。所有操作仍须遵守当前身份权限、ROE、目标范围和工具执行边界。
                 </skill_execution_policy>
@@ -86,6 +100,7 @@ public class SkillActivationTools {
                 """.formatted(
                 descriptor.id(), descriptor.version(), descriptor.category(), descriptor.mode(),
                 descriptor.risk(), descriptor.accessMode(), descriptor.requiresExplicitApproval(),
+                descriptor.requiredTools(), descriptor.requiredSkills(),
                 descriptor.requiredFacts());
         return policy + SkillRegistryService.stripFrontmatter(content);
     }

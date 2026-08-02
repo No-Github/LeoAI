@@ -31,15 +31,7 @@ public class AgentWorkspaceTools {
         return service.list(workspace, path, depth, maxEntries);
     }
 
-    @Tool("读取当前 Agent 工作空间文件的元数据与 sha256；修改现有文件前先调用。")
-    @AiToolPolicy(kind = AiToolKind.CONTEXT, operation = AiToolOperation.READ_ONLY,
-            parallelizable = true)
-    public Map<String, Object> workspaceStat(@P("相对工作空间路径") String path) {
-        var workspace = service.workspaceFromContext();
-        return service.stat(workspace, path);
-    }
-
-    @Tool("按行读取当前 Agent 工作空间中的 UTF-8 文本。适合只把大文件的相关片段送入上下文。")
+    @Tool("按行读取当前 Agent 工作空间中的 UTF-8 文本，同时返回 size、sha256 和路径元数据。适合修改前校验并只把相关片段送入上下文。")
     @AiToolPolicy(kind = AiToolKind.CONTEXT, operation = AiToolOperation.READ_ONLY,
             parallelizable = true)
     public Map<String, Object> workspaceReadText(
@@ -63,7 +55,7 @@ public class AgentWorkspaceTools {
         return service.search(workspace, query, path, glob, regex, maxResults);
     }
 
-    @Tool("新建或小范围覆写当前 Agent 工作空间 UTF-8 文件。覆盖现有文件必须传 workspaceReadText/workspaceStat 返回的 sha256；单次大内容请改用脚本或补丁。")
+    @Tool("新建或小范围覆写当前 Agent 工作空间 UTF-8 文件。覆盖现有文件必须传 workspaceReadText 返回的 sha256；单次大内容请改用脚本或补丁。")
     @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE)
     public Map<String, Object> workspaceWriteText(
             @P("相对工作空间文件路径") String path,

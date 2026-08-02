@@ -7,7 +7,9 @@ import org.leo.core.entity.AiSseEvent;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -52,6 +54,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     private volatile AiRuntimeStats runtimeStats = new AiRuntimeStats();
     private volatile AiExecutionPolicy executionPolicy = AiExecutionPolicy.defaultPolicy();
     private final List<AiPlan> planHistory = new CopyOnWriteArrayList<>();
+    private final Set<String> activatedSkills = ConcurrentHashMap.newKeySet();
 
     @Override
     public boolean claimExecution() {
@@ -242,6 +245,15 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         return Collections.unmodifiableList(planHistory);
     }
 
+    /** 当前任务已激活的 Skill；供动态 ToolProvider 按需追加能力。 */
+    public void activateSkill(String name) {
+        if (name != null && !name.isBlank()) activatedSkills.add(name.trim());
+    }
+
+    public Set<String> getActivatedSkills() {
+        return Set.copyOf(activatedSkills);
+    }
+
     public void resetRuntimeState() {
         executingThread = null;
         stopCallback = null;
@@ -253,6 +265,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
         runStatus = AiRunStatus.IDLE;
         stopReason = null;
         taskTimeoutAt = 0L;
+        activatedSkills.clear();
         resetTurnCount();
         clearSseEvents();
     }

@@ -64,6 +64,10 @@ public class PlatformPuppetAiBridgeTools {
 
     @Tool(name = "list_puppet_ai_targets",
             value = "列出当前用户可委派 Puppet AI 的活跃会话。返回 sessionId、puppetId、cacheMode 和最后活跃时间。")
+    @org.leo.ai.agent.AiToolPolicy(
+            kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+            parallelizable = true)
     public List<Map<String, Object>> listTargets(@ToolMemoryId String parentThreadId) {
         Caller caller = requireCaller(parentThreadId);
         List<Map<String, Object>> result = new ArrayList<>();

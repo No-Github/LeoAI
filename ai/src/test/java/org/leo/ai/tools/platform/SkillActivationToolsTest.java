@@ -4,9 +4,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.leo.ai.agent.AgentRuntimeResolver;
+import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.config.LeoConfig;
+import org.leo.core.session.AiThread;
+import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.PuppetNodeSessionContainer;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
@@ -14,6 +19,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SkillActivationToolsTest {
 
@@ -33,6 +39,8 @@ class SkillActivationToolsTest {
 
     @AfterEach
     void tearDown() {
+        AiToolContext.clear();
+        PuppetNodeSessionContainer.clearAllSessions();
         ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previousVfsPath);
     }
 
@@ -53,6 +61,23 @@ class SkillActivationToolsTest {
         assertThrows(AiToolException.class, () -> tools.activateSkill("disabled-skill"));
         assertThrows(AiToolException.class,
                 () -> tools.activateSkill("../platform/exploit-suggest"));
+    }
+
+    @Test
+    void recordsActivationOnCurrentAgentThread() throws Exception {
+        writeSkill("enabled-skill", true, "# Enabled");
+        PuppetNodeSession session = new PuppetNodeSession();
+        session.setSessionId("activation-session");
+        AiThread thread = session.createAiThread("thread-1", "activation");
+        PuppetNodeSessionContainer.addSession("activation-session", session);
+        AiToolContext.setFromMemoryId("activation-session:thread-1");
+        SkillActivationTools statefulTools = new SkillActivationTools(
+                new SkillRegistryService(), SkillRegistryService.SCOPE_PUPPET_NODE,
+                new AgentRuntimeResolver());
+
+        statefulTools.activateSkill("enabled-skill");
+
+        assertTrue(thread.getActivatedSkills().contains("enabled-skill"));
     }
 
     private void writeSkill(String name, boolean enabled, String body) throws Exception {

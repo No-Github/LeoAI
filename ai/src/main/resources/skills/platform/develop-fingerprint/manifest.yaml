@@ -16,5 +16,5 @@ source: builtin
 owner: leo
 enabled: true
 requires:
-  tools: [getFingerprints, getFingerprintsByProtocol, getFingerprintById, saveFingerprint, deleteFingerprint]
+  tools: [listFingerprints, getFingerprintById, saveFingerprint, deleteFingerprint]
 produces: [fingerprint-rule]

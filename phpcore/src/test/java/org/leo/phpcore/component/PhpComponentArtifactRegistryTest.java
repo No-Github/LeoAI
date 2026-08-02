@@ -16,14 +16,13 @@ class PhpComponentArtifactRegistryTest {
     @Test
     void loadsIndependentDigestAddressedArtifacts() {
         PhpComponentArtifactRegistry registry = new PhpComponentArtifactRegistry();
-        assertEquals(25, registry.getComponentIds().size());
+        assertEquals(24, registry.getComponentIds().size());
         assertTrue(registry.getComponentIds().contains("ExecCommandComponent"));
         assertTrue(registry.getComponentIds().contains("HttpRequestComponent"));
         assertTrue(registry.getComponentIds().contains("ProxyForwardComponent"));
         assertTrue(registry.getComponentIds().contains("ReverseTunnelComponent"));
         assertTrue(registry.getComponentIds().contains("ProcessComponent"));
         assertTrue(registry.getComponentIds().contains("NetworkInfoComponent"));
-        assertTrue(registry.getComponentIds().contains("DiskComponent"));
         assertTrue(registry.getComponentIds().contains("NetworkConnectionComponent"));
         assertTrue(registry.getComponentIds().contains("ScanComponent"));
         assertTrue(registry.getComponentIds().contains("ServiceComponent"));
@@ -118,9 +117,5 @@ class PhpComponentArtifactRegistryTest {
         assertTrue(network.contains("/proc/net/tcp"));
         assertTrue(network.contains("source=/proc/net"));
         assertTrue(network.contains("$linuxCommand"), "command fallback must remain for restricted proc mounts");
-
-        String disk = new String(registry.getRequired("DiskComponent").getContent(), StandardCharsets.UTF_8);
-        assertTrue(disk.contains("/proc/self/mounts"));
-        assertTrue(disk.contains("disk_total_space($mount)"));
     }
 }

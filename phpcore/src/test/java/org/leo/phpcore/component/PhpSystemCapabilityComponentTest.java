@@ -54,20 +54,6 @@ class PhpSystemCapabilityComponentTest {
         assertFalse(assertInstanceOf(List.class, network.get("interfaces")).isEmpty());
     }
 
-    @Test
-    void listsMountedDisksAndSummary() throws Exception {
-        Map<String, Object> response = invoke("DiskComponent.php", "list", "array()");
-        assertEquals(200, code(response));
-        Map<?, ?> data = assertInstanceOf(Map.class, response.get("data"));
-        List<?> disks = assertInstanceOf(List.class, data.get("disks"));
-        assertFalse(disks.isEmpty());
-        Map<?, ?> disk = assertInstanceOf(Map.class, disks.get(0));
-        assertTrue(disk.containsKey("mount"));
-        assertTrue(disk.containsKey("totalBytes"));
-        Map<?, ?> summary = assertInstanceOf(Map.class, data.get("summary"));
-        assertEquals(disks.size(), ((Number) summary.get("totalDisks")).intValue());
-    }
-
     private Map<String, Object> invoke(String name, String action, String paramsExpression) throws Exception {
         URL resource = Objects.requireNonNull(getClass().getResource("/components/" + name));
         Path component = Paths.get(resource.toURI());

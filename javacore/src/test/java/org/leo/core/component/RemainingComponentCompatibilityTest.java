@@ -32,38 +32,10 @@ class RemainingComponentCompatibilityTest {
 
     @Test
     void transformedPayloadsRemainRunnableAfterMethodRandomization() throws Exception {
-        assertTransformedRunnable("ClipboardComponent");
         assertTransformedRunnable("DecompressComponent");
         assertTransformedRunnable("FileUploadComponent");
         assertTransformedRunnable("ScreenComponent");
         assertTransformedRunnable("ResourceComponent");
-    }
-
-    @Test
-    void clipboardAcceptsByteActionAndRejectsOversizedContentBeforeOsAccess() throws Exception {
-        Map<String, Object> invalidAction = invoke(new ClipboardComponent(), params(
-                "action", utf8("invalid-action")));
-        assertEquals(400, code(invalidAction));
-
-        Map<String, Object> oversized = invoke(new ClipboardComponent(), params(
-                "action", utf8("write"), "content", new byte[1024 * 1024 + 1]));
-        assertEquals(413, code(oversized));
-    }
-
-    @Test
-    void clipboardPassesWriteContentThroughProcessStdin() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
-        ClipboardComponent component = new ClipboardComponent();
-        Method exec = ClipboardComponent.class.getDeclaredMethod(
-                "execCommand", String.class, byte[].class);
-        exec.setAccessible(true);
-        byte[] content = utf8("$HOME 'quoted' \"double\"");
-
-        String output = (String) exec.invoke(component, "cat", content);
-
-        assertEquals(new String(content, StandardCharsets.UTF_8), output);
-        assertFalse((Boolean) field(component, "execCmdMode"));
-        assertTrue((Boolean) field(component, "execCmdDone"));
     }
 
     @Test
@@ -201,10 +173,6 @@ class RemainingComponentCompatibilityTest {
         return value.getBytes(StandardCharsets.UTF_8);
     }
 
-    private boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase().contains("windows");
-    }
-
     private void writeZip(Path path, String entryName, byte[] data) throws Exception {
         ZipOutputStream output = new ZipOutputStream(new FileOutputStream(path.toFile()));
         try {
@@ -214,12 +182,6 @@ class RemainingComponentCompatibilityTest {
         } finally {
             output.close();
         }
-    }
-
-    private Object field(Object target, String name) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target);
     }
 
     private void setField(Object target, String name, Object value) throws Exception {

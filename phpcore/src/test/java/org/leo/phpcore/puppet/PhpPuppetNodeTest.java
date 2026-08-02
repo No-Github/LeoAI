@@ -8,7 +8,6 @@ import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.HttpSenderCapable;
 import org.leo.core.puppet.capability.HttpProxyCapable;
-import org.leo.core.puppet.capability.DiskCapable;
 import org.leo.core.puppet.capability.EventLogCapable;
 import org.leo.core.puppet.capability.FirewallCapable;
 import org.leo.core.puppet.capability.LocalForwardCapable;
@@ -163,17 +162,15 @@ class PhpPuppetNodeTest {
 
         assertTrue(node instanceof ProcessCapable);
         assertTrue(node instanceof NetworkInfoCapable);
-        assertTrue(node instanceof DiskCapable);
         node.listProcesses();
         node.findProcesses("php", 123, 8080);
         node.killProcess(123, true);
         node.collectNetworkInfo();
-        node.listMountDisks();
 
         assertEquals(List.of("ProcessComponent", "ProcessComponent", "ProcessComponent",
-                        "NetworkInfoComponent", "DiskComponent"),
+                        "NetworkInfoComponent"),
                 invokes.stream().map(item -> String.valueOf(item.get("componentName"))).toList());
-        assertEquals(List.of("list", "find", "kill", "collect", "list"),
+        assertEquals(List.of("list", "find", "kill", "collect"),
                 invokes.stream().map(item -> String.valueOf(item.get("action"))).toList());
         assertEquals("php", invokes.get(1).get("name"));
         assertEquals(123, invokes.get(1).get("pid"));

@@ -49,17 +49,18 @@ public class AiToolAuthorizationPolicy {
     private final AiConversationStoreService conversationStore;
     private final AiToolCatalog toolCatalog;
     private final AgentRuntimeResolver runtimeResolver;
+    private final AiToolExposurePolicy exposurePolicy;
 
     public AiToolAuthorizationPolicy(UserService userService) {
         this(userService, new AiToolExecutionBoundary(), null, null,
-                new AiToolCatalog(), new AgentRuntimeResolver());
+                new AiToolCatalog(), new AgentRuntimeResolver(), null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
         this(userService, executionBoundary, archiveTools, null,
-                new AiToolCatalog(), new AgentRuntimeResolver());
+                new AiToolCatalog(), new AgentRuntimeResolver(), null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
@@ -67,7 +68,7 @@ public class AiToolAuthorizationPolicy {
                                      AiToolResultArchiveTools archiveTools,
                                      AiConversationStoreService conversationStore) {
         this(userService, executionBoundary, archiveTools, conversationStore,
-                new AiToolCatalog(), new AgentRuntimeResolver());
+                new AiToolCatalog(), new AgentRuntimeResolver(), null);
     }
 
     @Autowired
@@ -76,12 +77,14 @@ public class AiToolAuthorizationPolicy {
                                      AiToolResultArchiveTools archiveTools,
                                      AiConversationStoreService conversationStore,
                                      AiToolCatalog toolCatalog,
-                                     AgentRuntimeResolver runtimeResolver) {
+                                     AgentRuntimeResolver runtimeResolver,
+                                     AiToolExposurePolicy exposurePolicy) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
         this.conversationStore = conversationStore;
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
+        this.exposurePolicy = exposurePolicy;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
@@ -89,13 +92,30 @@ public class AiToolAuthorizationPolicy {
 
     public ToolProvider toolProvider(AgentScope scope, Object... toolObjects) {
         List<SecuredTool> securedTools = secureTools(scope, toolObjects);
-        return request -> {
-            AiExecutionPolicy policy = resolvePolicy(scope, request.chatMemoryId());
-            List<AiServiceTool> visible = securedTools.stream()
-                    .filter(tool -> isAllowed(tool.access(), policy))
-                    .map(SecuredTool::tool)
-                    .toList();
-            return new ToolProviderResult(visible);
+        return new ToolProvider() {
+            @Override
+            public ToolProviderResult provideTools(
+                    dev.langchain4j.service.tool.ToolProviderRequest request) {
+                Object memoryId = request.chatMemoryId();
+                AiExecutionPolicy policy = resolvePolicy(scope, memoryId);
+                List<SecuredTool> permitted = securedTools.stream()
+                        .filter(tool -> isAllowed(tool.access(), policy))
+                        .toList();
+                java.util.Set<String> exposedNames = exposurePolicy == null
+                        ? null : exposurePolicy.visibleToolNames(scope, memoryId,
+                        permitted.stream().map(tool -> tool.tool().name()).toList());
+                List<AiServiceTool> visible = permitted.stream()
+                        .filter(tool -> exposedNames == null
+                                || exposedNames.contains(tool.tool().name()))
+                        .map(SecuredTool::tool)
+                        .toList();
+                return new ToolProviderResult(visible);
+            }
+
+            @Override
+            public boolean isDynamic() {
+                return exposurePolicy != null;
+            }
         };
     }
 

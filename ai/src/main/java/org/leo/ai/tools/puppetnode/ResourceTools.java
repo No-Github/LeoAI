@@ -3,6 +3,7 @@ package org.leo.ai.tools.puppetnode;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.core.puppet.capability.ResourceCapable;
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
@@ -19,8 +20,27 @@ import java.util.Map;
         parallelizable = true)
 public class ResourceTools {
 
-    @Tool("读取 puppet 侧 classpath 资源（如 jar 内的 application.yml）。不是平台侧 skills 目录工具。按会话缓存。")
-    public Map<String, Object> getResource(String resourcePath) throws Exception {
+    private static final String[] SPRING_BOOT_RESOURCES = {
+            "application.yml", "application.yaml", "application.properties",
+            "bootstrap.yml", "bootstrap.yaml", "bootstrap.properties"
+    };
+
+    @Tool("批量读取 puppet 侧 classpath 资源。resourcePaths 可传一个或多个路径；"
+            + "springBootDefaults=true 时读取 Spring Boot 常见 application/bootstrap 配置。不是平台侧 skills 目录工具。")
+    public Map<String, Object> readResources(
+            @P(value = "可选 classpath 资源路径数组", required = false)
+            String[] resourcePaths,
+            @P(value = "是否使用 Spring Boot 常见配置路径预设", required = false)
+            Boolean springBootDefaults) throws Exception {
+        String[] effectivePaths = Boolean.TRUE.equals(springBootDefaults)
+                ? SPRING_BOOT_RESOURCES : resourcePaths;
+        if (effectivePaths == null || effectivePaths.length == 0) {
+            throw new IllegalArgumentException("resourcePaths 不能为空，或将 springBootDefaults 设为 true");
+        }
+        return readResourceCandidates(effectivePaths);
+    }
+
+    private Map<String, Object> getResource(String resourcePath) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         String cacheKey = "resource:" + resourcePath;
         Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
@@ -34,31 +54,6 @@ public class ResourceTools {
             PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, results);
         }
         return results;
-    }
-
-    @Tool("读取 Spring Boot 常见配置资源（application.yml/yaml/properties、bootstrap.yml/yaml/properties）。")
-    public Map<String, Object> readSpringBootConfigResources() throws Exception {
-        String sessionId = AiToolContext.requireSessionId();
-        String cacheKey = "spring-boot-config-resources";
-        Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
-        if (cached instanceof Map<?, ?> cachedMap) {
-            return copyStringKeyMap(cachedMap);
-        }
-
-        String[] candidates = new String[]{
-                "application.yml",
-                "application.yaml",
-                "application.properties",
-                "bootstrap.yml",
-                "bootstrap.yaml",
-                "bootstrap.properties"
-        };
-        Map<String, Object> result = readResourceCandidates(candidates);
-        Object count = result.get("count");
-        if (count instanceof Integer c && c > 0) {
-            PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, result);
-        }
-        return result;
     }
 
     @Tool("获取已加载类的字节码并反编译为 Java 源码。用于分析业务逻辑、检查内存马、审计自定义实现。按会话缓存。")
@@ -77,8 +72,7 @@ public class ResourceTools {
         return results;
     }
 
-    @Tool("批量尝试读取多个 classpath 资源路径，返回成功读取的结果。")
-    public Map<String, Object> readResourceCandidates(String[] resourcePaths) throws Exception {
+    private Map<String, Object> readResourceCandidates(String[] resourcePaths) throws Exception {
         HashMap<String, Object> result = new HashMap<>();
         List<Map<String, Object>> matches = new ArrayList<>();
         List<String> attempted = new ArrayList<>();

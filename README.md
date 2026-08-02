@@ -167,7 +167,7 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 - **应用管理**：Tomcat 6–11、WebLogic 10/12/14、Jetty、Undertow、JBoss/WildFly、WebSphere、Spring MVC 与 Spring WebFlux 运行时画像；支持移除 Filter / Servlet / Valve / Listener / Controller / Interceptor
 
 #### 安全与权限
-- **凭据提取**：系统凭据、浏览器数据、WiFi 配置
+- **凭据提取**：系统凭据、浏览器数据
 - **SUID/Capability 检查**：快速发现 Linux 提权点
 - **用户账户管理**：目标主机用户枚举和操作
 - **网络连接查看**：查看活跃连接、网络共享、已安装软件
@@ -175,8 +175,6 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 #### 其他工具
 - **类字节码查看**：提取并反编译 JVM 中的已加载类
 - **类与资源浏览**：按类名或路径读取 puppet 进程的 classpath 资源（jar 内 .class、`application.yml`、`META-INF/MANIFEST.MF` 等），自动识别二进制/文本/.class 类型并反编译为 Java 源码；当 puppet 注入 Tomcat 全局 ClassLoader 时，自动降级遍历所有 WebappClassLoader 兜底
-- **剪贴板读取**：获取目标系统剪贴板内容
-- **磁盘挂载管理**：查看和管理磁盘挂载点
 - **HostId 切换**：单节点可管理多个内网主机
 
 <img src="docs/images/screenshot-console.png" alt="操作控制台截图" width="800" />

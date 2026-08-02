@@ -1,6 +1,7 @@
 package org.leo.ai.tools.platform;
 
 import org.leo.service.fingerprint.FingerprintManageService;
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AiToolAccess;
 import org.springframework.stereotype.Component;
@@ -21,18 +22,14 @@ public class FingerprintTools {
         this.fingerprintManageService = fingerprintManageService;
     }
 
-    @Tool("获取当前平台所有指纹摘要。每项返回 fingerprintId、protocol、name、tags、info。")
+    @Tool("列出平台指纹摘要。protocol 可选；为空返回全部指纹。每项返回 fingerprintId、protocol、name、tags、info。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Map<String, Object>> getFingerprints() {
-        return fingerprintManageService.listFingerprints();
-    }
-
-    @Tool("根据协议类型获取指纹摘要列表。支持如 http、tcp 等协议。")
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public List<Map<String, Object>> getFingerprintsByProtocol(String protocol) {
-        return fingerprintManageService.getFingerprintsByProtocol(protocol);
+    public List<Map<String, Object>> listFingerprints(
+            @P(value = "可选协议类型，如 http、tcp", required = false) String protocol) {
+        return protocol == null || protocol.isBlank()
+                ? fingerprintManageService.listFingerprints()
+                : fingerprintManageService.getFingerprintsByProtocol(protocol.trim());
     }
 
     @Tool("根据 fingerprintId 获取指纹完整配置，返回完整对象，包括 rule。")

@@ -9,8 +9,7 @@ description: 当用户希望在平台侧编写、生成、完善、检查、保�
 
 可用工具来自 `platform_fingerprint_agent`，对应 `FingerprintTools`：
 
-- `getFingerprints()`: 获取全部指纹摘要。
-- `getFingerprintsByProtocol(protocol)`: 按 `http`、`tcp` 等协议筛选摘要。
+- `listFingerprints(protocol?)`: 获取全部指纹摘要，或按 `http`、`tcp` 等协议筛选。
 - `getFingerprintById(fingerprintId)`: 获取完整指纹对象，包含 `rule`。
 - `saveFingerprint(userId, name, ruleJson, infoJson, protocol, tagsJson, version)`: 创建或覆盖保存指纹。
 - `deleteFingerprint(userId, fingerprintId)`: 删除指定指纹。
@@ -37,7 +36,7 @@ description: 当用户希望在平台侧编写、生成、完善、检查、保�
    - 删除指纹
 2. 查询现状：
    - 用户给了 `fingerprintId`：先调用 `getFingerprintById(fingerprintId)`。
-   - 用户只给了产品名或协议：先调用 `getFingerprints()` 或 `getFingerprintsByProtocol(protocol)`，检查是否已有相近指纹。
+   - 用户只给了产品名或协议：先调用 `listFingerprints(protocol?)`，检查是否已有相近指纹。
 3. 生成或修改指纹：
    - 只生成 `name`、`protocol`、`tags`、`info`、`rule.requests`、`rule.script`。
    - 不手工生成或写入文件；`fingerprintId` 由保存工具按 `name + "_" + version` 生成。

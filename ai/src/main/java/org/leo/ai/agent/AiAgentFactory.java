@@ -214,8 +214,7 @@ public class AiAgentFactory {
                 || AiToolErrorHandler.isErrorResult(execution)) return;
         String toolName = execution.request() != null ? execution.request().name() : null;
         AiToolDescriptor descriptor = toolCatalog.get(toolName);
-        if (toolName == null || "manage_recon_summary".equals(toolName)
-                || !descriptor.business()) return;
+        if (toolName == null || !descriptor.business()) return;
 
         String sessionId = AiToolContext.getSessionId();
         if (sessionId == null || sessionId.isBlank()) return;

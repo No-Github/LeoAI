@@ -81,9 +81,6 @@ public class ControllerUtil {
             "_WRITE"
     ));
     private static final Set<String> GENERIC_AUDIT_ALWAYS_TYPES = new LinkedHashSet<>(Set.of(
-            "CLIPBOARD_READ",
-            "WIFI_PROFILE_DETAIL",
-            "WIFI_PROFILE_DUMP_ALL_PASSWORDS",
             "BROWSER_DATA_BOOKMARKS",
             "BROWSER_DATA_HISTORY",
             "BROWSER_DATA_SENSITIVE_FILES"

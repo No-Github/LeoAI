@@ -18,7 +18,7 @@ source: builtin
 owner: leo
 enabled: true
 requires:
-  tools: [exec, queryTask, stopTask, manage_recon_summary]
+  tools: [exec, queryTask, stopTask]
   skills: [recon-basic-info]
   facts: [target.authorized]
 produces: [privilege-escalation-candidates]

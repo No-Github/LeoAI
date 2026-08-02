@@ -263,7 +263,6 @@ Java组件必须自行写入 `code`；Core不会像 PHP Core 一样自动补充�
 | Component | 操作选择 | 顶层返回字段 |
 |---|---|---|
 | BasicInfoComponent | 无 | `code, BasicInfo, msg?` |
-| ClipboardComponent | action=`read/write/monitor` | `code, data?, msg?` |
 | ScreenComponent | 无；参数 `format,quality,delay` | `code, screenBytes, format, width, height, imageSize, captureTime, timestamp, errorType?, msg?` |
 | SpringFrameworkManageComponent | methodName=`getFrameworkInfo/removeController/removeInterceptor` | 查询返回 `code, frameworkInfo`；修改返回 `status, matched, changed, verified, code` |
 | TomcatContainerManageComponent | methodName=`inspectRuntime/removeFilter/removeServlet/removeValve/removeListener` | 查询返回 `code, contexts, features`；修改返回 `status, matched, changed, verified, code` |

@@ -46,7 +46,6 @@ public class AuditPolicyService {
             "PORT_SCAN_QUERY",
             "FINGERPRINT_QUERY",
             "RECON_QUERY",
-            "MOUNT_DISK_LIST",
             "NETWORK_CONNECTION_LIST",
             "NETWORK_CONNECTION_SUMMARY",
             "INSTALLED_SOFTWARE_LIST_ALL",
@@ -64,7 +63,6 @@ public class AuditPolicyService {
     private static final Set<String> HIGH_RISK_PREFIXES = new LinkedHashSet<>(Arrays.asList(
             "AUDIT_",
             "BROWSER_DATA_",
-            "CLIPBOARD_",
             "COMMAND_",
             "COMPONENT_",
             "EXEC_",
@@ -76,8 +74,7 @@ public class AuditPolicyService {
             "SCREENSHOT",
             "SQL_",
             "SUID_CAPABILITY_",
-            "SUID_CAPS_",
-            "WIFI_PROFILE_"
+            "SUID_CAPS_"
     ));
 
     private static final Set<String> HIGH_RISK_ACTION_PARTS = new LinkedHashSet<>(Arrays.asList(
@@ -228,12 +225,8 @@ public class AuditPolicyService {
             "PORT_SCAN_PAUSE",
             "PORT_SCAN_RESUME",
             "PORT_SCAN_STOP",
-            "CLIPBOARD_READ",
-            "CLIPBOARD_WRITE",
-            "CLIPBOARD_MONITOR",
             "PERSISTENCE_LIST",
             "PERSISTENCE_QUERY",
-            "MOUNT_DISK_LIST",
             "NETWORK_SHARE_LIST",
             "NETWORK_SHARE_MOUNT_LIST",
             "NETWORK_SHARE_DETAIL",
@@ -259,9 +252,6 @@ public class AuditPolicyService {
             "INSTALLED_SOFTWARE_SYSTEM",
             "INSTALLED_SOFTWARE_USER",
             "INSTALLED_SOFTWARE_SEARCH",
-            "WIFI_PROFILE_LIST",
-            "WIFI_PROFILE_DETAIL",
-            "WIFI_PROFILE_DUMP_ALL_PASSWORDS",
             "BROWSER_DATA_SCAN",
             "BROWSER_DATA_BOOKMARKS",
             "BROWSER_DATA_HISTORY",

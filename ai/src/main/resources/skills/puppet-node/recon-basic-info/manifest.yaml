@@ -18,7 +18,7 @@ source: builtin
 owner: leo
 enabled: true
 requires:
-  tools: [getBasicInfo, exec, queryTask, stopTask, manage_recon_summary]
+  tools: [getBasicInfo, exec, queryTask, stopTask]
   facts: [target.authorized]
 produces: [host-profile, action-paths]
 next: [hunt-credentials, escalate-linux-privilege]

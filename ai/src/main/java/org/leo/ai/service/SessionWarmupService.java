@@ -5,7 +5,6 @@ import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.CommandCapable;
-import org.leo.core.puppet.capability.DiskCapable;
 import org.leo.core.puppet.capability.NetworkInfoCapable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +19,7 @@ import java.util.concurrent.RejectedExecutionException;
  * 会话预热服务。
  *
  * <p>在 AI 线程创建或恢复时异步预填基础缓存（basicInfo、OS 平台类型、环境变量、
- * 网络拓扑、挂载磁盘），使后续工具调用无需等待首次探测，减少 AI 推理轮次中的阻塞时间。
+ * 网络拓扑），使后续工具调用无需等待首次探测，减少 AI 推理轮次中的阻塞时间。
  *
  * <p>预热是幂等的：同一 session 只会执行一次，重复调用直接跳过。
  * 如果 puppet 节点尚未就绪（连接断开等），预热静默失败，不影响正常流程。
@@ -34,7 +33,6 @@ public class SessionWarmupService {
     private static final String OS_PLATFORM_CACHE_KEY = "os-platform";
     private static final String ENV_VARS_CACHE_KEY = "env-vars";
     private static final String NETWORK_INFO_CACHE_KEY = "network-info:all";
-    private static final String MOUNT_DISK_CACHE_KEY = "mount-disk:list";
 
     /** 已触发预热的 sessionId 集合，防止重复执行。 */
     private final Set<String> warmedSessions = ConcurrentHashMap.newKeySet();
@@ -121,20 +119,6 @@ public class SessionWarmupService {
                 }
             } catch (Exception e) {
                 logger.debug("预热网络拓扑失败（非关键），sessionId={}, err={}", sessionId, e.getMessage());
-            }
-        }
-
-        // 4. 挂载磁盘 — 主机侦察必调，预热后 AI 通过 exec 查询可直接命中缓存
-        Object cachedDisk = PuppetNodeSessionUtils.getAiContextValue(sessionId, MOUNT_DISK_CACHE_KEY);
-        if (cachedDisk == null) {
-            try {
-                DiskCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, DiskCapable.class);
-                Map<String, Object> diskInfo = node.listMountDisks();
-                if (diskInfo != null && !diskInfo.containsKey("error")) {
-                    PuppetNodeSessionUtils.putAiContextValue(sessionId, MOUNT_DISK_CACHE_KEY, diskInfo);
-                }
-            } catch (Exception e) {
-                logger.debug("预热挂载磁盘失败（非关键），sessionId={}, err={}", sessionId, e.getMessage());
             }
         }
 

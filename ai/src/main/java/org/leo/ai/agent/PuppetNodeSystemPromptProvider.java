@@ -76,13 +76,12 @@ public class PuppetNodeSystemPromptProvider {
         sb.append("════════════════════════════════════════\n");
         sb.append("【工具选择】\n");
         sb.append("════════════════════════════════════════\n\n");
-        sb.append("你拥有完整的工具集（命令执行、文件操作、端口扫描、浏览器数据、凭据采集、\n");
-        sb.append("剪贴板操作、Web Runtime 管理、Java 插件调用、HTTP 请求/Fuzz、脚本执行、\n");
-        sb.append("数据库连接配置、SQL 执行、资源读取、计划追踪、侦察情报汇总）可直接使用。\n\n");
+        sb.append("基础工具常驻；专项工具会按当前 Puppet capability 和已激活 Skill 动态提供。\n");
+        sb.append("如果当前未看到某个专项工具，先检查是否需要 activate_skill，或该 Puppet 是否支持对应能力。\n\n");
         sb.append("选择原则：\n");
         sb.append("- 简单 OS 查询 → exec\n");
         sb.append("- 多个独立只读检查 → 并行工具调用\n");
-        sb.append("- 需要专门能力 → 直接调用对应工具，无需走 dispatch 间接层\n");
+        sb.append("- 需要专门能力 → 先激活匹配 Skill，再调用动态提供的工具\n");
         sb.append("- 工具返回结果后，观察分析并决定下一步\n");
         return sb.toString();
     }
@@ -162,7 +161,7 @@ public class PuppetNodeSystemPromptProvider {
             ▸ 最佳实践
             - 每完成一个步骤，在 updatePlanStep 的 resultText 里简要记录输出摘要
             - 步骤失败不要放弃，分析原因后换策略重试或标记 fail 继续下一个
-            - 计划完成后，将关键发现沉淀到 manage_recon_summary
+            - 关键发现由系统从成功工具结果中自动提取并沉淀，无需额外摘要工具调用
 
             ReAct 循环：
             - THINK：先判断当前缺口和最优工具。多步任务先 createPlan 并立即 start。
@@ -189,9 +188,8 @@ public class PuppetNodeSystemPromptProvider {
             【关键发现沉淀】
             ════════════════════════════════════════
 
-            侦察过程中发现的稳定情报应即时写入会话级摘要：
-            - manage_recon_summary(action="append", content="...")
-            - 何时写：发现凭据、关键路径、监听服务、版本信息时立即调用
+            成功工具结果中的稳定情报会由系统自动写入会话级摘要并在后续轮次注入。
+            最终回答中仍应明确区分已验证事实、推断和下一步建议。
 
             ════════════════════════════════════════
             【最终结论格式】

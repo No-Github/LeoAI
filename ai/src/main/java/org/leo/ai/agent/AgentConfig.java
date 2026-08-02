@@ -170,13 +170,19 @@ public class AgentConfig {
     // ── Skill 工具 Bean ───────────────────────────────────────────────────────
 
     @Bean
-    public SkillActivationTools puppetNodeSkillActivationTools(SkillRegistryService skillRegistry) {
-        return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PUPPET_NODE);
+    public SkillActivationTools puppetNodeSkillActivationTools(
+            SkillRegistryService skillRegistry,
+            AgentRuntimeResolver runtimeResolver) {
+        return new SkillActivationTools(skillRegistry,
+                SkillRegistryService.SCOPE_PUPPET_NODE, runtimeResolver);
     }
 
     @Bean
-    public SkillActivationTools platformSkillActivationTools(SkillRegistryService skillRegistry) {
-        return new SkillActivationTools(skillRegistry, SkillRegistryService.SCOPE_PLATFORM);
+    public SkillActivationTools platformSkillActivationTools(
+            SkillRegistryService skillRegistry,
+            AgentRuntimeResolver runtimeResolver) {
+        return new SkillActivationTools(skillRegistry,
+                SkillRegistryService.SCOPE_PLATFORM, runtimeResolver);
     }
 
     // ── 主 Agent（默认 Bean，按激活通道热切换；会话级 Agent 由 AiAgentFactory 构建）────
