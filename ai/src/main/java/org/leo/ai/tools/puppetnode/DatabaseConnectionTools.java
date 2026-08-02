@@ -19,6 +19,8 @@ import java.util.Map;
  * Returned views are sanitized by the shared profile service.
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public final class DatabaseConnectionTools {
 
     private final DatabaseConnectionProfileService profileService;
@@ -34,6 +36,8 @@ public final class DatabaseConnectionTools {
             列出当前 Puppet 已保存的数据库连接配置。返回 connectionId、名称、启用状态和不含密码的 connection。
             在编辑、删除或使用已保存连接前先调用本工具确认 connectionId。
             """)
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Map<String, Object>> listDatabaseConnections() {
         ToolScope scope = scope();
         return profileService.listByPuppet(scope.userId(), scope.puppetId());
@@ -68,6 +72,8 @@ public final class DatabaseConnectionTools {
                         scope.userId(), scope.puppetId(), connectionId, patch));
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("""
             删除当前 Puppet 已保存的数据库连接配置。先调用 listDatabaseConnections 确认 connectionId。
             删除成功后该 connectionId 将不能再用于 querySql 或 execSql。

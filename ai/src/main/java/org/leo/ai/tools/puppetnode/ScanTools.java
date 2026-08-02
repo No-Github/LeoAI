@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Map;
 
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ScanTools {
 
     @Tool("在 puppet 侧启动端口扫描任务。scanHost 为目标 IP 或 CIDR，scanPorts 为端口数组，"
@@ -23,6 +25,8 @@ public class ScanTools {
     }
 
     @Tool("查询端口扫描任务的当前进度、已发现的开放端口列表及完成状态。任务完成后调用 stopScanPort 释放资源。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> queryScanPortResult(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ScanCapable scanNode = PuppetNodeSessionUtils.requireCapability(sessionId, ScanCapable.class);
@@ -43,6 +47,8 @@ public class ScanTools {
         return scanNode.resumeScanPort(taskId);
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("停止端口扫描任务（终止扫描释放资源）。")
     public Map<String, Object> stopScanPort(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

@@ -31,11 +31,16 @@ public class PuppetNodeSessionContainer {
     /**
      * 会话销毁监听器：在会话被移除/驱逐时回调，参数为 sessionId。
      */
-    private static final List<Consumer<String>> destroyListeners = new CopyOnWriteArrayList<>();
+    private static final CopyOnWriteArrayList<Consumer<String>> destroyListeners =
+            new CopyOnWriteArrayList<>();
 
     /** 注册会话销毁监听器。多个监听器按注册顺序触发；任一监听器异常不影响其他监听器。 */
     public static void registerDestroyListener(Consumer<String> listener) {
-        if (listener != null) destroyListeners.add(listener);
+        if (listener != null) destroyListeners.addIfAbsent(listener);
+    }
+
+    public static void unregisterDestroyListener(Consumer<String> listener) {
+        if (listener != null) destroyListeners.remove(listener);
     }
 
     private static void fireSessionDestroyed(String sessionId) {

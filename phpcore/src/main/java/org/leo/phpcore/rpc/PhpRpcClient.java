@@ -2,6 +2,7 @@ package org.leo.phpcore.rpc;
 
 import org.leo.core.component.runtime.ComponentArtifact;
 import org.leo.core.entity.Disguise;
+import org.leo.core.entity.Puppet;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.HeaderNoiseGenerator;
@@ -26,6 +27,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+
+import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
 
 /** Platform-side client for the PHP core execution Envelope. */
 public final class PhpRpcClient implements AutoCloseable {
@@ -34,7 +38,8 @@ public final class PhpRpcClient implements AutoCloseable {
     private final List<RequestLayer> requestLayers;
     private final List<ResponseLayer> responseLayers;
     private volatile String hostId;
-    private int maxAttempts = 1;
+    /** 最大请求总数，包含首次请求。 */
+    private int maxAttempts = Puppet.DEFAULT_MAX_REQUEST_COUNT;
     private UrlGenerator urlGenerator;
     private UrlStrategy urlStrategy;
     private PaddingStrategy paddingStrategy;
@@ -43,6 +48,7 @@ public final class PhpRpcClient implements AutoCloseable {
     private long retryBaseDelayMillis = 150L;
     private long retryMaxDelayMillis = 2_000L;
     private RetrySleeper retrySleeper = Thread::sleep;
+    private Function<String, Map<String, Object>> hostIdMismatchRecovery;
 
     public PhpRpcClient(Communication communication,
                         List<RequestLayer> requestLayers,
@@ -58,7 +64,7 @@ public final class PhpRpcClient implements AutoCloseable {
     }
 
     public void setMaxReqCount(Integer count) {
-        this.maxAttempts = count == null || count <= 0 ? 1 : count;
+        this.maxAttempts = Puppet.requireValidMaxRequestCount(count);
     }
 
     public void setUrlStrategy(UrlStrategy strategy) {
@@ -80,6 +86,11 @@ public final class PhpRpcClient implements AutoCloseable {
 
     void setRetrySleeper(RetrySleeper retrySleeper) {
         this.retrySleeper = retrySleeper == null ? Thread::sleep : retrySleeper;
+    }
+
+    public void setHostIdMismatchRecovery(
+            Function<String, Map<String, Object>> hostIdMismatchRecovery) {
+        this.hostIdMismatchRecovery = hostIdMismatchRecovery;
     }
 
     public Map<String, Object> ping() throws Exception {
@@ -131,6 +142,7 @@ public final class PhpRpcClient implements AutoCloseable {
 
     private Map<String, Object> call(PuppetRpcRequest request) throws Exception {
         Exception lastFailure = null;
+        PuppetRpcResponse hostMismatchResponse = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 applyTransportStrategies();
@@ -138,14 +150,42 @@ public final class PhpRpcClient implements AutoCloseable {
                 Map<String, Object> decoded = decode(
                         communication.sendRequest(encoded.data()), encoded.requestIds());
                 PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
+                if (isHostIdMismatch(response)) {
+                    hostMismatchResponse = response;
+                    if (attempt < maxAttempts) {
+                        sleepBeforeRetry(request.requestId(), attempt);
+                        continue;
+                    }
+                    return recoverHostAffinity(request.hostId(), response);
+                }
                 return PuppetRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
                 lastFailure = e;
                 if (attempt < maxAttempts) sleepBeforeRetry(request.requestId(), attempt);
             }
         }
+        if (hostMismatchResponse != null) {
+            return recoverHostAffinity(request.hostId(), hostMismatchResponse);
+        }
         throw new IllegalStateException("PHP Puppet 通信失败: "
                 + (lastFailure != null ? lastFailure.getMessage() : "unknown"), lastFailure);
+    }
+
+    private Map<String, Object> recoverHostAffinity(
+            String expectedHostId, PuppetRpcResponse mismatchResponse) {
+        Function<String, Map<String, Object>> recovery = hostIdMismatchRecovery;
+        if (recovery == null) return PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+        try {
+            Map<String, Object> recovered = recovery.apply(expectedHostId);
+            return recovered != null ? recovered : PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+        } catch (RuntimeException e) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("code", Integer.valueOf(503));
+            result.put("errorCode", org.leo.core.rpc.PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
+            result.put("msg", "目标实例重新握手失败: "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return result;
+        }
     }
 
     private EncodedPayload encode(PuppetRpcRequest request) throws Exception {

@@ -13,6 +13,7 @@ import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiPlan;
 import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
@@ -55,7 +56,7 @@ public class PuppetNodeAiTurnService {
 
     public boolean tryClaimExecution(AiThread thread) {
         boolean localClaimed = turnCoordinator.tryClaim(thread);
-        if (!localClaimed && AiThread.STATUS_CANCELLED.equals(thread.getRunStatus())) {
+        if (!localClaimed && AiRunStatus.CANCELLED.equals(thread.getRunStatus())) {
             localClaimed = turnCoordinator.tryClaimAfterRelease(
                     thread, thread::isExecuting, 5_000L);
         }

@@ -1,18 +1,22 @@
 package org.leo.ai.tools.platform;
 
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
-import org.leo.core.entity.Puppet;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.generator.ScriptGeneratorProvider;
 import org.leo.core.runtime.PuppetRuntime;
-import org.leo.service.PuppetService;
+import org.leo.jmg.generation.WebShellWrapperContract;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
+import org.leo.service.shell.CoreArtifactStore;
 import org.leo.service.shell.ShellResultStore;
+import org.leo.service.shell.WebShellWrapperTemplateStore;
 
 import java.util.List;
 import java.util.Map;
@@ -20,50 +24,20 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 class ShellGeneratorToolsTest {
 
     @Test
-    void exposesPuppetRuntimeForGeneratorSelection() throws Exception {
-        Puppet puppet = new Puppet();
-        puppet.setPuppetId("php-node");
-        puppet.setPuppetName("PHP Node");
-        puppet.setType("PHP");
-        puppet.setProtocol("http");
-        PuppetService puppetService = mock(PuppetService.class);
-        when(puppetService.findPuppetById("php-node")).thenReturn(puppet);
-        ShellGeneratorTools tools = new ShellGeneratorTools(mock(DisguiseService.class),
-                mock(DelegatingChatModel.class), new ShellResultStore(), puppetService,
-                new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))),
-                mock(PlatformToolAccessService.class));
-
-        Map<String, Object> config = tools.getPuppetShellConfig("php-node");
-
-        assertEquals("php", config.get("runtime"));
-        assertEquals("http", config.get("protocol"));
-        assertTrue(String.valueOf(config.get("tip")).contains("generatePhpWebShell"));
-    }
-
-    @Test
-    void convertsPersistedChunkedProtocolToGeneratorProtocol() throws Exception {
-        Puppet puppet = new Puppet();
-        puppet.setPuppetId("chunk-node");
-        puppet.setType("java");
-        puppet.setProtocol("httpChunked");
-        PuppetService puppetService = mock(PuppetService.class);
-        when(puppetService.findPuppetById("chunk-node")).thenReturn(puppet);
-        ShellGeneratorTools tools = new ShellGeneratorTools(mock(DisguiseService.class),
-                mock(DelegatingChatModel.class), new ShellResultStore(), puppetService,
-                new ScriptGeneratorService(List.of()),
-                mock(PlatformToolAccessService.class));
-
-        Map<String, Object> config = tools.getPuppetShellConfig("chunk-node");
-
-        assertEquals("httpchunk", config.get("protocol"));
+    void doesNotExposePuppetConfigurationAsAGenerationDependency() {
+        assertThrows(NoSuchMethodException.class,
+                () -> ShellGeneratorTools.class.getDeclaredMethod(
+                        "getPuppetShellConfig", String.class));
     }
 
     @Test
@@ -115,12 +89,83 @@ class ShellGeneratorToolsTest {
         assertTrue(headerError.getMessage().contains("必须同时设置"));
     }
 
+    @Test
+    void keepsCoreServerSideAndOnlyReturnsFinalResultById() throws Exception {
+        DisguiseService disguiseService = mock(DisguiseService.class);
+        when(disguiseService.getDisguiseById("req-core")).thenReturn(requestDisguise("req-core"));
+        when(disguiseService.getDisguiseById("resp-core")).thenReturn(responseDisguise("resp-core"));
+        ShellResultStore resultStore = new ShellResultStore();
+        CoreArtifactStore coreStore = new CoreArtifactStore();
+        WebShellWrapperTemplateStore templateStore = new WebShellWrapperTemplateStore();
+        ShellGeneratorTools tools = new ShellGeneratorTools(
+                disguiseService,
+                mock(DelegatingChatModel.class),
+                resultStore,
+                new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))),
+                coreStore,
+                templateStore);
+
+        Map<String, Object> core = tools.createJavaCoreArtifact(
+                "req-core", "resp-core", "http", "org.demo.GeneratedCore",
+                "8", "javax", 405L);
+
+        assertEquals(true, core.get("success"));
+        assertNotNull(core.get("coreArtifactId"));
+        assertEquals(64, String.valueOf(core.get("coreSha256")).length());
+        assertFalse(core.containsKey("bytecode"));
+        assertFalse(core.containsKey("base64"));
+        assertFalse(core.containsKey("payload"));
+
+        Map<String, Object> contract = tools.getWebShellWrapperContract("JSP", "http");
+        String templateId = templateStore.put(
+                String.valueOf(contract.get("baselineTemplate")), "JSP", "http");
+        Map<String, Object> assembled = tools.assembleWebShellWrapper(
+                String.valueOf(core.get("coreArtifactId")), templateId,
+                false, null, 200);
+
+        assertEquals(true, assembled.get("success"));
+        assertNotNull(assembled.get("resultId"));
+        String content = resultStore.getContent(String.valueOf(assembled.get("resultId")));
+        assertTrue(content.contains("org.demo.GeneratedCore"));
+        assertFalse(content.contains("{{"));
+    }
+
+    @Test
+    void retriesInvalidAiWrapperAndStoresOnlyValidatedTemplate() throws Exception {
+        DisguiseService disguiseService = mock(DisguiseService.class);
+        when(disguiseService.getDisguiseById("req-core")).thenReturn(requestDisguise("req-core"));
+        when(disguiseService.getDisguiseById("resp-core")).thenReturn(responseDisguise("resp-core"));
+        DelegatingChatModel chatModel = mock(DelegatingChatModel.class);
+        WebShellWrapperContract contract = WebShellWrapperContract.create("JSP", "http");
+        String invalid = contract.getBaselineTemplate()
+                .replace(WebShellWrapperContract.LOAD_CORE, "");
+        when(chatModel.chat(any(ChatRequest.class))).thenReturn(
+                response(invalid), response(contract.getBaselineTemplate()));
+        CoreArtifactStore coreStore = new CoreArtifactStore();
+        WebShellWrapperTemplateStore templateStore = new WebShellWrapperTemplateStore();
+        ShellGeneratorTools tools = new ShellGeneratorTools(
+                disguiseService, chatModel, new ShellResultStore(),
+                new ScriptGeneratorService(List.of(phpProvider(new AtomicReference<>()))),
+                coreStore, templateStore);
+        Map<String, Object> core = tools.createJavaCoreArtifact(
+                "req-core", "resp-core", "http", "org.demo.RetryCore",
+                "8", "javax", 406L);
+
+        Map<String, Object> result = tools.designWebShellWrapper(
+                String.valueOf(core.get("coreArtifactId")), "JSP", "保持简洁");
+
+        assertEquals(true, result.get("success"));
+        WebShellWrapperTemplateStore.TemplateEntry stored = templateStore.get(
+                String.valueOf(result.get("wrapperTemplateId")));
+        assertNotNull(stored);
+        assertEquals(contract.getBaselineTemplate(), stored.getTemplate());
+    }
+
     private static ShellGeneratorTools tools(DisguiseService disguiseService,
                                               ShellResultStore resultStore,
                                               ScriptGeneratorService generators) {
         return new ShellGeneratorTools(disguiseService, mock(DelegatingChatModel.class), resultStore,
-                mock(PuppetService.class), generators,
-                mock(PlatformToolAccessService.class));
+                generators, new CoreArtifactStore(), new WebShellWrapperTemplateStore());
     }
 
     private static DisguiseService mockDisguiseService() {
@@ -133,6 +178,20 @@ class ShellGeneratorToolsTest {
     private static Disguise disguise(String id) {
         Disguise disguise = new Disguise();
         disguise.setDisguiseId(id);
+        return disguise;
+    }
+
+    private static Disguise requestDisguise(String id) {
+        Disguise disguise = disguise(id);
+        disguise.setDecodeBody(
+                "public java.util.HashMap decode(byte[] data){return new java.util.HashMap();}");
+        return disguise;
+    }
+
+    private static Disguise responseDisguise(String id) {
+        Disguise disguise = disguise(id);
+        disguise.setEncodeBody(
+                "public byte[] encode(java.util.HashMap data){return new byte[0];}");
         return disguise;
     }
 
@@ -160,5 +219,9 @@ class ShellGeneratorToolsTest {
                         List.of());
             }
         };
+    }
+
+    private static ChatResponse response(String text) {
+        return ChatResponse.builder().aiMessage(AiMessage.from(text)).build();
     }
 }

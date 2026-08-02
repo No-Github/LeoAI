@@ -8,7 +8,7 @@ import org.leo.core.entity.AiExecutionPolicy;
  * <p>在工具方法执行期间持有当前 sessionId / threadId / planStepIndex，
  * 替代每个 @Tool 方法上重复的参数声明。
  *
- * <p>生命周期由 AgentConfig 注入的 {@code beforeToolExecution} / {@code afterToolExecution}
+ * <p>生命周期由 {@link AiAgentFactory} 注入的 {@code beforeToolExecution} / {@code afterToolExecution}
  * 钩子管理：工具线程启动前设置，工具执行完毕后清除（finally 保证）。
  */
 public final class AiToolContext {
@@ -19,12 +19,14 @@ public final class AiToolContext {
     public record Snapshot(String sessionId, String threadId,
                            int planStepIndex,
                            AiExecutionPolicy executionPolicy,
-                           String confirmationRequestId) {}
+                           String confirmationRequestId,
+                           AiToolDescriptor toolDescriptor) {}
 
     private static final ThreadLocal<Ctx> HOLDER = new ThreadLocal<>();
     private static final ThreadLocal<Integer> PLAN_STEP_INDEX = new ThreadLocal<>();
     private static final ThreadLocal<AiExecutionPolicy> EXECUTION_POLICY = new ThreadLocal<>();
     private static final ThreadLocal<String> CONFIRMATION_REQUEST_ID = new ThreadLocal<>();
+    private static final ThreadLocal<AiToolDescriptor> TOOL_DESCRIPTOR = new ThreadLocal<>();
 
     private AiToolContext() {}
 
@@ -51,6 +53,7 @@ public final class AiToolContext {
         PLAN_STEP_INDEX.remove();
         EXECUTION_POLICY.remove();
         CONFIRMATION_REQUEST_ID.remove();
+        TOOL_DESCRIPTOR.remove();
     }
 
     public static Snapshot capture() {
@@ -59,7 +62,7 @@ public final class AiToolContext {
                 ctx != null ? ctx.sessionId() : null,
                 ctx != null ? ctx.threadId() : null,
                 getPlanStepIndex(),
-                getExecutionPolicy(), getConfirmationRequestId());
+                getExecutionPolicy(), getConfirmationRequestId(), getToolDescriptor());
     }
 
     public static void restore(Snapshot snapshot) {
@@ -71,6 +74,7 @@ public final class AiToolContext {
         setPlanStepIndex(snapshot.planStepIndex());
         setExecutionPolicy(snapshot.executionPolicy());
         setConfirmationRequestId(snapshot.confirmationRequestId());
+        setToolDescriptor(snapshot.toolDescriptor());
     }
 
     // ── 基本字段 ─────────────────────────────────────────────────────────────
@@ -93,7 +97,7 @@ public final class AiToolContext {
         String id = getSessionId();
         if (id == null || id.isBlank()) {
             throw new IllegalStateException(
-                    "AiToolContext.sessionId 未设置。请确认 AgentConfig 已配置 beforeToolExecution 钩子。");
+                    "AiToolContext.sessionId 未设置。请确认 AiAgentFactory 已配置 beforeToolExecution 钩子。");
         }
         return id;
     }
@@ -126,6 +130,15 @@ public final class AiToolContext {
 
     public static String getConfirmationRequestId() {
         return CONFIRMATION_REQUEST_ID.get();
+    }
+
+    public static void setToolDescriptor(AiToolDescriptor descriptor) {
+        if (descriptor == null) TOOL_DESCRIPTOR.remove();
+        else TOOL_DESCRIPTOR.set(descriptor);
+    }
+
+    public static AiToolDescriptor getToolDescriptor() {
+        return TOOL_DESCRIPTOR.get();
     }
 
     // ── Plan 关联 ────────────────────────────────────────────────────────────

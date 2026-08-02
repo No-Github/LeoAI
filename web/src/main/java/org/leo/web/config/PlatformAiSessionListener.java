@@ -1,6 +1,5 @@
 package org.leo.web.config;
 
-import jakarta.servlet.annotation.WebListener;
 import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.HttpSessionEvent;
 import jakarta.servlet.http.HttpSessionListener;
@@ -14,7 +13,6 @@ import org.leo.ai.platform.PlatformAiStateStore;
  *
  * <p>通过 {@link WebConfig#platformAiSessionListener()} 注册到 Servlet 容器。
  */
-@WebListener
 public class PlatformAiSessionListener implements HttpSessionListener {
 
     private static final String SESSION_ATTR_PLATFORM_AI_STATE_ID = "platformAiStateId";

@@ -311,6 +311,48 @@ class ComponentServiceEnvelopeTest {
     }
 
     @Test
+    void retriesTypedHostMismatchThenRecoversWithoutReplayingTheOperation() {
+        PortableDisguise disguise = new PortableDisguise();
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicInteger recoveries = new AtomicInteger();
+        List<String> requestIds = new ArrayList<>();
+        Communication communication = data -> {
+            Map<String, Object> request = PortableJsonCodec.decode(data);
+            attempts.incrementAndGet();
+            requestIds.add(String.valueOf(request.get("requestId")));
+            assertEquals("host-1", request.get("hostId"));
+            return PortableJsonCodec.encode(Map.of(
+                    "requestId", request.get("requestId"),
+                    "code", 409,
+                    "error", Map.of(
+                            "errorCode", "HOST_ID_MISMATCH",
+                            "hostId", "host-2",
+                            "message", "wrong instance")));
+        };
+        TestService service = service(communication, disguise);
+        service.setMaxReqCount(3);
+        service.setRetryBackoff(0, 0);
+        service.setHostIdMismatchRecovery(expectedHostId -> {
+            recoveries.incrementAndGet();
+            assertEquals("host-1", expectedHostId);
+            return new LinkedHashMap<>(Map.of(
+                    "code", 409,
+                    "errorCode", "HOST_ID_REBOUND",
+                    "hostId", "host-2"));
+        });
+
+        Map<String, Object> result = service.execute(
+                PuppetOperation.COMPONENT_INVOKE, "ExecCommandComponent", "exec",
+                new LinkedHashMap<>(Map.of("cmd", "whoami")));
+
+        assertEquals(409, result.get("code"));
+        assertEquals("HOST_ID_REBOUND", result.get("errorCode"));
+        assertEquals(3, attempts.get());
+        assertEquals(1, requestIds.stream().distinct().count());
+        assertEquals(1, recoveries.get());
+    }
+
+    @Test
     void usesBucketPaddingWithDerivedFieldName() {
         PortableDisguise disguise = new PortableDisguise();
         Communication communication = data -> {

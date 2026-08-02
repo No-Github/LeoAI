@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiUserInputOption;
@@ -45,7 +46,7 @@ class AiUserInputServiceTest {
                 "CLARIFICATION", "请选择目标范围", options("当前节点", "current_node", "SCOPE_CURRENT", "全部节点", "all_nodes", "SCOPE_ALL"),
                 false, null, null, null, "LOW", 60L);
 
-        assertEquals(PlatformAiState.STATUS_WAITING_FOR_USER, state.getRunStatus());
+        assertEquals(AiRunStatus.WAITING_FOR_USER, state.getRunStatus());
         assertTrue(state.isWaitingForUserInput());
         assertEquals(true, result.get("waitingForUser"));
         assertEquals("node", state.getAiSseEventQueue().peek().name());

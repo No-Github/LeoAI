@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -49,7 +50,7 @@ public class PuppetNodeSession {
     private Long updateTime;
     private String createByUser;
     private Map<String, Map<String, Object>> basicInfoMap;
-    private String currentHostId;
+    private volatile String currentHostId;
     private Set<String> allHostIds;
 
     // ── AI 对话线程管理 ───────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ public class PuppetNodeSession {
     // ── 构造器 ────────────────────────────────────────────────────────────────
 
     public PuppetNodeSession(String sessionId, AbstractPuppetNode puppetNode, Long updateTime, String createByUser) {
-        this.puppetNode = puppetNode;
+        setPuppetNode(puppetNode);
         this.sessionId = sessionId;
         this.updateTime = updateTime;
         this.createByUser = createByUser;
@@ -273,8 +274,17 @@ public class PuppetNodeSession {
     public Long   getUpdateTime()                { return updateTime; }
     public void   setUpdateTime(Long updateTime) { this.updateTime = updateTime; }
 
-    public AbstractPuppetNode getPuppetNode()                        { return puppetNode; }
-    public void               setPuppetNode(AbstractPuppetNode node) { this.puppetNode = node; }
+    public AbstractPuppetNode getPuppetNode() { return puppetNode; }
+
+    public void setPuppetNode(AbstractPuppetNode node) {
+        if (this.puppetNode instanceof HostScopedCapable previous) {
+            previous.setHostIdChangeListener(null);
+        }
+        this.puppetNode = node;
+        if (node instanceof HostScopedCapable hostScoped) {
+            hostScoped.setHostIdChangeListener(this::onNodeHostIdChanged);
+        }
+    }
 
     public List<String> getCapabilities() {
         return PuppetNodeCapabilityRegistry.listSupported(puppetNode);
@@ -303,12 +313,26 @@ public class PuppetNodeSession {
 
     public String getCurrentHostId() { return currentHostId; }
 
-    public void setCurrentHostId(String currentHostId) {
-        this.currentHostId = currentHostId;
-        if (puppetNode instanceof HostScopedCapable hostScopedNode) {
+    public synchronized void setCurrentHostId(String currentHostId) {
+        applyCurrentHostId(currentHostId);
+        if (puppetNode instanceof HostScopedCapable hostScopedNode
+                && !Objects.equals(hostScopedNode.getHostId(), currentHostId)) {
             hostScopedNode.setHostId(currentHostId);
         }
-        if (currentHostId != null && !currentHostId.isBlank()) addHostId(currentHostId);
+    }
+
+    private synchronized void onNodeHostIdChanged(String hostId) {
+        applyCurrentHostId(hostId);
+    }
+
+    private void applyCurrentHostId(String hostId) {
+        boolean changed = !Objects.equals(this.currentHostId, hostId);
+        this.currentHostId = hostId;
+        if (hostId != null && !hostId.isBlank()) addHostId(hostId);
+        if (!changed) return;
+        if (basicInfoMap != null) basicInfoMap.clear();
+        if (aiContextCache != null) aiContextCache.clear();
+        lastActiveTime = System.currentTimeMillis();
     }
 
     public Set<String> getAllHostIds() {

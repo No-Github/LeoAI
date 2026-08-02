@@ -9,6 +9,7 @@ import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.springframework.stereotype.Service;
@@ -124,7 +125,7 @@ public class AiTurnApplicationService {
                             completePlatform(
                                     turn, state,
                                     state.isWaitingForUserInput()
-                                            ? PlatformAiState.STATUS_WAITING_FOR_USER
+                                            ? AiRunStatus.WAITING_FOR_USER
                                             : terminal.runtimeStatus(),
                                     terminal.errorMessage(), leaseToken);
                         }
@@ -195,7 +196,7 @@ public class AiTurnApplicationService {
                             completePuppet(
                                     turn, thread,
                                     thread.isWaitingForUserInput()
-                                            ? AiThread.STATUS_WAITING_FOR_USER
+                                            ? AiRunStatus.WAITING_FOR_USER
                                             : terminal.runtimeStatus(),
                                     terminal.errorMessage(), leaseToken);
                         }

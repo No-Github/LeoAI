@@ -1,5 +1,7 @@
 package org.leo.web.service;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.leo.ai.agent.AiAgentFactory;
 import org.leo.ai.agent.PlatformAgent;
 import org.leo.ai.channel.AiModelConfigService;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 
 /** 按平台会话和模型运行时缓存 PlatformAgent。 */
 @Component
@@ -22,6 +25,7 @@ public class PlatformAiAgentRegistry {
     private final AiModelFailoverService failoverService;
     private final PlatformPuppetAiBridgeTools bridgeTools;
     private final ConcurrentMap<String, Runtime> agents = new ConcurrentHashMap<>();
+    private final Consumer<String> stateDestroyListener = this::evict;
 
     public PlatformAiAgentRegistry(AiAgentFactory agentFactory,
                                    AiModelConfigService modelConfigService,
@@ -33,6 +37,19 @@ public class PlatformAiAgentRegistry {
         this.modelProvider = modelProvider;
         this.failoverService = failoverService;
         this.bridgeTools = bridgeTools;
+    }
+
+    @PostConstruct
+    void registerStateCleanup() {
+        org.leo.ai.platform.PlatformAiStateStore.registerDestroyListener(
+                stateDestroyListener);
+    }
+
+    @PreDestroy
+    void unregisterStateCleanup() {
+        org.leo.ai.platform.PlatformAiStateStore.unregisterDestroyListener(
+                stateDestroyListener);
+        agents.clear();
     }
 
     public Runtime resolve(PlatformAiState state,

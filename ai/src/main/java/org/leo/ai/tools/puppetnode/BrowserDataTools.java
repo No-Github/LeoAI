@@ -17,6 +17,9 @@ import java.util.LinkedHashMap;
  * 在 puppet 侧提取 Chrome/Firefox/Edge 的浏览器数据，包括配置文件扫描、书签、历史记录和敏感文件列表。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+        operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+        parallelizable = true)
 public class BrowserDataTools {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserDataTools.class);

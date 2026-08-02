@@ -18,9 +18,13 @@ import java.util.Map;
  * 注册功能不在此处（通过 Java 插件注入）。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class WebRuntimeTools {
 
     @Tool("获取当前会话对应应用容器和 Java Web 框架的管理信息。支持 Tomcat、WebLogic、Jetty、Undertow、WildFly/JBoss、WebSphere、Resin、Apusic、GlassFish/Payara、TongWeb、BES，以及 Spring MVC/WebFlux、Struts2、JSF/Jakarta Faces、JAX-RS 等；可查看 Filter、Servlet、Valve、Listener、Controller、Interceptor 等挂载情况。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> inspectWebRuntime() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         WebRuntimeManageCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, WebRuntimeManageCapable.class);
@@ -29,6 +33,8 @@ public class WebRuntimeTools {
                 String.valueOf(runtime.get("version")), getWebFrameworkName(sessionId));
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("移除 Web Runtime 中的一个运行期组件。⚠️ 不可逆。\n"
             + "componentType: filter | servlet | valve | listener | controller | interceptor\n"
             + "详细信息从 inspectWebRuntime 返回结果中获取：\n"

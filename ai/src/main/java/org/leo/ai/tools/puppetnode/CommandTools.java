@@ -35,6 +35,8 @@ import java.util.UUID;
  * </ul>
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class CommandTools {
 
     private static final Logger log = LoggerFactory.getLogger(CommandTools.class);
@@ -79,6 +81,8 @@ public class CommandTools {
     @Tool("查询异步命令的当前输出。当 exec 返回 taskId 时使用。"
             + "返回 output（当前累积输出）和 status。"
             + "如果输出已包含所需信息或为空（命令已结束），调用 stopTask 释放资源。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> queryTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
@@ -92,6 +96,8 @@ public class CommandTools {
         return result;
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("终止异步命令并释放终端资源。返回终止前的最后一段输出。无论命令是否结束都应在不再需要时调用。")
     public Map<String, Object> stopTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {

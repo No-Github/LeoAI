@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.AiThread;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -45,7 +46,7 @@ class AiEventSubscriptionServiceTest {
                 .thenReturn(List.of(second));
         when(eventStore.findLastEventSeq("thread-1")).thenReturn(second.seq());
         when(eventStore.findThread("thread-1"))
-                .thenReturn(threadRecord(AiThread.STATUS_COMPLETED));
+                .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("thread-1")).thenReturn(true);
 
         service.stream("test", "thread-1", thread, emitter,
@@ -53,7 +54,7 @@ class AiEventSubscriptionServiceTest {
 
         verify(writer, never()).sendEvent(emitter, first);
         verify(writer).sendEvent(emitter, second);
-        verify(writer).sendStatus(emitter, AiThread.STATUS_COMPLETED);
+        verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
         verify(emitter).complete();
     }
 
@@ -77,7 +78,7 @@ class AiEventSubscriptionServiceTest {
                 0L, new AtomicBoolean(false));
 
         assertTrue(thread.isExecuting());
-        assertEquals(AiThread.STATUS_RUNNING, thread.getRunStatus());
+        assertEquals(AiRunStatus.RUNNING, thread.getRunStatus());
         verify(emitter).complete();
     }
 
@@ -100,7 +101,7 @@ class AiEventSubscriptionServiceTest {
                 .thenReturn(List.of(currentTurn));
         when(eventStore.findLastEventSeq("thread-3")).thenReturn(currentTurn.seq());
         when(eventStore.findThread("thread-3"))
-                .thenReturn(threadRecord(AiThread.STATUS_COMPLETED));
+                .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("thread-3")).thenReturn(true);
 
         service.stream("test", "thread-3", thread, emitter,
@@ -129,7 +130,7 @@ class AiEventSubscriptionServiceTest {
         when(eventStore.findLastEventSeq("thread-4"))
                 .thenAnswer(invocation -> thread.getLastSseEventSeq());
         when(eventStore.findThread("thread-4"))
-                .thenReturn(threadRecord(AiThread.STATUS_COMPLETED));
+                .thenReturn(threadRecord(AiRunStatus.COMPLETED));
         when(eventStore.hasLatestTurnCompletedEvent("thread-4"))
                 .thenAnswer(invocation -> persisted.stream().anyMatch(
                         event -> "turn/completed".equals(event.name())));
@@ -138,14 +139,14 @@ class AiEventSubscriptionServiceTest {
                 service.stream("test", "thread-4", thread, emitter,
                         0L, new AtomicBoolean(false)));
         Thread.sleep(250L);
-        verify(writer, never()).sendStatus(emitter, AiThread.STATUS_COMPLETED);
+        verify(writer, never()).sendStatus(emitter, AiRunStatus.COMPLETED);
 
         persisted.add(thread.recordSseEvent(
                 "turn/completed",
                 Map.of("turn", Map.of("id", "turn-4", "status", "completed"))));
         stream.get(2, TimeUnit.SECONDS);
 
-        verify(writer).sendStatus(emitter, AiThread.STATUS_COMPLETED);
+        verify(writer).sendStatus(emitter, AiRunStatus.COMPLETED);
         verify(emitter).complete();
     }
 
@@ -171,7 +172,7 @@ class AiEventSubscriptionServiceTest {
         when(eventStore.findLastEventSeq("thread-queued"))
                 .thenReturn(1L);
         when(eventStore.findThread("thread-queued"))
-                .thenReturn(threadRecord(AiThread.STATUS_IDLE));
+                .thenReturn(threadRecord(AiRunStatus.IDLE));
         when(eventStore.hasLatestTurnCompletedEvent("thread-queued"))
                 .thenReturn(true);
 
@@ -179,7 +180,7 @@ class AiEventSubscriptionServiceTest {
                 0L, new AtomicBoolean(false));
 
         verify(writer).sendEvent(emitter, completed);
-        verify(writer, never()).sendStatus(emitter, AiThread.STATUS_IDLE);
+        verify(writer, never()).sendStatus(emitter, AiRunStatus.IDLE);
         verify(emitter).complete();
     }
 

@@ -22,6 +22,8 @@ import java.util.Map;
  * 用于把 attacker / C2 侧的服务（payload server、监听器等）"反向暴露"到 puppet 所在内网。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ReverseTunnelTools {
 
     @Tool("""
@@ -41,6 +43,8 @@ public class ReverseTunnelTools {
         return puppet.startReverseTunnel(remoteListenPort, bindAddr, forwardHost, forwardPort);
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("停止指定反向隧道。listenId 由 startReverseTunnel 返回。")
     public Map<String, Object> stopReverseTunnel(
             @P("【必填】反向隧道 ID（startReverseTunnel 返回值）") String listenId) throws Exception {
@@ -49,6 +53,8 @@ public class ReverseTunnelTools {
         return puppet.stopReverseTunnel(listenId);
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("停止当前 puppet 上所有反向隧道。")
     public Map<String, Object> stopAllReverseTunnels() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
@@ -57,6 +63,8 @@ public class ReverseTunnelTools {
     }
 
     @Tool("列出当前 puppet 上所有反向隧道：listenId、puppet 监听端口/绑定地址、C2 侧目标、运行状态。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> listReverseTunnels() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ReverseTunnelCapable puppet = PuppetNodeSessionUtils.requireCapability(sessionId, ReverseTunnelCapable.class);
@@ -69,6 +77,8 @@ public class ReverseTunnelTools {
     }
 
     @Tool("获取指定反向隧道的运行统计：活跃/累计连接数、上下行流量、连接列表。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getReverseTunnelStatistics(
             @P("【必填】反向隧道 ID") String listenId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class SqlTools {
 
     private static final java.util.Set<String> DDL_DML_KEYWORDS = java.util.Set.of(
@@ -72,6 +74,8 @@ public class SqlTools {
             也可传 {"connectionId":"已保存配置ID"} 使用当前 Puppet 已启用的数据库配置。
             写入或结构变更请使用 execSql。
             """)
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> querySql(Map<String, Object> connection, String sqlScript) throws Exception {
         String violation = detectSqlViolation(sqlScript);
         if (violation != null) {

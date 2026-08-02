@@ -11,6 +11,7 @@ import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.web.exception.ApiException;
@@ -449,7 +450,7 @@ public class PuppetNodeAiThreadService {
     private void applyProtocolSnapshot(Map<String, Object> target,
                                        String threadId) {
         String fallback = String.valueOf(
-                target.getOrDefault("runStatus", AiThread.STATUS_IDLE));
+                target.getOrDefault("runStatus", AiRunStatus.IDLE));
         AiTurnProtocolService.ThreadSnapshot snapshot =
                 turnProtocolService.snapshotThread(threadId, fallback);
         if (snapshot != null) target.putAll(snapshot.toMap());
@@ -482,7 +483,7 @@ public class PuppetNodeAiThreadService {
         item.put("configProtocol", record.getConfigProtocol());
         item.put("configModel", record.getConfigModel());
         item.put("runStatus", record.getRunStatus() != null
-                ? record.getRunStatus() : AiThread.STATUS_IDLE);
+                ? record.getRunStatus() : AiRunStatus.IDLE);
         item.put("executing", false);
         item.put("parentThreadId", record.getParentThreadId());
         item.put("inMemory", false);

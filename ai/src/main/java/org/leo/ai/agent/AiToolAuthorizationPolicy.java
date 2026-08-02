@@ -8,17 +8,14 @@ import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderResult;
 import dev.langchain4j.service.tool.ToolService;
-import org.leo.ai.platform.PlatformAiState;
-import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
-import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.service.user.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,25 +47,41 @@ public class AiToolAuthorizationPolicy {
     private final AiToolExecutionBoundary executionBoundary;
     private final AiToolResultArchiveTools archiveTools;
     private final AiConversationStoreService conversationStore;
+    private final AiToolCatalog toolCatalog;
+    private final AgentRuntimeResolver runtimeResolver;
 
     public AiToolAuthorizationPolicy(UserService userService) {
-        this(userService, new AiToolExecutionBoundary(), null, null);
+        this(userService, new AiToolExecutionBoundary(), null, null,
+                new AiToolCatalog(), new AgentRuntimeResolver());
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
-        this(userService, executionBoundary, archiveTools, null);
+        this(userService, executionBoundary, archiveTools, null,
+                new AiToolCatalog(), new AgentRuntimeResolver());
+    }
+
+    public AiToolAuthorizationPolicy(UserService userService,
+                                     AiToolExecutionBoundary executionBoundary,
+                                     AiToolResultArchiveTools archiveTools,
+                                     AiConversationStoreService conversationStore) {
+        this(userService, executionBoundary, archiveTools, conversationStore,
+                new AiToolCatalog(), new AgentRuntimeResolver());
     }
 
     @Autowired
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
-                                     AiConversationStoreService conversationStore) {
+                                     AiConversationStoreService conversationStore,
+                                     AiToolCatalog toolCatalog,
+                                     AgentRuntimeResolver runtimeResolver) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
         this.conversationStore = conversationStore;
+        this.toolCatalog = toolCatalog;
+        this.runtimeResolver = runtimeResolver;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
@@ -101,21 +114,24 @@ public class AiToolAuthorizationPolicy {
             AiToolAccess.Level access = classAccess != null
                     ? classAccess.value() : AiToolAccess.Level.AUTHENTICATED;
             for (AiServiceTool tool : ToolService.findTools(source)) {
+                AiToolDescriptor descriptor = toolCatalog.register(source, tool);
                 secured.add(new SecuredTool(
-                        wrap(scope, tool, access), access));
+                        wrap(scope, tool, access, descriptor), access));
             }
         }
         AiToolAccess.Level archiveAccess = AiToolAccess.Level.AUTHENTICATED;
         for (AiServiceTool tool : ToolService.findTools(archiveTools)) {
+            AiToolDescriptor descriptor = toolCatalog.register(archiveTools, tool);
             secured.add(new SecuredTool(
-                    wrap(scope, tool, archiveAccess), archiveAccess));
+                    wrap(scope, tool, archiveAccess, descriptor), archiveAccess));
         }
         return List.copyOf(secured);
     }
 
     private AiServiceTool wrap(AgentScope scope,
                                AiServiceTool tool,
-                               AiToolAccess.Level access) {
+                               AiToolAccess.Level access,
+                               AiToolDescriptor descriptor) {
         ToolExecutor delegate = tool.toolExecutor();
         ToolExecutor securedExecutor = new ToolExecutor() {
             @Override
@@ -132,32 +148,51 @@ public class AiToolAuthorizationPolicy {
                     InvocationContext context) {
                 Object memoryId = context != null ? context.chatMemoryId() : null;
                 bindContext(scope, memoryId);
-                AiExecutionPolicy policy = AiToolContext.getExecutionPolicy();
-                if (!isAllowed(access, policy)) {
-                    log.warn("拒绝 Agent 工具调用 scope={} tool={} userId={} privilege={}",
-                            scope,
-                            request != null ? request.name() : "unknown",
-                            policy.getUserId(), policy.getPrivilege());
-                    throw new SecurityException("当前身份无权执行该工具");
-                }
-                if (!"request_user_input".equals(tool.name())
-                        && isWaitingForUserInput(scope, memoryId)) {
+                AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
+                AiRuntimeState.ToolLease lease;
+                try {
+                    lease = runtime != null
+                            ? runtime.acquireToolLease(descriptor.exclusive()) : null;
+                } catch (IllegalStateException terminal) {
                     throw AiToolException.userActionRequired(
-                            "USER_INPUT_PENDING",
-                            "当前任务正在等待用户回答，不能继续执行其他工具。",
-                        "停止工具调用并等待用户回答；不要自行假设用户意图。");
+                            "TERMINAL_CONTROL_ACTIVE",
+                            "当前 Turn 已执行终止控制动作，不能继续调用工具。",
+                            "立即结束本轮并等待用户操作。" );
                 }
-                authorizeOperation(memoryId, tool.name(), request);
-                return executionBoundary.execute(
-                        scope, tool.name(), delegate, request, context);
+                try (lease) {
+                    AiExecutionPolicy policy = AiToolContext.getExecutionPolicy();
+                    if (!isAllowed(access, policy)) {
+                        log.warn("拒绝 Agent 工具调用 scope={} tool={} userId={} privilege={}",
+                                scope,
+                                request != null ? request.name() : "unknown",
+                                policy.getUserId(), policy.getPrivilege());
+                        throw new SecurityException("当前身份无权执行该工具");
+                    }
+                    if (!descriptor.terminal()
+                            && runtime != null && runtime.isWaitingForUserInput()) {
+                        throw AiToolException.userActionRequired(
+                                "USER_INPUT_PENDING",
+                                "当前任务正在等待用户回答，不能继续执行其他工具。",
+                                "停止工具调用并等待用户回答；不要自行假设用户意图。");
+                    }
+                    authorizeOperation(memoryId, descriptor, request);
+                    AiToolContext.setToolDescriptor(descriptor);
+                    ToolExecutionResult result = executionBoundary.execute(
+                            scope, descriptor, delegate, request, context);
+                    if (descriptor.terminal() && !result.isError() && runtime != null) {
+                        runtime.markTerminalControl(descriptor.name());
+                    }
+                    return result;
+                }
             }
         };
         return tool.toBuilder().toolExecutor(securedExecutor).build();
     }
 
-    private void authorizeOperation(Object memoryId, String toolName,
+    private void authorizeOperation(Object memoryId, AiToolDescriptor descriptor,
                                     ToolExecutionRequest request) {
-        if (AiToolOperation.classify(toolName) != AiToolOperation.DESTRUCTIVE) return;
+        if (descriptor.operation() != AiToolOperation.DESTRUCTIVE) return;
+        String toolName = descriptor.name();
         String confirmationId = AiToolContext.getConfirmationRequestId();
         String threadId = AiToolContext.getThreadId();
         if (threadId == null || threadId.isBlank()) threadId = String.valueOf(memoryId);
@@ -190,19 +225,8 @@ public class AiToolAuthorizationPolicy {
     }
 
     private String resolveConfirmationRequestId(AgentScope scope, Object memoryId) {
-        String value = memoryId != null ? String.valueOf(memoryId) : null;
-        if (value == null || value.isBlank()) return null;
-        if (scope == AgentScope.PLATFORM) {
-            PlatformAiState state = PlatformAiStateStore.get(value);
-            return state != null ? state.getActiveConfirmationRequestId() : null;
-        }
-        PuppetNodeSession session = resolvePuppetSession(value);
-        if (session == null) return null;
-        int separator = value.indexOf(':');
-        String threadId = separator > 0 && separator < value.length() - 1
-                ? value.substring(separator + 1) : null;
-        AiThread thread = threadId != null ? session.getAiThread(threadId) : session.getActiveThread();
-        return thread != null ? thread.getActiveConfirmationRequestId() : null;
+        AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
+        return runtime != null ? runtime.getActiveConfirmationRequestId() : null;
     }
 
     AiExecutionPolicy resolvePolicy(AgentScope scope, Object memoryId) {
@@ -216,7 +240,7 @@ public class AiToolAuthorizationPolicy {
             return AiExecutionPolicy.defaultPolicy();
         }
         if (scope == AgentScope.PUPPET_NODE) {
-            PuppetNodeSession session = resolvePuppetSession(memoryId);
+            PuppetNodeSession session = runtimeResolver.resolvePuppetSession(memoryId);
             if (!AccessPolicy.canAccessSession(session, user)) {
                 return AiExecutionPolicy.defaultPolicy();
             }
@@ -225,28 +249,9 @@ public class AiToolAuthorizationPolicy {
     }
 
     private AiExecutionPolicy runtimePolicy(AgentScope scope, Object memoryId) {
-        String value = memoryId != null ? String.valueOf(memoryId) : null;
-        if (value == null || value.isBlank()) return AiExecutionPolicy.defaultPolicy();
-        if (scope == AgentScope.PLATFORM) {
-            PlatformAiState state = PlatformAiStateStore.get(value);
-            return state != null ? state.getExecutionPolicy() : AiExecutionPolicy.defaultPolicy();
-        }
-        PuppetNodeSession session = resolvePuppetSession(value);
-        if (session == null) return AiExecutionPolicy.defaultPolicy();
-        int separator = value.indexOf(':');
-        String threadId = separator > 0 && separator < value.length() - 1
-                ? value.substring(separator + 1) : null;
-        AiThread thread = threadId != null
-                ? session.getAiThread(threadId) : session.getActiveThread();
-        return thread != null ? thread.getExecutionPolicy() : AiExecutionPolicy.defaultPolicy();
-    }
-
-    private PuppetNodeSession resolvePuppetSession(Object memoryId) {
-        if (memoryId == null) return null;
-        String value = String.valueOf(memoryId);
-        int separator = value.indexOf(':');
-        String sessionId = separator > 0 ? value.substring(0, separator) : value;
-        return PuppetNodeSessionContainer.getSession(sessionId);
+        AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
+        return runtime != null ? runtime.getExecutionPolicy()
+                : AiExecutionPolicy.defaultPolicy();
     }
 
     private boolean isAllowed(AiToolAccess.Level access, AiExecutionPolicy policy) {
@@ -254,23 +259,6 @@ public class AiToolAuthorizationPolicy {
             return false;
         }
         return access != AiToolAccess.Level.ADMIN || policy.isAdmin();
-    }
-
-    private boolean isWaitingForUserInput(AgentScope scope, Object memoryId) {
-        String value = memoryId != null ? String.valueOf(memoryId) : null;
-        if (value == null || value.isBlank()) return false;
-        if (scope == AgentScope.PLATFORM) {
-            PlatformAiState state = PlatformAiStateStore.get(value);
-            return state != null && state.isWaitingForUserInput();
-        }
-        PuppetNodeSession session = resolvePuppetSession(value);
-        if (session == null) return false;
-        int separator = value.indexOf(':');
-        String threadId = separator > 0 && separator < value.length() - 1
-                ? value.substring(separator + 1) : null;
-        AiThread thread = threadId != null
-                ? session.getAiThread(threadId) : session.getActiveThread();
-        return thread != null && thread.isWaitingForUserInput();
     }
 
     private record SecuredTool(AiServiceTool tool,

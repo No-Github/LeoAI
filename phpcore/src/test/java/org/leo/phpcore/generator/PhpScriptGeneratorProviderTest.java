@@ -195,6 +195,38 @@ class PhpScriptGeneratorProviderTest {
     }
 
     @Test
+    void generatedPhpCoreReturnsTypedHostMismatch(@TempDir Path tempDir) throws Exception {
+        Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
+        PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();
+        GeneratedArtifact artifact = generate(provider, disguise("request"), disguise("response"),
+                Map.of("outputMode", "portable", "seed", "host-mismatch"));
+        Path script = tempDir.resolve("host-mismatch.php");
+        Files.writeString(script, artifact.getContent().replace(
+                "file_get_contents('php://input')", "$argv[1]"), StandardCharsets.UTF_8);
+        Map<String, Object> request = Map.of(
+                "requestId", "request-wrong-host",
+                "operation", "COMPONENT_INVOKE",
+                "hostId", "definitely-not-this-host",
+                "component", "MissingComponent",
+                "action", "run",
+                "params", Map.of());
+        String wire = Base64.getEncoder().encodeToString(PortableJsonCodec.encode(request));
+
+        Process process = new ProcessBuilder("php", script.toString(), wire)
+                .redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        assertEquals(0, process.waitFor(), new String(output, StandardCharsets.UTF_8));
+        Map<String, Object> response = PortableJsonCodec.decode(
+                Base64.getDecoder().decode(new String(output, StandardCharsets.UTF_8).trim()));
+
+        assertEquals(409, ((Number) response.get("code")).intValue());
+        assertTrue(response.get("error") instanceof Map<?, ?>);
+        Map<?, ?> error = (Map<?, ?>) response.get("error");
+        assertEquals("HOST_ID_MISMATCH", error.get("errorCode"));
+        assertTrue(error.get("hostId") instanceof String);
+    }
+
+    @Test
     void generatedPhpCoreUsesSeedDerivedOpaqueCacheLayout(@TempDir Path tempDir) throws Exception {
         Assumptions.assumeTrue(phpAvailable(), "PHP CLI未安装");
         PhpScriptGeneratorProvider provider = new PhpScriptGeneratorProvider();

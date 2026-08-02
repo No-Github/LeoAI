@@ -18,6 +18,8 @@ import java.util.Objects;
 import java.util.UUID;
 
 @Component("platformPuppetTools")
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class PuppetTools {
     private final PuppetService puppetService;
     private final PuppetConnService puppetConnService;
@@ -39,6 +41,8 @@ public class PuppetTools {
     }
 
     @Tool("测试指定 Puppet 的连通性，不创建会话。返回 success、hostId、components 和 latencyMs；失败时返回 message。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> testPuppetConnection(String puppetId) {
         String id = requireNonBlank(puppetId, "puppetId不能为空");
         accessService.requireVisible(puppetService.findPuppetById(id));
@@ -46,40 +50,50 @@ public class PuppetTools {
     }
 
     @Tool("获取当前平台所有 Puppet。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Puppet> getAllPuppet() {
         return accessService.filterVisible(puppetService.getAllPuppet());
     }
 
     @Tool("根据 puppetId 获取 Puppet 详情。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Puppet getPuppetById(String puppetId) {
         return accessService.requireVisible(puppetService.findPuppetById(
                 requireNonBlank(puppetId, "puppetId不能为空")));
     }
 
     @Tool("根据创建人 userId 获取 Puppet 列表。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Puppet> getPuppetsByCreateUserId(String createUserId) {
         return accessService.filterVisible(puppetService.findPuppetByCreateUserId(
                 requireNonBlank(createUserId, "createUserId不能为空")));
     }
 
     @Tool("根据 parentPuppetId 获取子 Puppet 列表。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Puppet> getPuppetsByParentPuppetId(String parentPuppetId) {
         return accessService.filterVisible(puppetService.findPuppetByParentPuppetId(
                 requireNonBlank(parentPuppetId, "parentPuppetId不能为空")));
     }
 
     @Tool("根据权限获取 Puppet 列表，例如 read 或 write。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Puppet> getPuppetsByPermission(String permission) {
         return accessService.filterVisible(puppetService.findPuppetByPermission(
                 requireNonBlank(permission, "permission不能为空")));
     }
 
-    @Tool("创建平台 Puppet。puppetName、connLink 必填；创建人和团队范围由当前用户身份强制约束，未传 puppetId 会自动生成。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
+    @Tool("创建平台 Puppet。puppetName、connLink 必填；创建人和团队范围由当前用户身份强制约束，未传 puppetId 会自动生成。maxReqCount 是包含首次请求的最大请求总数，范围 1-10，1 表示不重试。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
     public Map<String, Object> addPuppet(String puppetName, String createByUserId, String connLink,
                                          String teamId, String parentPuppetId, String protocol,
                                          String headers, String reqDisguiseId, String respDisguiseId,
                                          Integer proxyEnabled, String proxyType, String proxyHost, Integer proxyPort,
-                                         Integer balanceEnabled, Integer maxReqCount, String permission,
+                                         Integer maxReqCount, String permission,
                                          String lastHeartbeat, Integer heartbeatInterval,
                                          String remark, String puppetId, String urlStrategy,
                                          String paddingStrategy, String headerNoiseStrategy,
@@ -125,9 +139,6 @@ public class PuppetTools {
         if (proxyPort != null) {
             puppet.setProxyPort(proxyPort);
         }
-        if (balanceEnabled != null) {
-            puppet.setBalanceEnabled(balanceEnabled);
-        }
         if (maxReqCount != null) {
             puppet.setMaxReqCount(maxReqCount);
         }
@@ -150,12 +161,12 @@ public class PuppetTools {
         return buildResult("created", created, puppet.getPuppetId(), puppet.getPuppetName());
     }
 
-    @Tool("更新平台 Puppet。puppetId 必填，其余字段按需更新。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
+    @Tool("更新平台 Puppet。puppetId 必填，其余字段按需更新。maxReqCount 是包含首次请求的最大请求总数，范围 1-10，1 表示不重试。urlStrategy、paddingStrategy、headerNoiseStrategy、tlsFingerprintStrategy、componentClassNameStrategy 均为 JSON 高级配置。")
     public Map<String, Object> updatePuppet(String puppetId, String puppetName, String createByUserId,
                                             String connLink, String teamId, String parentPuppetId,
                                             String protocol, String headers, String reqDisguiseId,
                                             String respDisguiseId, Integer proxyEnabled, String proxyType,
-                                            String proxyHost, Integer proxyPort, Integer balanceEnabled,
+                                            String proxyHost, Integer proxyPort,
                                             Integer maxReqCount, String permission, String lastHeartbeat,
                                             Integer heartbeatInterval, String remark, String urlStrategy,
                                             String paddingStrategy, String headerNoiseStrategy,
@@ -212,9 +223,6 @@ public class PuppetTools {
         if (proxyPort != null) {
             existing.setProxyPort(proxyPort);
         }
-        if (balanceEnabled != null) {
-            existing.setBalanceEnabled(balanceEnabled);
-        }
         if (maxReqCount != null) {
             existing.setMaxReqCount(maxReqCount);
         }
@@ -255,7 +263,9 @@ public class PuppetTools {
         return buildResult("updated", updated, existing.getPuppetId(), existing.getPuppetName());
     }
 
-    @Tool("删除指定 Puppet。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
+    @Tool("删除指定 Puppet，并级联删除其全部子孙节点；同时关闭这些节点的在线会话并清理工作目录。")
     public Map<String, Object> deletePuppet(String puppetId) {
         Puppet puppet = puppetService.findPuppetById(requireNonBlank(puppetId, "puppetId不能为空"));
         accessService.requireModifiable(puppet);

@@ -5,10 +5,12 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import org.leo.ai.service.AutoReconAppendService;
+import org.leo.ai.service.AiPlanCoordinator;
+import org.leo.core.ai.AiRuntimeState;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 
 import static org.leo.ai.agent.AiToolAuthorizationPolicy.AgentScope.PLATFORM;
@@ -32,6 +34,9 @@ public class AiAgentFactory {
     private final AutoReconAppendService autoReconAppendService;
     private final AiToolErrorHandler toolErrorHandler;
     private final AiToolAuthorizationPolicy toolAuthorizationPolicy;
+    private final AiToolCatalog toolCatalog;
+    private final AgentRuntimeResolver runtimeResolver;
+    private final AiPlanCoordinator planCoordinator;
     private final ExecutorService puppetNodeToolExecutor;
     private final ExecutorService platformToolExecutor;
 
@@ -44,6 +49,9 @@ public class AiAgentFactory {
                           AutoReconAppendService autoReconAppendService,
                           AiToolErrorHandler toolErrorHandler,
                           AiToolAuthorizationPolicy toolAuthorizationPolicy,
+                          AiToolCatalog toolCatalog,
+                          AgentRuntimeResolver runtimeResolver,
+                          AiPlanCoordinator planCoordinator,
                           @Qualifier("puppetNodeAiToolExecutor")
                           ExecutorService puppetNodeToolExecutor,
                           @Qualifier("platformAiToolExecutor")
@@ -57,6 +65,9 @@ public class AiAgentFactory {
         this.autoReconAppendService = autoReconAppendService;
         this.toolErrorHandler = toolErrorHandler;
         this.toolAuthorizationPolicy = toolAuthorizationPolicy;
+        this.toolCatalog = toolCatalog;
+        this.runtimeResolver = runtimeResolver;
+        this.planCoordinator = planCoordinator;
         this.puppetNodeToolExecutor = puppetNodeToolExecutor;
         this.platformToolExecutor = platformToolExecutor;
     }
@@ -75,8 +86,11 @@ public class AiAgentFactory {
                                                  ChatModel chatModel,
                                                  boolean enableTools,
                                                  int modelContextWindowTokens) {
+        int toolSchemaTokens = enableTools
+                ? toolCatalog.estimateSchemaTokens(puppetNodeToolBundle.tools()) : 0;
         return createPuppetNodeAgent(streamingModel, chatModel, enableTools,
-                memoryProviderFactory.createPuppetProvider(modelContextWindowTokens));
+                memoryProviderFactory.createPuppetProvider(
+                        modelContextWindowTokens, toolSchemaTokens));
     }
 
     private PuppetNodeAgent createPuppetNodeAgent(StreamingChatModel streamingModel,
@@ -96,18 +110,12 @@ public class AiAgentFactory {
                 .hallucinatedToolNameStrategy(
                         toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
-                    if (execution != null && execution.invocationContext() != null) {
-                        toolAuthorizationPolicy.bindContext(
-                                PUPPET_NODE,
-                                execution.invocationContext().chatMemoryId());
-                    }
-                    checkPuppetPlanTimeouts();
-                    autoAssociatePlanStep();
+                    prepareToolExecution(PUPPET_NODE, execution);
                 })
                 .afterToolExecution(execution -> {
                     try {
                         triggerAutoReconAppend(execution);
-                        autoAppendToolResultToPlanStep(execution);
+                        appendToolResultToPlan(execution);
                         if (execution != null
                                 && !AiToolErrorHandler.isErrorResult(execution)) {
                             toolErrorHandler.recordSuccess(
@@ -149,8 +157,12 @@ public class AiAgentFactory {
                                              boolean enableTools,
                                              int modelContextWindowTokens,
                                              Object additionalTools) {
+        List<Object> tools = platformToolBundle.toolsWith(additionalTools);
+        int toolSchemaTokens = enableTools
+                ? toolCatalog.estimateSchemaTokens(tools) : 0;
         return createPlatformAgent(streamingModel, enableTools,
-                memoryProviderFactory.createPlatformProvider(modelContextWindowTokens), additionalTools);
+                memoryProviderFactory.createPlatformProvider(
+                        modelContextWindowTokens, toolSchemaTokens), additionalTools);
     }
 
     private PlatformAgent createPlatformAgent(StreamingChatModel streamingModel,
@@ -175,15 +187,11 @@ public class AiAgentFactory {
                 .hallucinatedToolNameStrategy(
                         toolErrorHandler::handleUnknownTool)
                 .beforeToolExecution(execution -> {
-                    if (execution != null && execution.invocationContext() != null) {
-                        toolAuthorizationPolicy.bindContext(
-                                PLATFORM,
-                                execution.invocationContext().chatMemoryId());
-                    }
-                    checkPlatformPlanTimeouts();
+                    prepareToolExecution(PLATFORM, execution);
                 })
                 .afterToolExecution(execution -> {
                     try {
+                        appendToolResultToPlan(execution);
                         if (execution != null
                                 && !AiToolErrorHandler.isErrorResult(execution)) {
                             toolErrorHandler.recordSuccess(
@@ -201,17 +209,13 @@ public class AiAgentFactory {
         return builder.build();
     }
 
-    private static final java.util.Set<String> AUTO_RECON_APPEND_SKIPPED_TOOLS = java.util.Set.of(
-            "manage_recon_summary",
-            "createPlan", "updatePlan", "getPlan", "deletePlan",
-            "activate_skill", "request_user_input"
-    );
-
     private void triggerAutoReconAppend(dev.langchain4j.service.tool.ToolExecution execution) {
         if (execution == null
                 || AiToolErrorHandler.isErrorResult(execution)) return;
         String toolName = execution.request() != null ? execution.request().name() : null;
-        if (toolName == null || AUTO_RECON_APPEND_SKIPPED_TOOLS.contains(toolName)) return;
+        AiToolDescriptor descriptor = toolCatalog.get(toolName);
+        if (toolName == null || "manage_recon_summary".equals(toolName)
+                || !descriptor.business()) return;
 
         String sessionId = AiToolContext.getSessionId();
         if (sessionId == null || sessionId.isBlank()) return;
@@ -228,114 +232,38 @@ public class AiAgentFactory {
         }
     }
 
-    private static final java.util.Set<String> PLAN_TOOLS = java.util.Set.of(
-            "createPlan", "updatePlanStep", "completePlan");
-
-    private static void checkPuppetPlanTimeouts() {
+    private void prepareToolExecution(
+            AiToolAuthorizationPolicy.AgentScope scope,
+            dev.langchain4j.service.tool.BeforeToolExecution execution) {
+        if (execution == null || execution.invocationContext() == null) return;
+        toolAuthorizationPolicy.bindContext(
+                scope, execution.invocationContext().chatMemoryId());
+        AiToolDescriptor descriptor = toolCatalog.get(execution.request().name());
+        AiToolContext.setToolDescriptor(descriptor);
         try {
-            var thread = resolveCurrentPuppetThread();
-            if (thread == null || thread.getCurrentPlan() == null) return;
-            var plan = thread.getCurrentPlan();
-            if (plan.checkStepTimeouts() <= 0) return;
-            java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
-            payload.put("kind", "plan");
-            payload.put("planId", plan.getPlanId());
-            payload.put("title", plan.getTitle());
-            payload.put("goal", plan.getGoal());
-            payload.put("status", plan.getStatus().name());
-            payload.put("steps", plan.getSteps());
-            thread.offerSseEvent("patch", payload);
-        } catch (Exception ignored) {
-            // 超时检查不应阻断工具调用
-        }
-    }
-
-    private static void checkPlatformPlanTimeouts() {
-        try {
-            String stateId = AiToolContext.getSessionId();
-            if (stateId == null || stateId.isBlank()) return;
-            var state = org.leo.ai.platform.PlatformAiStateStore.get(stateId);
-            if (state == null || state.getCurrentPlan() == null) return;
-            if (state.getCurrentPlan().checkStepTimeouts() > 0) {
-                state.notifyPlanUpdated();
+            AiRuntimeState runtime = runtimeResolver.resolveCurrent();
+            planCoordinator.checkTimeouts(runtime);
+            if (descriptor.business()) {
+                int stepIndex = planCoordinator.inProgressStepIndex(runtime);
+                if (stepIndex >= 0) AiToolContext.setPlanStepIndex(stepIndex);
             }
         } catch (Exception ignored) {
-            // 超时检查不应阻断工具调用
+            // 计划关联为 best-effort，不阻断工具调用。
         }
     }
 
-    private static void autoAssociatePlanStep() {
-        try {
-            var thread = resolveCurrentPuppetThread();
-            if (thread == null) return;
-
-            var plan = thread.getCurrentPlan();
-            if (plan == null) return;
-            int stepIndex = findInProgressStepIndex(plan);
-            if (stepIndex >= 0) AiToolContext.setPlanStepIndex(stepIndex);
-        } catch (Exception ignored) {
-            // best-effort，失败不影响工具执行
-        }
-    }
-
-    private static org.leo.core.session.AiThread resolveCurrentPuppetThread() {
-        String sessionId = AiToolContext.getSessionId();
-        String threadId = AiToolContext.getThreadId();
-        if (sessionId == null || sessionId.isBlank()) return null;
-        var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
-        if (session == null) return null;
-        return threadId != null && !threadId.isBlank()
-                ? session.getAiThread(threadId) : session.getActiveThread();
-    }
-
-    static int findInProgressStepIndex(org.leo.core.entity.AiPlan plan) {
-        if (plan == null || plan.getSteps() == null) return -1;
-        for (var step : plan.getSteps()) {
-            if (step.getStatus() == org.leo.core.entity.AiStepStatus.IN_PROGRESS) {
-                return step.getIndex();
-            }
-        }
-        return -1;
-    }
-
-    private static void autoAppendToolResultToPlanStep(
+    private void appendToolResultToPlan(
             dev.langchain4j.service.tool.ToolExecution execution) {
         int stepIndex = AiToolContext.getPlanStepIndex();
-        if (stepIndex < 0) return;
-        if (execution == null) return;
+        if (stepIndex < 0 || execution == null) return;
 
         String toolName = execution.request() != null ? execution.request().name() : null;
-        if (toolName == null || PLAN_TOOLS.contains(toolName)) return;
+        if (toolName == null || !toolCatalog.get(toolName).business()) return;
 
         try {
-            String sessionId = AiToolContext.getSessionId();
-            String threadId = AiToolContext.getThreadId();
-            if (sessionId == null || sessionId.isBlank()) return;
-
-            var session = org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
-            if (session == null) return;
-
-            var thread = (threadId != null) ? session.getAiThread(threadId) : session.getActiveThread();
-            if (thread == null) return;
-
-            var plan = thread.getCurrentPlan();
-            if (plan == null) return;
-
-            var steps = plan.getSteps();
-            if (steps == null) return;
-
-            for (var step : steps) {
-                if (step.getIndex() == stepIndex) {
-                    String summary = buildToolResultSummary(toolName, execution);
-                    if (step.getResult() != null && !step.getResult().isBlank()) {
-                        step.setResult(step.getResult() + " | " + summary);
-                    } else {
-                        step.setResult(summary);
-                    }
-                    thread.offerSseEvent("patch", buildPlanStepPatch(plan, step, toolName));
-                    break;
-                }
-            }
+            planCoordinator.appendToolResult(
+                    runtimeResolver.resolveCurrent(), stepIndex, toolName,
+                    buildToolResultSummary(toolName, execution));
         } catch (Exception ignored) {
             // best-effort
         }
@@ -378,16 +306,4 @@ public class AiAgentFactory {
         return execution.result();
     }
 
-    private static Map<String, Object> buildPlanStepPatch(
-            org.leo.core.entity.AiPlan plan, org.leo.core.entity.AiPlanStep step, String toolName) {
-        java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
-        payload.put("kind", "plan");
-        payload.put("planId", plan.getPlanId());
-        payload.put("stepIndex", step.getIndex());
-        payload.put("status", step.getStatus().name());
-        payload.put("result", step.getResult());
-        payload.put("toolName", toolName);
-        payload.put("timestamp", System.currentTimeMillis());
-        return payload;
-    }
 }

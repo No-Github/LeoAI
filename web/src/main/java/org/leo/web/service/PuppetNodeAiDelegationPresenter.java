@@ -13,6 +13,7 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,7 +90,7 @@ public class PuppetNodeAiDelegationPresenter {
         @Override
         public void onStarted() {
             refreshRuntime();
-            recordEvent("status", AiThread.STATUS_RUNNING);
+            recordEvent("status", AiRunStatus.RUNNING);
         }
 
         @Override
@@ -108,7 +109,7 @@ public class PuppetNodeAiDelegationPresenter {
                 AiTurnTransaction.CompletedTurn completed) {
             context.thread().touchLastActiveAt();
             refreshRuntime();
-            recordEvent("status", AiThread.STATUS_COMPLETED);
+            recordEvent("status", AiRunStatus.COMPLETED);
             completion.complete(successResponse(completed.output()));
         }
 
@@ -132,11 +133,11 @@ public class PuppetNodeAiDelegationPresenter {
             refreshRuntimeSafely();
             try {
                 if (terminal.committed()) {
-                    recordEvent("status", AiThread.STATUS_COMPLETED);
+                    recordEvent("status", AiRunStatus.COMPLETED);
                 } else if (terminal.discarded()) {
                     recordEvent("status", terminal.failed().status());
                 } else {
-                    recordEvent("status", AiThread.STATUS_FAILED);
+                    recordEvent("status", AiRunStatus.FAILED);
                 }
             } catch (RuntimeException eventError) {
                 logger.warn("委派 Puppet AI 终态事件发送失败: {}",
@@ -186,8 +187,8 @@ public class PuppetNodeAiDelegationPresenter {
                                 recordEvent(
                                         "status",
                                         cancelled
-                                                ? AiThread.STATUS_CANCELLED
-                                                : AiThread.STATUS_FAILED);
+                                                ? AiRunStatus.CANCELLED
+                                                : AiRunStatus.FAILED);
                             } catch (RuntimeException eventError) {
                                 logger.warn("委派 Puppet AI 准备失败事件发送异常: {}",
                                         eventError.getMessage(), eventError);
@@ -245,7 +246,7 @@ public class PuppetNodeAiDelegationPresenter {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("sessionId", context.session().getSessionId());
             response.put("threadId", context.thread().getThreadId());
-            response.put("status", AiThread.STATUS_COMPLETED);
+            response.put("status", AiRunStatus.COMPLETED);
             response.put("summary", output);
             response.put("traceId", context.trace().traceId());
             if (context.trace().runId() != null) {

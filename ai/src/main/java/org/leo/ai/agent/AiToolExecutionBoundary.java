@@ -56,13 +56,14 @@ public class AiToolExecutionBoundary {
 
     public ToolExecutionResult execute(
             AiToolAuthorizationPolicy.AgentScope scope,
-            String toolName,
+            AiToolDescriptor descriptor,
             ToolExecutor delegate,
             ToolExecutionRequest request,
             InvocationContext context) {
+        String toolName = descriptor.name();
         String memoryId = context != null && context.chatMemoryId() != null
                 ? String.valueOf(context.chatMemoryId()) : "<no-memory>";
-        AiToolOperation operation = AiToolOperation.classify(toolName);
+        AiToolOperation operation = descriptor.operation();
         long timeoutMs = settings(scope).getToolTimeoutMs();
         String invocationId = context != null && context.invocationId() != null
                 ? context.invocationId().toString() : "<no-invocation>";
@@ -90,6 +91,17 @@ public class AiToolExecutionBoundary {
         }
         return awaitOwner(created, scope, operation, toolName, delegate,
                 request, context, timeoutMs);
+    }
+
+    ToolExecutionResult execute(
+            AiToolAuthorizationPolicy.AgentScope scope,
+            String toolName,
+            ToolExecutor delegate,
+            ToolExecutionRequest request,
+            InvocationContext context) {
+        AiToolDescriptor descriptor = AiToolDescriptor.conservative(toolName);
+        AiToolContext.setToolDescriptor(descriptor);
+        return execute(scope, descriptor, delegate, request, context);
     }
 
     private ToolExecutionResult awaitOwner(
@@ -331,6 +343,14 @@ public class AiToolExecutionBoundary {
         metadata.put("scope", scope.name());
         metadata.put("tool", toolName);
         metadata.put("operation", operation.name());
+        AiToolDescriptor descriptor = AiToolContext.getToolDescriptor();
+        if (descriptor != null) {
+            metadata.put("toolKind", descriptor.kind().name());
+            metadata.put("terminal", descriptor.terminal());
+            metadata.put("exclusive", descriptor.exclusive());
+            metadata.put("parallelizable", descriptor.parallelizable());
+            metadata.put("businessTool", descriptor.business());
+        }
         metadata.put("toolCallId", request != null ? request.id() : null);
         metadata.put("durationMs", durationMs);
         metadata.put("timeoutMs", timeoutMs);

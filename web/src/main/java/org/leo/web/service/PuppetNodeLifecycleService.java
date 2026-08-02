@@ -93,40 +93,27 @@ public class PuppetNodeLifecycleService {
 
     private boolean doInitConn(AbstractPuppetNode node, String sessionId, String userId) throws Exception {
         Puppet puppet = node.getPuppet();
-        int maxCount = resolveMaxReqCount(puppet);
+        Map<String, Object> result = node.testConnection();
+        if (!isConnectionSuccess(result)) return false;
 
-        for (int i = 0; i < maxCount; i++) {
-            Map<String, Object> result = node.testConnection();
-            if (isConnectionSuccess(result)) {
-                String hostId = parseHostId(result.get("hostId"));
-                if (requiresHostId(node) && hostId == null) {
-                    logger.debug("测试连接成功但缺少 hostId，继续尝试，sessionId={}", sessionId);
-                    continue;
-                }
-
-                seedNodeContext(node, hostId, result.get("components"));
-
-                PuppetNodeSession session = new PuppetNodeSession(sessionId, node,
-                        System.currentTimeMillis(), userId);
-                if (hostId != null) {
-                    session.setCurrentHostId(hostId);
-                }
-
-                loadPersistedReconSummary(session, node, userId);
-                registerSessionWithInitialAiThread(
-                        session, puppet != null ? puppet.getPuppetId() : null);
-
-                logger.debug("测试连接成功，hostId: {}, sessionId: {}", hostId, sessionId);
-                // 无论是否负载均衡，首次成功即返回（避免重复创建 session）
-                return true;
-            }
+        String hostId = parseHostId(result.get("hostId"));
+        if (requiresHostId(node) && hostId == null) {
+            logger.debug("测试连接成功但缺少 hostId，sessionId={}", sessionId);
+            return false;
         }
-        return false;
-    }
 
-    private int resolveMaxReqCount(Puppet puppet) {
-        Integer maxReqCount = puppet != null ? puppet.getMaxReqCount() : null;
-        return maxReqCount != null && maxReqCount > 0 ? maxReqCount : 1;
+        seedNodeContext(node, hostId, result.get("components"));
+
+        PuppetNodeSession session = new PuppetNodeSession(sessionId, node,
+                System.currentTimeMillis(), userId);
+        if (hostId != null) session.setCurrentHostId(hostId);
+
+        loadPersistedReconSummary(session, node, userId);
+        registerSessionWithInitialAiThread(
+                session, puppet != null ? puppet.getPuppetId() : null);
+
+        logger.debug("测试连接成功，hostId: {}, sessionId: {}", hostId, sessionId);
+        return true;
     }
 
     private boolean isConnectionSuccess(Map<String, Object> result) {

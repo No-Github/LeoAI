@@ -7,6 +7,7 @@ import org.leo.ai.service.AiErrorClassifier;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiRuntimeStats;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
 import org.slf4j.Logger;
@@ -67,13 +68,15 @@ public class AiTurnTransaction {
             if (state == PersistenceState.COMMITTED) return completedTurn;
             requirePending("提交");
 
-            String output = result != null ? result.output() : "";
+            boolean userInputRequested = result != null && result.userInputRequested();
+            String output = userInputRequested ? "" : result != null ? result.output() : "";
             int toolCallCount = artifacts.toolCallCount(eventLog);
             Map<String, Object> review = artifacts.review(
                     output, eventLog, elapsedMillis());
             Map<String, Object> usage =
                     artifacts.usage(result != null ? result.response() : null);
-            List<Object> assistantNodes = artifacts.assistantNodes(eventLog);
+            List<Object> assistantNodes = artifacts.assistantNodes(
+                    eventLog, !userInputRequested);
 
             conversationStore.completeTurn(
                     context.persistedTurn(), output, assistantNodes,
@@ -154,7 +157,7 @@ public class AiTurnTransaction {
             String message = cancelled
                     ? normalizeCancellationReason(cancellationReason)
                     : classification.message();
-            String status = cancelled ? AiThread.STATUS_CANCELLED : AiThread.STATUS_FAILED;
+            String status = cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED;
             List<Object> assistantNodes = artifacts.assistantNodes(eventLog);
             String partialOutput = artifacts.partialOutput(eventLog);
             int toolCallCount = artifacts.toolCallCount(eventLog);
@@ -209,14 +212,14 @@ public class AiTurnTransaction {
                             terminalError != null ? terminalError.getMessage() : message);
             try {
                 conversationStore.discardTurn(
-                        context.persistedTurn(), AiThread.STATUS_FAILED,
+                        context.persistedTurn(), AiRunStatus.FAILED,
                         AiConversationStoreService.ERROR_PERSISTENCE,
                         message,
                         terminalError != null ? terminalError.getMessage() : message,
                         0);
                 state = PersistenceState.DISCARDED;
                 failedTurn = new FailedTurn(
-                        AiTurnOutcome.FAILED, AiThread.STATUS_FAILED,
+                        AiTurnOutcome.FAILED, AiRunStatus.FAILED,
                         message, classification);
                 if (context.audit() != null) {
                     runAfterTerminal("记录终态补偿审计", () ->

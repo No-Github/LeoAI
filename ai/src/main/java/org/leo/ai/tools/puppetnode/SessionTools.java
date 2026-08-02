@@ -23,6 +23,9 @@ import java.util.Map;
  * 避免框架内部实现细节泄漏到 AI 上下文中。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.CONTEXT,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE,
+        business = false)
 public class SessionTools {
 
     private static final Logger log = LoggerFactory.getLogger(SessionTools.class);

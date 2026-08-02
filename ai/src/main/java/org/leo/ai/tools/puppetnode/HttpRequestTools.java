@@ -18,6 +18,8 @@ import java.util.Map;
  * 替代通过 execOnce("curl ...") 执行 HTTP 请求的场景。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class HttpRequestTools {
 
     private static final String CACHE_PREFIX = "http-request:";
@@ -94,12 +96,16 @@ public class HttpRequestTools {
     }
 
     @Tool("查询 Fuzzer 任务进度和结果。传入 startFuzz 返回的 taskId。返回 status（RUNNING/FINISHED/STOPPED）、completed/total 进度、results 列表（每条包含 payloads、statusCode、bodyLength、matched 等）。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> queryFuzz(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         return node.queryFuzz(taskId);
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("停止正在运行的 Fuzzer 任务。传入 taskId，强制终止所有进行中的请求。")
     public Map<String, Object> stopFuzz(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

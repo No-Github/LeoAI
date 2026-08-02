@@ -22,6 +22,8 @@ import java.util.Map;
 
 @Component
 @AiToolAccess(AiToolAccess.Level.ADMIN)
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class PluginTools {
 
     private static final String PLUGIN_FILE_EXTENSION = ".plugin";
@@ -40,11 +42,15 @@ public class PluginTools {
     }
 
     @Tool("获取当前平台所有插件摘要。默认不返回 bytecode，适用于浏览插件列表。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Map<String, Object>> getPlugins() {
         return toPluginSummaries(pluginManager.getPluginAsList(), false);
     }
 
     @Tool("根据 pluginId 获取插件详情。includeBytecodeBase64=true 时额外返回 base64 编码后的 bytecode。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getPluginById(String pluginId, Boolean includeBytecodeBase64) {
         Plugin plugin = pluginManager.getPluginById(requireNonBlank(pluginId, "pluginId不能为空"));
         if (plugin == null) {
@@ -54,6 +60,8 @@ public class PluginTools {
     }
 
     @Tool("根据 pluginType 获取插件摘要列表。默认不返回 bytecode。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Map<String, Object>> getPluginsByType(String pluginType) {
         return toPluginSummaries(pluginManager.getPluginAsListByType(requireNonBlank(pluginType, "pluginType不能为空")), false);
     }
@@ -168,6 +176,8 @@ public class PluginTools {
         return buildResult("updated", existing.getPluginId(), existing.getPluginName());
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定平台插件。")
     public Map<String, Object> deletePlugin(String pluginId) {
         Plugin plugin = pluginManager.getPluginById(requireNonBlank(pluginId, "pluginId不能为空"));
@@ -195,6 +205,8 @@ public class PluginTools {
     @Tool(name = "decompilePluginBytecode",
           value = "查看插件内容。pluginType=java 时反编译字节码为 Java 源码；"
                 + "脚本类型直接返回 UTF-8 文本。pluginType 可省略，默认按 java 处理。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> decompilePluginBytecode(
             String bytecodeBase64,
             @P(value = "插件类型：java（默认）/ js / groovy / python …", required = false)

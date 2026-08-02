@@ -3,6 +3,7 @@ package org.leo.web.service;
 import org.leo.ai.audit.AiAuditLogStore;
 import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnOutcome;
@@ -65,7 +66,7 @@ public class PlatformAiTurnService {
     public boolean tryClaimExecution(PlatformAiState state) {
         boolean localClaimed = turnCoordinator.tryClaim(state);
         if (!localClaimed
-                && PlatformAiState.STATUS_CANCELLED.equals(state.getRunStatus())) {
+                && AiRunStatus.CANCELLED.equals(state.getRunStatus())) {
             localClaimed = turnCoordinator.tryClaimAfterRelease(
                     state, state::isExecuting, 5_000L);
         }

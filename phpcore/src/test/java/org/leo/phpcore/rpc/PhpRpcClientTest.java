@@ -126,6 +126,50 @@ class PhpRpcClientTest {
         assertTrue(delays.get(1) >= 150 && delays.get(1) <= 250);
     }
 
+    @Test
+    void retriesTypedHostMismatchThenRecoversWithoutReplayingTheOperation() throws Exception {
+        Disguise portable = new PortableDisguise();
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicInteger recoveries = new AtomicInteger();
+        List<String> requestIds = new ArrayList<>();
+        Communication communication = data -> {
+            Map<String, Object> request = PortableJsonCodec.decode(data);
+            attempts.incrementAndGet();
+            requestIds.add(String.valueOf(request.get("requestId")));
+            assertEquals("php-host-1", request.get("hostId"));
+            return PortableJsonCodec.encode(Map.of(
+                    "requestId", request.get("requestId"),
+                    "code", 409,
+                    "error", Map.of(
+                            "errorCode", "HOST_ID_MISMATCH",
+                            "hostId", "php-host-2",
+                            "message", "wrong instance")));
+        };
+        PhpRpcClient client = new PhpRpcClient(communication,
+                List.of(new RequestLayer("/", Map.of(), portable)),
+                List.of(new ResponseLayer(portable)));
+        client.setHostId("php-host-1");
+        client.setMaxReqCount(3);
+        client.setRetryBackoff(0, 0);
+        client.setHostIdMismatchRecovery(expectedHostId -> {
+            recoveries.incrementAndGet();
+            assertEquals("php-host-1", expectedHostId);
+            return new LinkedHashMap<>(Map.of(
+                    "code", 409,
+                    "errorCode", "HOST_ID_REBOUND",
+                    "hostId", "php-host-2"));
+        });
+
+        Map<String, Object> result = client.invokeComponent(
+                "BasicInfoComponent", "a".repeat(64), Map.of("action", "get"));
+
+        assertEquals(409, result.get("code"));
+        assertEquals("HOST_ID_REBOUND", result.get("errorCode"));
+        assertEquals(3, attempts.get());
+        assertEquals(1, requestIds.stream().distinct().count());
+        assertEquals(1, recoveries.get());
+    }
+
     private static final class PortableDisguise extends Disguise {
         @Override
         public byte[] encode(Map<String, Object> params) {

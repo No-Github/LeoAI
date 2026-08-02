@@ -2,7 +2,6 @@ package org.leo.ai.agent;
 
 import org.leo.ai.tools.platform.DisguiseTools;
 import org.leo.ai.tools.platform.FingerprintTools;
-import org.leo.ai.tools.platform.PlatformPlanTools;
 import org.leo.ai.tools.platform.PluginTools;
 import org.leo.ai.tools.platform.PuppetTools;
 import org.leo.ai.tools.platform.ShellGeneratorTools;
@@ -10,6 +9,10 @@ import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.ai.tools.common.UserInputTools;
+import org.leo.ai.tools.common.PlanTools;
+import org.leo.ai.tools.common.AgentSandboxTools;
+import org.leo.ai.tools.common.AgentWorkspaceTools;
+import org.leo.ai.tools.common.WebResearchTools;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -30,13 +33,17 @@ public class PlatformToolBundle {
             FingerprintTools fingerprintTools,
             DisguiseTools disguiseTools,
             ShellGeneratorTools shellGeneratorTools,
-            PlatformPlanTools platformPlanTools,
+            AgentWorkspaceTools agentWorkspaceTools,
+            AgentSandboxTools agentSandboxTools,
+            WebResearchTools webResearchTools,
+            PlanTools planTools,
             UserInputTools userInputTools,
             @Qualifier("platformSkillActivationTools") SkillActivationTools skillActivationTools) {
         this.tools = List.of(
                 puppetTools, userTools, teamTools,
                 pluginTools, fingerprintTools, disguiseTools,
-                shellGeneratorTools, platformPlanTools, userInputTools,
+                shellGeneratorTools, agentWorkspaceTools, agentSandboxTools,
+                webResearchTools, planTools, userInputTools,
                 skillActivationTools);
     }
 

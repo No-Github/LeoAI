@@ -9,6 +9,15 @@ import java.util.Objects;
  * @version 2.1
  */
 public class Puppet {
+    /** 一次操作允许发送的最少请求数；包含首次请求。 */
+    public static final int MIN_REQUEST_COUNT = 1;
+
+    /** 一次操作允许发送的最多请求数；包含首次请求。 */
+    public static final int MAX_REQUEST_COUNT = 10;
+
+    /** 默认只发送首次请求，不自动重试。 */
+    public static final int DEFAULT_MAX_REQUEST_COUNT = MIN_REQUEST_COUNT;
+
     private String puppetId;
     private String puppetName;
     private String parentPuppetId;
@@ -23,7 +32,10 @@ public class Puppet {
     private String proxyType;
     private String proxyHost;
     private Integer proxyPort;
-    private Integer balanceEnabled;
+    /**
+     * 一次操作最多发送的请求总数，包含首次请求。
+     * 例如 1 表示不重试，3 表示首次请求失败后最多再重试 2 次。
+     */
     private Integer maxReqCount;
     private String permission;
     private String lastHeartbeat;
@@ -51,8 +63,7 @@ public class Puppet {
     private String type;
 
     public Puppet() {
-        this.maxReqCount = 0;
-        this.balanceEnabled = 0;
+        this.maxReqCount = DEFAULT_MAX_REQUEST_COUNT;
         this.proxyEnabled = 0;
         this.heartbeatInterval = 30000;
         this.permission = "private";
@@ -186,20 +197,23 @@ public class Puppet {
         this.proxyPort = proxyPort;
     }
 
-    public Integer getBalanceEnabled() {
-        return balanceEnabled;
-    }
-
-    public void setBalanceEnabled(Integer balanceEnabled) {
-        this.balanceEnabled = balanceEnabled;
-    }
-
     public Integer getMaxReqCount() {
         return maxReqCount;
     }
 
     public void setMaxReqCount(Integer maxReqCount) {
         this.maxReqCount = maxReqCount;
+    }
+
+    /** 校验并返回最大请求总数。 */
+    public static int requireValidMaxRequestCount(Integer maxReqCount) {
+        if (maxReqCount == null
+                || maxReqCount < MIN_REQUEST_COUNT
+                || maxReqCount > MAX_REQUEST_COUNT) {
+            throw new IllegalArgumentException("最大请求数必须在 " + MIN_REQUEST_COUNT
+                    + " 到 " + MAX_REQUEST_COUNT + " 之间（包含首次请求）");
+        }
+        return maxReqCount;
     }
 
     public String getPermission() {
@@ -318,7 +332,6 @@ public class Puppet {
         sb.append("puppetId='").append(puppetId).append('\'');
         sb.append(", puppetName='").append(puppetName).append('\'');
         sb.append(", createByUserId='").append(createByUserId).append('\'');
-        sb.append(", balanceEnabled=").append(balanceEnabled);
         sb.append(", permission='").append(permission).append('\'');
         sb.append('}');
         return sb.toString();

@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ScriptTools {
 
 

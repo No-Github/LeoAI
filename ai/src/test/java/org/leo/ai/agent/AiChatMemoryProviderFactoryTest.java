@@ -19,6 +19,13 @@ class AiChatMemoryProviderFactoryTest {
     }
 
     @Test
+    void reservesActualToolSchemaBudget() {
+        assertEquals(10_768,
+                AiChatMemoryProviderFactory.effectiveContextWindowTokens(
+                        32_768, 180_000, 10_000));
+    }
+
+    @Test
     void preservesMinimumWorkingBudgetForTinyWindows() {
         assertEquals(1_024,
                 AiChatMemoryProviderFactory.effectiveContextWindowTokens(8_192, 180_000));

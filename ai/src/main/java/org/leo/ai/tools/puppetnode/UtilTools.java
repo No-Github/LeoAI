@@ -28,6 +28,9 @@ import java.util.Map;
  * </ul>
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+        operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+        parallelizable = true)
 public class UtilTools {
 
     // ══════════════════════════════════════════════════════════════════════════════

@@ -10,6 +10,10 @@ import java.util.Map;
 
 /** 模型读取被截断工具结果的分页工具。 */
 @Component
+@AiToolPolicy(
+        kind = AiToolKind.CONTEXT,
+        operation = AiToolOperation.READ_ONLY,
+        parallelizable = true, business = false)
 public class AiToolResultArchiveTools {
 
     private final AiToolResultArchive archive;

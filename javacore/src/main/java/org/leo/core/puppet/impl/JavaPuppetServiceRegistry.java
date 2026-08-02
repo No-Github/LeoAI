@@ -12,7 +12,9 @@ import org.leo.core.util.request.ComponentClassNameStrategy;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /** Centralizes configuration broadcast and lifecycle operations for a Java puppet's services. */
 final class JavaPuppetServiceRegistry {
@@ -63,6 +65,10 @@ final class JavaPuppetServiceRegistry {
 
     void setMaxReqCount(int maxReqCount) {
         for (ComponentService service : services) service.setMaxReqCount(maxReqCount);
+    }
+
+    void setHostIdMismatchRecovery(Function<String, Map<String, Object>> recovery) {
+        for (ComponentService service : services) service.setHostIdMismatchRecovery(recovery);
     }
 
     void seedLoadedComponents(String hostId, Set<String> componentNames) {

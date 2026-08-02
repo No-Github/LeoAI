@@ -49,6 +49,22 @@ class EnvelopeCoreCompatibilityTest {
         assertEquals(200, envelopeResponse.get("code"));
         assertTrue(envelopeResponse.get("data") instanceof Map<?, ?>);
         assertTrue(((Map<?, ?>) envelopeResponse.get("data")).containsKey("hostId"));
+
+        String actualHostId = String.valueOf(((Map<?, ?>) envelopeResponse.get("data")).get("hostId"));
+        Map<String, Object> wrongHostRequest = new HashMap<>();
+        wrongHostRequest.put("requestId", "request-2");
+        wrongHostRequest.put("operation", "COMPONENT_INVOKE");
+        wrongHostRequest.put("hostId", "wrong-" + actualHostId);
+        wrongHostRequest.put("component", "MissingComponent");
+        wrongHostRequest.put("action", "run");
+        wrongHostRequest.put("params", new HashMap<>());
+
+        Map<String, Object> mismatch = invoke(core, wrongHostRequest);
+        assertEquals(409, mismatch.get("code"));
+        assertTrue(mismatch.get("error") instanceof Map<?, ?>);
+        Map<?, ?> error = (Map<?, ?>) mismatch.get("error");
+        assertEquals("HOST_ID_MISMATCH", error.get("errorCode"));
+        assertEquals(actualHostId, error.get("hostId"));
     }
 
     @SuppressWarnings("unchecked")

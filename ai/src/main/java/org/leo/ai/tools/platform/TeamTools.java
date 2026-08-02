@@ -21,6 +21,8 @@ import java.util.Map;
  */
 @Component("platformTeamTools")
 @AiToolAccess(AiToolAccess.Level.ADMIN)
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class TeamTools {
 
     private final TeamService teamService;
@@ -32,11 +34,15 @@ public class TeamTools {
     }
 
     @Tool("获取当前平台所有团队。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Team> getAllTeam() {
         return teamService.getAllTeam();
     }
 
     @Tool("获取当前平台所有团队名称。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<String> getAllTeamName() {
         List<String> names = new ArrayList<>();
         for (Team t : teamService.getAllTeam()) {
@@ -46,6 +52,8 @@ public class TeamTools {
     }
 
     @Tool("根据 teamId 获取团队详情。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Team getTeamById(String teamId) {
         Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
         if (team == null) throw new IllegalArgumentException("团队不存在");
@@ -53,6 +61,8 @@ public class TeamTools {
     }
 
     @Tool("根据 teamName 获取团队详情。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Team getTeamByName(String teamName) {
         Team team = teamService.getTeamByName(requireNonBlank(teamName, "teamName不能为空"));
         if (team == null) throw new IllegalArgumentException("团队不存在");
@@ -60,6 +70,8 @@ public class TeamTools {
     }
 
     @Tool("获取指定 leaderId 负责的团队列表。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Team> getTeamsByLeader(String leaderId) {
         return teamService.getTeamsByLeader(requireNonBlank(leaderId, "leaderId不能为空"));
     }
@@ -138,6 +150,8 @@ public class TeamTools {
         return buildResult("updated", updated, existing.getTeamId(), existing.getTeamName());
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定团队（仅 admin 可用）。删除前会清空团队成员的 teamId。内置 system-admin 不可删除。")
     public Map<String, Object> deleteTeam(String teamId) {
         Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));

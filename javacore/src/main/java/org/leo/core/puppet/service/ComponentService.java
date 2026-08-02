@@ -1,5 +1,6 @@
 package org.leo.core.puppet.service;
 
+import org.leo.core.entity.Puppet;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
 import org.leo.core.net.layer.RequestLayer;
@@ -24,7 +25,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
+
+import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
 
 /**
  * pipeline 执行引擎（最终优化版）
@@ -40,7 +44,8 @@ public class ComponentService {
 
     protected String hostId;
 
-    private int maxReqCount = 0;
+    /** 最大请求总数，包含首次请求。 */
+    private int maxReqCount = Puppet.DEFAULT_MAX_REQUEST_COUNT;
 
     /** per-puppet URL 随机化策略 */
     private UrlStrategy urlStrategy;
@@ -63,6 +68,7 @@ public class ComponentService {
     private long retryBaseDelayMillis = 150L;
     private long retryMaxDelayMillis = 2_000L;
     private RetrySleeper retrySleeper = Thread::sleep;
+    private Function<String, Map<String, Object>> hostIdMismatchRecovery;
 
     private volatile ComponentLoadRegistry componentLoadRegistry = new ComponentLoadRegistry();
 
@@ -121,7 +127,7 @@ public class ComponentService {
     }
 
     public void setMaxReqCount(int maxReqCount) {
-        this.maxReqCount = maxReqCount;
+        this.maxReqCount = Puppet.requireValidMaxRequestCount(maxReqCount);
     }
 
     public int getMaxReqCount() {
@@ -140,6 +146,11 @@ public class ComponentService {
 
     void setRetrySleeper(RetrySleeper retrySleeper) {
         this.retrySleeper = retrySleeper == null ? Thread::sleep : retrySleeper;
+    }
+
+    public void setHostIdMismatchRecovery(
+            Function<String, Map<String, Object>> hostIdMismatchRecovery) {
+        this.hostIdMismatchRecovery = hostIdMismatchRecovery;
     }
 
     public HeaderNoiseStrategy getHeaderNoiseStrategy() {
@@ -337,8 +348,9 @@ public class ComponentService {
         }
 
         int attempt = 0;
-        int maxAttempts = maxReqCount <= 0 ? 1 : maxReqCount;
+        int maxAttempts = maxReqCount;
         Map<String, Object> result = new HashMap<>();
+        PuppetRpcResponse hostMismatchResponse = null;
 
         while (attempt < maxAttempts) {
             attempt++;
@@ -371,6 +383,14 @@ public class ComponentService {
                 if ("success".equals(result.get("reqStatus"))) {
                     result.remove("reqStatus");
                     PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(result);
+                    if (isHostIdMismatch(response)) {
+                        hostMismatchResponse = response;
+                        if (attempt < maxAttempts) {
+                            sleepBeforeRetry(requestId, attempt);
+                            continue;
+                        }
+                        return recoverHostAffinity(envelope.hostId(), response);
+                    }
                     return PuppetRpcEnvelopeMapper.toResultMap(response);
                 }
             } catch (Exception e) {
@@ -390,6 +410,9 @@ public class ComponentService {
             }
 
             if (attempt >= maxAttempts) {
+                if (hostMismatchResponse != null) {
+                    return recoverHostAffinity(envelope.hostId(), hostMismatchResponse);
+                }
                 String errMsg = (String) result.get("reqMsg");
                 result.remove("reqStatus");
                 result.remove("reqMsg");
@@ -406,6 +429,25 @@ public class ComponentService {
             sleepBeforeRetry(requestId, attempt);
         }
         return result;
+    }
+
+    private Map<String, Object> recoverHostAffinity(
+            String expectedHostId, PuppetRpcResponse mismatchResponse) {
+        Function<String, Map<String, Object>> recovery = hostIdMismatchRecovery;
+        if (recovery == null) return PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+        try {
+            Map<String, Object> recovered = recovery.apply(expectedHostId);
+            return recovered != null ? recovered : PuppetRpcEnvelopeMapper.toResultMap(mismatchResponse);
+        } catch (RuntimeException e) {
+            log.warn("[ComponentService] HostId 会话恢复失败 expectedHostId={} message={}",
+                    expectedHostId, e.getMessage(), e);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("code", Integer.valueOf(503));
+            result.put("errorCode", org.leo.core.rpc.PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
+            result.put("msg", "目标实例重新握手失败: "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return result;
+        }
     }
 
     // ================= encode =================

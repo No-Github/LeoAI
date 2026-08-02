@@ -124,6 +124,27 @@ class AiTurnExecutionEngineTest {
     }
 
     @Test
+    void rejectsClaimedQuestionCardWhenControlToolWasNotCalled() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        RecordingListener listener = new RecordingListener();
+        ScriptedTokenStream stream = new ScriptedTokenStream(tokenStream -> {
+            tokenStream.response.accept(
+                    new PartialResponse("请选择混淆策略（已发送提问卡片）"),
+                    new PartialResponseContext(new TestHandle()));
+            tokenStream.complete.accept(mock(ChatResponse.class));
+        });
+
+        engine.execute(command(turn, stream), listener);
+
+        assertEquals(0, listener.completed.get());
+        assertEquals(1, listener.failed.get());
+        assertTrue(listener.lastFailure.cause().getMessage()
+                .startsWith("CONTROL_ACTION_NOT_EMITTED"));
+        assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
+    }
+
+    @Test
     void reportsTerminalPersistenceFailureAndMarksRuntimeFailed() {
         RecordingRuntime runtime = claimedRuntime();
         AiTurnCoordinator.Execution turn = coordinator.attach(runtime);

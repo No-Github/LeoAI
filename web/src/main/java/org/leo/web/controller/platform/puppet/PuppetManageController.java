@@ -9,7 +9,6 @@ import org.leo.service.user.UserService;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.request.ComponentClassNameStrategy;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -298,7 +297,6 @@ public class PuppetManageController {
         if (puppetId == null || puppetId.isBlank()) {
             return ApiResponse.badRequest("puppetId不能为空");
         }
-        // 删除前先查出 puppet，用于获取 createByUserId 清理工作目录
         Puppet puppet = puppetService.findPuppetById(puppetId);
         if (puppet == null) {
             return ApiResponse.notFound("Puppet不存在");
@@ -308,12 +306,6 @@ public class PuppetManageController {
         }
         boolean result = puppetService.deletePuppetById(puppetId);
         if (result) {
-            // 联动清理 puppet 级工作目录（basic-info、web-runtime-info 等）
-            try {
-                PuppetNodeSessionWorkDirUtil.deletePuppetWorkDir(puppet.getCreateByUserId(), puppetId);
-            } catch (Exception ex) {
-                logger.warn("清理 puppet 工作目录失败, puppetId={}: {}", puppetId, ex.getMessage());
-            }
             return ApiResponse.success();
         } else {
             return ApiResponse.error("删除Puppet失败");

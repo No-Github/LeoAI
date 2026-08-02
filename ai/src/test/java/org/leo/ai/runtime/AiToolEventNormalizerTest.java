@@ -5,6 +5,7 @@ import dev.langchain4j.invocation.InvocationContext;
 import dev.langchain4j.service.tool.ToolExecution;
 import dev.langchain4j.service.tool.ToolExecutionResult;
 import org.junit.jupiter.api.Test;
+import org.leo.ai.agent.AiToolCatalog;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -13,6 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class AiToolEventNormalizerTest {
+
+    private final AiToolEventNormalizer normalizer =
+            new AiToolEventNormalizer(new AiToolCatalog());
 
     @Test
     void treatsRecoveryProtocolAsFailureWhenFrameworkDropsErrorFlag() {
@@ -36,7 +40,7 @@ class AiToolEventNormalizerTest {
                 .build();
 
         Map<String, Object> event =
-                AiToolEventNormalizer.completed(execution);
+                normalizer.completed(execution);
 
         assertEquals(false, event.get("success"));
         assertEquals("failed", event.get("status"));
@@ -64,7 +68,7 @@ class AiToolEventNormalizerTest {
                         .build())
                 .build();
 
-        Map<String, Object> event = AiToolEventNormalizer.completed(execution);
+        Map<String, Object> event = normalizer.completed(execution);
         String arguments = String.valueOf(event.get("arguments"));
 
         assertFalse(arguments.contains("secret"));
@@ -96,7 +100,7 @@ class AiToolEventNormalizerTest {
                         .build())
                 .build();
 
-        Map<String, Object> event = AiToolEventNormalizer.completed(execution);
+        Map<String, Object> event = normalizer.completed(execution);
 
         assertEquals("TOOL_TIMEOUT", event.get("code"));
         assertEquals(true, event.get("retryable"));

@@ -14,6 +14,10 @@ import org.leo.ai.service.SkillRegistryService;
  * <p>scope 在构造时由 {@link org.leo.ai.agent.AgentConfig} 硬编码注入，AI 无需也无法传入错误的 scope。
  * 通过 {@code @Bean} 分别创建两个实例注册到 PuppetNodeAgent 和 PlatformAgent。
  */
+@org.leo.ai.agent.AiToolPolicy(
+        kind = org.leo.ai.agent.AiToolKind.CONTEXT,
+        operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+        parallelizable = true, business = false)
 public class SkillActivationTools {
 
     private final SkillRegistryService skillRegistry;

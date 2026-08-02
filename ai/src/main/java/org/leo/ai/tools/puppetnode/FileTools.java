@@ -36,6 +36,8 @@ import java.util.Map;
  * </ul>
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class FileTools {
 
     private static final long DEFAULT_TEXT_READ_SIZE = 64 * 1024;
@@ -138,6 +140,8 @@ public class FileTools {
 
     @Tool("读取 puppet 侧小体积文本文件并返回 UTF-8 内容。适用于配置文件（yml、properties、xml、env）。不能用于查看平台侧 VFS。相同路径按会话缓存，多次读取不重复通信。")
     @SuppressWarnings("unchecked")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> readTextFile(
             String path,
             @P(value = "最多读取字节数。可省略，默认 65536。", required = false, defaultValue = "65536")
@@ -196,6 +200,8 @@ public class FileTools {
             "逗号分隔多个 pattern（如 yml,yaml,properties,xml）。" +
             "返回结构化匹配列表 [{file, lineNumber, content}]，去重后最多 200 条。" +
             "自动适配 Linux（grep）和 Windows（findstr）。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> searchFileContent(
             @P("搜索目录的绝对路径") String directory,
             @P("搜索模式（关键词或正则表达式）") String pattern,

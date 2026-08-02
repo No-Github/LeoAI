@@ -92,7 +92,7 @@ Java 平台侧已加载 Component 状态采用 host LRU、单 host 数量上限�
 
 同一 `JavaPuppetNode` 创建的全部 `ComponentService` 共享节点级加载注册表。相同 host/component 的并发加载通过 single-flight 合并为一次 class 定义请求，随后各 service 直接复用共享状态，避免同名类在同一 ClassLoader 中重复定义。连续加载失败达到阈值后进入有界冷却期，降低重复传输大体积制品的固定节奏；关闭节点时递增注册表 generation，较早的在途加载结束后不会重新写回已清理缓存。
 
-`JavaPuppetServiceRegistry` 统一维护 31 个 Java 平台服务实例的 hostId、请求/响应层、传输画像、最大请求次数和已加载组件状态广播，并集中执行关闭清理。`JavaPuppetNode` 继续直接实现 capability 委托，服务字段和调用路径保持扁平，避免为每类 capability 引入额外聚合层。
+`JavaPuppetServiceRegistry` 统一维护 31 个 Java 平台服务实例的 hostId、请求/响应层、传输画像、最大请求次数和已加载组件状态广播，并集中执行关闭清理。最大请求数表示一次操作允许发送的请求总数，包含首次请求；`1` 表示不重试，`3` 表示最多重试两次。HostId 亲和始终启用，不暴露人为开关；目标实例返回 `HOST_ID_MISMATCH` 后，平台在请求上限内继续携带原 HostId 重试。重试耗尽时平台通过 PING 重新绑定实例并清理实例级缓存，但不会自动重放原业务操作，以免重复执行有副作用的命令。`JavaPuppetNode` 继续直接实现 capability 委托，服务字段和调用路径保持扁平，避免为每类 capability 引入额外聚合层。
 
 ## Web Runtime V2 版本策略
 

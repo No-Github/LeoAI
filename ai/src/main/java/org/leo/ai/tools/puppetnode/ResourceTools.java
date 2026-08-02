@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Map;
 
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+        operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+        parallelizable = true)
 public class ResourceTools {
 
     @Tool("读取 puppet 侧 classpath 资源（如 jar 内的 application.yml）。不是平台侧 skills 目录工具。按会话缓存。")

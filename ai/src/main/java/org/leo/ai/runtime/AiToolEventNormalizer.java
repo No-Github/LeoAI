@@ -5,8 +5,10 @@ import dev.langchain4j.model.chat.response.PartialToolCall;
 import dev.langchain4j.service.tool.BeforeToolExecution;
 import dev.langchain4j.service.tool.ToolExecution;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolCatalog;
+import org.leo.ai.agent.AiToolDescriptor;
 import org.leo.ai.agent.AiToolErrorHandler;
-import org.leo.ai.agent.AiToolOperation;
+import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -14,19 +16,22 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** 将 LangChain4j 工具回调转换为稳定的 AI 领域事件载荷。 */
+@Component
 final class AiToolEventNormalizer {
 
-    private AiToolEventNormalizer() {
+    private final AiToolCatalog catalog;
+
+    AiToolEventNormalizer(AiToolCatalog catalog) {
+        this.catalog = catalog;
     }
 
-    static Map<String, Object> started(BeforeToolExecution execution) {
+    Map<String, Object> started(BeforeToolExecution execution) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         data.put("kind", "tool");
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
-        data.put("operation", AiToolOperation.classify(
-                execution.request().name()).name());
+        injectDescriptor(data, execution.request().name());
         data.put("arguments", AiToolArgumentSanitizer.sanitize(
                 execution.request().arguments()));
         data.put("success", null);
@@ -38,7 +43,7 @@ final class AiToolEventNormalizer {
         return data;
     }
 
-    static Map<String, Object> partial(PartialToolCall partial) {
+    Map<String, Object> partial(PartialToolCall partial) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         String id = partial.id();
@@ -53,10 +58,11 @@ final class AiToolEventNormalizer {
         data.put("timestamp", now);
         data.put("startTime", now);
         data.put("endTime", null);
+        injectDescriptor(data, partial.name());
         return data;
     }
 
-    static Map<String, Object> completed(ToolExecution execution) {
+    Map<String, Object> completed(ToolExecution execution) {
         LinkedHashMap<String, Object> data = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         long startTime = toEpochMs(execution.startTime(), now);
@@ -65,8 +71,7 @@ final class AiToolEventNormalizer {
         data.put("kind", "tool");
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
-        data.put("operation", AiToolOperation.classify(
-                execution.request().name()).name());
+        injectDescriptor(data, execution.request().name());
         data.put("arguments", AiToolArgumentSanitizer.sanitize(
                 execution.request().arguments()));
         data.put("resultPreview", truncate(resultForDisplay(execution), 2000));
@@ -80,6 +85,16 @@ final class AiToolEventNormalizer {
         injectProtocolMetadata(data, execution.result());
         injectPlanStepIndex(data);
         return data;
+    }
+
+    private void injectDescriptor(Map<String, Object> data, String toolName) {
+        AiToolDescriptor descriptor = catalog.get(toolName);
+        data.put("operation", descriptor.operation().name());
+        data.put("toolKind", descriptor.kind().name());
+        data.put("terminal", descriptor.terminal());
+        data.put("exclusive", descriptor.exclusive());
+        data.put("parallelizable", descriptor.parallelizable());
+        data.put("businessTool", descriptor.business());
     }
 
     @SuppressWarnings("unchecked")

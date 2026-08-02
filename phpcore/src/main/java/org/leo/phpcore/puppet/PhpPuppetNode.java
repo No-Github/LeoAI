@@ -32,6 +32,7 @@ import org.leo.core.engine.socks5.Socks5ProxyStatistics;
 import org.leo.core.runtime.PuppetRuntime;
 import org.leo.core.runtime.RuntimeProfile;
 import org.leo.core.puppet.http.HttpSenderEngine;
+import org.leo.core.rpc.PuppetRpcErrorCodes;
 import org.leo.phpcore.rpc.PhpRpcClient;
 import org.leo.phpcore.component.PhpComponentArtifactRegistry;
 import org.leo.phpcore.component.PhpComponentVariantBuilder;
@@ -42,8 +43,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /** PHP implementation of the shared Puppet node and core capabilities. */
 public final class PhpPuppetNode extends AbstractPuppetNode implements
@@ -71,18 +74,32 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
                     connectTimeout, readTimeout, followRedirects);
         }
     };
-    private String hostId;
+    private volatile String hostId;
+    private volatile Consumer<String> hostIdChangeListener = ignored -> { };
 
     public PhpPuppetNode(PhpRpcClient rpcClient, PhpComponentArtifactRegistry componentRegistry) {
         this.rpcClient = rpcClient;
         this.componentRegistry = componentRegistry;
+        this.rpcClient.setHostIdMismatchRecovery(this::recoverHostAffinity);
         setRuntimeProfile(RuntimeProfile.minimal(PuppetRuntime.PHP));
     }
 
     @Override
+    public String getHostId() {
+        return hostId;
+    }
+
+    @Override
     public void setHostId(String hostId) {
+        String previous = this.hostId;
         this.hostId = hostId;
         rpcClient.setHostId(hostId);
+        if (!Objects.equals(previous, hostId)) hostIdChangeListener.accept(hostId);
+    }
+
+    @Override
+    public void setHostIdChangeListener(Consumer<String> listener) {
+        this.hostIdChangeListener = listener == null ? ignored -> { } : listener;
     }
 
     @Override
@@ -135,7 +152,7 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
             result = rpcClient.invokeComponent(artifact.getComponentId(), artifact.getDigest(),
                     params == null ? new LinkedHashMap<>() : params);
         }
-        if (!missingComponent(result)) loadedComponents.add(componentId);
+        if (success(result)) loadedComponents.add(componentId);
         return result;
     }
 
@@ -155,6 +172,48 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
         List<String> componentIds = new ArrayList<>(loadedComponents); componentIds.sort(String::compareTo);
         normalized.put("components", componentIds);
         return normalized;
+    }
+
+    private synchronized Map<String, Object> recoverHostAffinity(String expectedHostId) {
+        if (!Objects.equals(expectedHostId, hostId)) {
+            return reboundResult(expectedHostId, hostId);
+        }
+        try {
+            Map<String, Object> ping = rpcClient.ping();
+            Object reported = ping == null ? null : ping.get("hostId");
+            String newHostId = reported == null ? null : String.valueOf(reported).trim();
+            if (!success(ping) || newHostId == null || newHostId.isBlank()) {
+                return unavailableResult(expectedHostId);
+            }
+            loadedComponents.clear();
+            setHostId(newHostId);
+            addReportedComponents(ping.get("components"));
+            return reboundResult(expectedHostId, newHostId);
+        } catch (Exception e) {
+            Map<String, Object> unavailable = unavailableResult(expectedHostId);
+            unavailable.put("msg", "目标实例已变化，但重新握手失败: "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return unavailable;
+        }
+    }
+
+    private Map<String, Object> reboundResult(String previousHostId, String currentHostId) {
+        Map<String, Object> rebound = new LinkedHashMap<>();
+        rebound.put("code", Integer.valueOf(409));
+        rebound.put("errorCode", PuppetRpcErrorCodes.HOST_ID_REBOUND);
+        rebound.put("previousHostId", previousHostId);
+        rebound.put("hostId", currentHostId);
+        rebound.put("msg", "目标实例已变化，会话已重新绑定，请重试当前操作");
+        return rebound;
+    }
+
+    private Map<String, Object> unavailableResult(String expectedHostId) {
+        Map<String, Object> unavailable = new LinkedHashMap<>();
+        unavailable.put("code", Integer.valueOf(503));
+        unavailable.put("errorCode", PuppetRpcErrorCodes.HOST_ID_UNAVAILABLE);
+        unavailable.put("expectedHostId", expectedHostId);
+        unavailable.put("msg", "目标实例已变化，但重新握手未能获得有效 HostId，请稍后重试");
+        return unavailable;
     }
 
     @Override

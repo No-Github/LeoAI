@@ -11,6 +11,8 @@ import java.util.Map;
 
 @Component()
 @AiToolAccess(AiToolAccess.Level.ADMIN)
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class DisguiseTools {
 
     private final DisguiseService disguiseService;
@@ -20,6 +22,8 @@ public class DisguiseTools {
     }
 
     @Tool("获取当前平台所有 Disguise。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getDisguises() throws Exception {
         HashMap<String, Object> result = successResult("fetched");
         result.put("data", disguiseService.getDisguises());
@@ -27,6 +31,8 @@ public class DisguiseTools {
     }
 
     @Tool("根据 disguiseId 获取 Disguise 详情。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getDisguiseById(String disguiseId) throws Exception {
         HashMap<String, Object> result = successResult("fetched");
         result.put("data", disguiseService.getDisguiseById(disguiseId));
@@ -34,6 +40,8 @@ public class DisguiseTools {
     }
 
     @Tool("测试 encodeBody 和 decodeBody 是否能正确互逆。测试会传入完整 HashMap（包含 testString=54ikun），decode(encode(map)) 必须返回完全相等的 HashMap，不能只处理 data 单字段。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> testDisguise(String encodeBody, String decodeBody) throws Exception {
         disguiseService.testDisguise(encodeBody, decodeBody);
         HashMap<String, Object> result = successResult("passed");
@@ -79,6 +87,8 @@ public class DisguiseTools {
         return buildResult("updated", updated.getDisguiseId(), updated.getDisguiseName());
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定 Disguise。")
     public Map<String, Object> deleteDisguise(String disguiseId) throws Exception {
         Disguise disguise = disguiseService.getDisguiseById(requireNonBlank(disguiseId, "disguiseId不能为空"));

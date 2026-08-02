@@ -222,6 +222,8 @@ class AiToolAuthorizationPolicyTest {
 
     private static class DestructiveTools {
         @Tool
+        @AiToolPolicy(kind = AiToolKind.COMMAND,
+                operation = AiToolOperation.DESTRUCTIVE)
         public String deleteRecord(int id) {
             return "deleted-" + id;
         }

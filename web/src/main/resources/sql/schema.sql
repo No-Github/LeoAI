@@ -55,8 +55,7 @@ CREATE TABLE IF NOT EXISTS puppets (
     proxy_type VARCHAR(20), -- http, socks
     proxy_host VARCHAR(255),
     proxy_port INTEGER,
-    balance_enabled INTEGER DEFAULT 0 CHECK (balance_enabled IN (0, 1)), -- 0:禁用 1:启用（负载均衡稳定功能）
-    max_req_count INTEGER DEFAULT 0 CHECK (max_req_count >= 0),
+    max_req_count INTEGER NOT NULL DEFAULT 1 CHECK (max_req_count BETWEEN 1 AND 10), -- 请求总数，包含首次请求；1 表示不重试
     permission VARCHAR(20) DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public')), -- private, team, public
     last_heartbeat DATETIME,
     heartbeat_interval INTEGER DEFAULT 30000 CHECK (heartbeat_interval > 0), -- 心跳间隔(毫秒)

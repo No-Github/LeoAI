@@ -28,9 +28,14 @@ public class ClassLoaderJspPacker implements Packer {
     public String pack(ClassPackerConfig config) {
         try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
             // AI 生成的自定义模板优先；未提供时回退到内置模板
-            String tpl = (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty())
+            boolean custom = config.getCustomTemplate() != null
+                    && !config.getCustomTemplate().trim().isEmpty();
+            String tpl = custom
                     ? config.getCustomTemplate()
                     : jspTemplate;
+            if (custom) {
+                JspLoaderTemplateValidator.validate(tpl);
+            }
             String code = TemplateRenderer.render(tpl, config);
             JspObfuscationPipeline pipeline = (config.getJspObfuscationSteps() != null)
                     ? JspObfuscationPlanner.compile(

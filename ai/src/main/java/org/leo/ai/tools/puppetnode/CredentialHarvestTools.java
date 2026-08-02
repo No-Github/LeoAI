@@ -23,6 +23,9 @@ import java.util.Map;
  * 返回结果按来源分类，AI 从中按需提取即可。结果缓存，重复调用直接返回。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+        operation = org.leo.ai.agent.AiToolOperation.READ_ONLY,
+        parallelizable = true)
 public class CredentialHarvestTools {
 
     private static final Logger log = LoggerFactory.getLogger(CredentialHarvestTools.class);

@@ -142,8 +142,8 @@ public class AiUserInputService {
             context.append("已确认参数哈希: ").append(request.getArgumentsHash()).append('\n');
         }
         context.append("用户回答: ").append(request.getAnswer()).append('\n');
-        context.append("请基于该回答恢复原任务和当前计划。若是拒绝，不要执行被拒绝的动作，"
-                + "应选择低风险替代方案或结束任务。\n\n");
+        context.append("请基于该回答从暂停点直接恢复原任务和当前计划，不要致谢、确认收到或复述问题与回答。"
+                + "若是拒绝，不要执行被拒绝的动作，应选择低风险替代方案或结束任务。\n\n");
         context.append(guardedMessage != null ? guardedMessage : request.getAnswer());
         return context.toString();
     }
@@ -186,7 +186,8 @@ public class AiUserInputService {
         result.put("waitingForUser", true);
         result.put("reused", reused);
         result.put("request", request.toMap());
-        result.put("instruction", "现在停止调用其他工具，简短说明需要用户回答，然后结束本轮输出。");
+        result.put("instruction", "问题卡片已由系统呈现。立即结束本轮；不要继续调用工具，"
+                + "也不要输出任何自然语言或复述卡片内容。");
         return result;
     }
 

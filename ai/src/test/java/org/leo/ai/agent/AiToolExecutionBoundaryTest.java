@@ -38,7 +38,7 @@ class AiToolExecutionBoundaryTest {
 
         ToolExecutionResult result = boundary.execute(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
-                "getStatus",
+                descriptor("getStatus", AiToolOperation.READ_ONLY),
                 (request, memoryId) -> "ready",
                 request("call-1", "getStatus"),
                 context("memory-1"));
@@ -79,9 +79,11 @@ class AiToolExecutionBoundaryTest {
         ToolExecutionRequest request = request("same-call", "getItem");
 
         boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
-                "getItem", executor, request, context("memory-1"));
+                descriptor("getItem", AiToolOperation.READ_ONLY),
+                executor, request, context("memory-1"));
         boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
-                "getItem", executor, request, context("memory-1"));
+                descriptor("getItem", AiToolOperation.READ_ONLY),
+                executor, request, context("memory-1"));
 
         assertEquals(2, calls.get());
     }
@@ -138,7 +140,8 @@ class AiToolExecutionBoundaryTest {
 
         AiToolException readTimeout = assertThrows(AiToolException.class,
                 () -> boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
-                        "getSlow", slow, request("read-timeout", "getSlow"),
+                        descriptor("getSlow", AiToolOperation.READ_ONLY),
+                        slow, request("read-timeout", "getSlow"),
                         context("memory-1")));
         AiToolException writeTimeout = assertThrows(AiToolException.class,
                 () -> boundary.execute(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
@@ -159,7 +162,7 @@ class AiToolExecutionBoundaryTest {
 
         ToolExecutionResult result = boundary.execute(
                 AiToolAuthorizationPolicy.AgentScope.PUPPET_NODE,
-                "getLargeReport",
+                descriptor("getLargeReport", AiToolOperation.READ_ONLY),
                 (request, memoryId) -> full,
                 request("large-call", "getLargeReport"),
                 context("session-1:thread-1"));
@@ -196,6 +199,11 @@ class AiToolExecutionBoundaryTest {
 
     private static ToolExecutionRequest request(String id, String name) {
         return request(id, name, "{}");
+    }
+
+    private static AiToolDescriptor descriptor(String name, AiToolOperation operation) {
+        return new AiToolDescriptor(name, AiToolKind.QUERY, operation,
+                false, false, true, true);
     }
 
     private static ToolExecutionRequest request(String id, String name, String arguments) {

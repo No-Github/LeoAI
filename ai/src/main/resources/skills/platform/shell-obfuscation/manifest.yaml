@@ -18,5 +18,5 @@ source: builtin
 owner: leo
 enabled: false
 requires:
-  tools: [getShellGeneratorMeta, getPuppetShellConfig, generatePhpWebShell, mutateJspTemplate, generateWebShell, generateMemoryShell]
+  tools: [getShellGeneratorMeta, getDisguises, generatePhpWebShell, createJavaCoreArtifact, getWebShellWrapperContract, designWebShellWrapper, assembleWebShellWrapper, mutateJspTemplate, generateMemoryShell]
 produces: [shell-artifact]

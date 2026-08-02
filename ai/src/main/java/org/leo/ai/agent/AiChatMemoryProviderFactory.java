@@ -14,7 +14,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class AiChatMemoryProviderFactory {
 
-    static final int RESERVED_CONTEXT_TOKENS = 20_000;
+    static final int MIN_RESERVED_CONTEXT_TOKENS = 20_000;
+    static final int BASE_RUNTIME_TOKENS = 12_000;
     static final int MIN_CONTEXT_TOKENS = 1_024;
 
     private final TokenCountEstimator tokenEstimator;
@@ -33,17 +34,32 @@ public class AiChatMemoryProviderFactory {
     }
 
     public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens) {
+        return createPuppetProvider(modelContextWindowTokens, 0);
+    }
+
+    public ChatMemoryProvider createPuppetProvider(int modelContextWindowTokens,
+                                                   int toolSchemaTokens) {
         return create(modelContextWindowTokens,
+                toolSchemaTokens,
                 agentProperties.getPuppetNode().getMain().getMaxContextTokens());
     }
 
     public ChatMemoryProvider createPlatformProvider(int modelContextWindowTokens) {
+        return createPlatformProvider(modelContextWindowTokens, 0);
+    }
+
+    public ChatMemoryProvider createPlatformProvider(int modelContextWindowTokens,
+                                                     int toolSchemaTokens) {
         return create(modelContextWindowTokens,
+                toolSchemaTokens,
                 agentProperties.getPlatform().getMain().getMaxContextTokens());
     }
 
-    private ChatMemoryProvider create(int modelContextWindowTokens, int configuredMaxTokens) {
-        int effectiveWindow = effectiveContextWindowTokens(modelContextWindowTokens, configuredMaxTokens);
+    private ChatMemoryProvider create(int modelContextWindowTokens,
+                                      int toolSchemaTokens,
+                                      int configuredMaxTokens) {
+        int effectiveWindow = effectiveContextWindowTokens(
+                modelContextWindowTokens, configuredMaxTokens, toolSchemaTokens);
         return memoryId -> {
             if (effectiveWindow <= 96_000) {
                 return managedMemory.initialize(TokenWindowChatMemory.builder()
@@ -68,8 +84,18 @@ public class AiChatMemoryProviderFactory {
      * 模型窗口是硬上限，系统配置也是上限；两者不能通过 Math.max 被意外放大。
      */
     static int effectiveContextWindowTokens(int modelContextWindowTokens, int configuredMaxTokens) {
+        return effectiveContextWindowTokens(modelContextWindowTokens, configuredMaxTokens, 0);
+    }
+
+    static int effectiveContextWindowTokens(int modelContextWindowTokens,
+                                            int configuredMaxTokens,
+                                            int toolSchemaTokens) {
         int modelWindow = modelContextWindowTokens > 0 ? modelContextWindowTokens : 32_768;
-        int available = Math.max(MIN_CONTEXT_TOKENS, modelWindow - RESERVED_CONTEXT_TOKENS);
+        int desiredReserve = Math.max(MIN_RESERVED_CONTEXT_TOKENS,
+                BASE_RUNTIME_TOKENS + Math.max(0, toolSchemaTokens));
+        int reserve = Math.min(desiredReserve,
+                Math.max(0, modelWindow - MIN_CONTEXT_TOKENS));
+        int available = Math.max(MIN_CONTEXT_TOKENS, modelWindow - reserve);
         return configuredMaxTokens > 0 ? Math.min(available, configuredMaxTokens) : available;
     }
 }

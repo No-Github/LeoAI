@@ -1,14 +1,29 @@
 package org.leo.service;
 
 import org.leo.core.entity.Puppet;
+import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.dao.mapper.PuppetMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Puppet 管理服务。
@@ -17,6 +32,8 @@ import java.util.List;
  */
 @Service
 public class PuppetService {
+
+    private static final Logger log = LoggerFactory.getLogger(PuppetService.class);
 
     private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -62,6 +79,7 @@ public class PuppetService {
 
     public boolean insertPuppet(Puppet puppet) {
         if (puppet == null) throw new IllegalArgumentException("puppet参数不能为空");
+        validateRequestPolicy(puppet);
         String now = DATE_FORMAT.format(LocalDateTime.now());
         return puppetMapper.insertPuppet(
                 puppet.getPuppetId(),
@@ -78,7 +96,6 @@ public class PuppetService {
                 puppet.getProxyType(),
                 puppet.getProxyHost(),
                 puppet.getProxyPort(),
-                puppet.getBalanceEnabled(),
                 puppet.getMaxReqCount(),
                 puppet.getPermission(),
                 puppet.getLastHeartbeat(),
@@ -98,6 +115,7 @@ public class PuppetService {
         if (puppet == null || puppet.getPuppetId() == null || puppet.getPuppetId().isBlank()) {
             throw new IllegalArgumentException("puppetId不能为空");
         }
+        validateRequestPolicy(puppet);
         String now = DATE_FORMAT.format(LocalDateTime.now());
         return puppetMapper.updatePuppetById(
                 puppet.getPuppetId(),
@@ -114,7 +132,6 @@ public class PuppetService {
                 puppet.getProxyType(),
                 puppet.getProxyHost(),
                 puppet.getProxyPort(),
-                puppet.getBalanceEnabled(),
                 puppet.getMaxReqCount(),
                 puppet.getPermission(),
                 puppet.getLastHeartbeat(),
@@ -140,8 +157,97 @@ public class PuppetService {
         return puppetMapper.updateLastHeartbeat(puppetId.trim(), now, now);
     }
 
+    /**
+     * 删除指定 Puppet 及其全部后代节点。
+     *
+     * <p>数据库记录按叶子节点到根节点的顺序在同一事务中删除；事务提交后，
+     * 再关闭这些节点的在线会话并清理对应工作目录，避免留下孤立资源。
+     */
+    @Transactional
     public boolean deletePuppetById(String id) {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("id参数不能为空");
-        return puppetMapper.deletePuppetById(id.trim());
+        Puppet root = puppetMapper.findPuppetById(id.trim());
+        if (root == null) return false;
+
+        List<Puppet> subtree = collectSubtree(root);
+        List<Puppet> deletionOrder = new ArrayList<>(subtree);
+        Collections.reverse(deletionOrder);
+        for (Puppet puppet : deletionOrder) {
+            if (!puppetMapper.deletePuppetById(puppet.getPuppetId())) {
+                throw new IllegalStateException("删除Puppet失败: " + puppet.getPuppetId());
+            }
+        }
+
+        scheduleResourceCleanup(subtree);
+        return true;
+    }
+
+    private List<Puppet> collectSubtree(Puppet root) {
+        Map<String, Puppet> nodes = new LinkedHashMap<>();
+        Deque<Puppet> pending = new ArrayDeque<>();
+        pending.push(root);
+
+        while (!pending.isEmpty()) {
+            Puppet current = pending.pop();
+            if (current == null || current.getPuppetId() == null || current.getPuppetId().isBlank()) {
+                continue;
+            }
+            String puppetId = current.getPuppetId().trim();
+            if (nodes.putIfAbsent(puppetId, current) != null) {
+                continue;
+            }
+            List<Puppet> children = puppetMapper.findPuppetByParentPuppetId(puppetId);
+            if (children == null) continue;
+            for (Puppet child : children) {
+                if (child != null) pending.push(child);
+            }
+        }
+        return new ArrayList<>(nodes.values());
+    }
+
+    private void scheduleResourceCleanup(List<Puppet> deletedPuppets) {
+        List<Puppet> snapshot = List.copyOf(deletedPuppets);
+        Runnable cleanup = () -> cleanupDeletedPuppetResources(snapshot);
+        if (TransactionSynchronizationManager.isSynchronizationActive()
+                && TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cleanup.run();
+                }
+            });
+            return;
+        }
+        cleanup.run();
+    }
+
+    private void cleanupDeletedPuppetResources(List<Puppet> deletedPuppets) {
+        Set<String> deletedIds = deletedPuppets.stream()
+                .map(Puppet::getPuppetId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+
+        for (Map.Entry<String, PuppetNodeSession> entry
+                : PuppetNodeSessionContainer.getAllSession().entrySet()) {
+            PuppetNodeSession session = entry.getValue();
+            if (session != null && deletedIds.contains(session.resolvePuppetId())) {
+                PuppetNodeSessionContainer.removeSession(entry.getKey());
+            }
+        }
+
+        for (Puppet puppet : deletedPuppets) {
+            try {
+                if (!PuppetNodeSessionWorkDirUtil.deletePuppetWorkDir(
+                        puppet.getCreateByUserId(), puppet.getPuppetId())) {
+                    log.warn("清理 Puppet 工作目录失败, puppetId={}", puppet.getPuppetId());
+                }
+            } catch (Exception e) {
+                log.warn("清理 Puppet 工作目录异常, puppetId={}", puppet.getPuppetId(), e);
+            }
+        }
+    }
+
+    private void validateRequestPolicy(Puppet puppet) {
+        Puppet.requireValidMaxRequestCount(puppet.getMaxReqCount());
     }
 }

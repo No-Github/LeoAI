@@ -167,7 +167,14 @@ function phpcore_run($request) {
     if (isset($request['action'])) $params['action'] = $request['action'];
     if (($operation === 'COMPONENT_LOAD' || $operation === 'COMPONENT_INVOKE')
         && isset($params['hostId']) && $params['hostId'] !== ''
-        && $params['hostId'] !== phpcore_id()) $result = ['code' => 403];
+        && $params['hostId'] !== phpcore_id()) {
+        $result = [
+            'code' => 409,
+            'errorCode' => 'HOST_ID_MISMATCH',
+            'hostId' => phpcore_id(),
+            'msg' => 'HostId does not match the current runtime instance'
+        ];
+    }
     elseif ($operation === 'PING') $result = phpcore_test();
     elseif ($operation === 'RELAY') $result = phpcore_forward($params);
     elseif ($operation === 'COMPONENT_LOAD') $result = phpcore_load($params);

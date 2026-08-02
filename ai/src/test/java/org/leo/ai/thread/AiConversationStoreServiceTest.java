@@ -10,6 +10,7 @@ import org.leo.core.entity.AiOrphanedRunRecord;
 import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -229,7 +230,7 @@ class AiConversationStoreServiceTest {
 
         ArgumentCaptor<AiRunRecord> runCaptor = ArgumentCaptor.forClass(AiRunRecord.class);
         verify(mapper).finishRun(runCaptor.capture());
-        assertEquals(AiThread.STATUS_COMPLETED, runCaptor.getValue().getStatus());
+        assertEquals(AiRunStatus.COMPLETED, runCaptor.getValue().getStatus());
         assertEquals("answer", runCaptor.getValue().getOutput());
         assertNull(runCaptor.getValue().getErrorMessage());
     }
@@ -251,7 +252,7 @@ class AiConversationStoreServiceTest {
                 "turn-1", "run-1", "thread-1", "message-1",
                 "assistant-1", 100L, "lease-1");
 
-        service.discardTurn(turn, AiThread.STATUS_CANCELLED, "cancelled",
+        service.discardTurn(turn, AiRunStatus.CANCELLED, "cancelled",
                 "用户取消", "用户取消", 0);
 
         verify(mapper).updateTurnMessageStatusFenced(
@@ -264,7 +265,7 @@ class AiConversationStoreServiceTest {
                 anyLong(), eq("lease-1"));
         ArgumentCaptor<AiRunRecord> runCaptor = ArgumentCaptor.forClass(AiRunRecord.class);
         verify(mapper).finishRun(runCaptor.capture());
-        assertEquals(AiThread.STATUS_CANCELLED, runCaptor.getValue().getStatus());
+        assertEquals(AiRunStatus.CANCELLED, runCaptor.getValue().getStatus());
         assertEquals("cancelled", runCaptor.getValue().getErrorCategory());
         assertEquals("用户取消", runCaptor.getValue().getErrorMessage());
         assertEquals("用户取消", runCaptor.getValue().getRawErrorMessage());

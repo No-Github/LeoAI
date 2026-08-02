@@ -8,10 +8,13 @@ import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 
 /** 按 Puppet Session/Thread 和模型运行时缓存节点 Agent。 */
 @Component
@@ -22,6 +25,7 @@ public class PuppetNodeAiAgentRegistry {
     private final DynamicModelProvider modelProvider;
     private final AiModelFailoverService failoverService;
     private final ConcurrentMap<String, Runtime> agents = new ConcurrentHashMap<>();
+    private final Consumer<String> sessionDestroyListener = this::evictSession;
 
     public PuppetNodeAiAgentRegistry(AiAgentFactory agentFactory,
                                      AiModelConfigService modelConfigService,
@@ -31,6 +35,19 @@ public class PuppetNodeAiAgentRegistry {
         this.modelConfigService = modelConfigService;
         this.modelProvider = modelProvider;
         this.failoverService = failoverService;
+    }
+
+    @PostConstruct
+    void registerSessionCleanup() {
+        org.leo.core.session.PuppetNodeSessionContainer.registerDestroyListener(
+                sessionDestroyListener);
+    }
+
+    @PreDestroy
+    void unregisterSessionCleanup() {
+        org.leo.core.session.PuppetNodeSessionContainer.unregisterDestroyListener(
+                sessionDestroyListener);
+        agents.clear();
     }
 
     public Runtime resolve(PuppetNodeSession session,
@@ -69,6 +86,12 @@ public class PuppetNodeAiAgentRegistry {
 
     public void evict(PuppetNodeSession session, String threadId) {
         agents.remove(cacheKey(session, threadId));
+    }
+
+    public void evictSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        String prefix = sessionId + ":";
+        agents.keySet().removeIf(key -> key.startsWith(prefix));
     }
 
     static String cacheKey(PuppetNodeSession session, String threadId) {

@@ -31,6 +31,9 @@ import java.util.UUID;
 
 /** 平台 AI 到 Puppet AI 的受控委派桥。 */
 @Component
+@org.leo.ai.agent.AiToolPolicy(
+        kind = org.leo.ai.agent.AiToolKind.DELEGATION,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class PlatformPuppetAiBridgeTools {
 
     private static final int MAX_SUMMARY_CHARS = 12_000;

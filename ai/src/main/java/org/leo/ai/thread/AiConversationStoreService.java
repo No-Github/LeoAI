@@ -9,6 +9,7 @@ import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.entity.AiTurnRecord;
+import org.leo.core.ai.AiRunStatus;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiEventStreamRuntime;
@@ -78,7 +79,7 @@ public class AiConversationStoreService {
         row.setCreatedAt(thread.getCreatedAt());
         row.setLastActiveAt(thread.getLastActiveAt());
         row.setMessageCount(0);
-        row.setRunStatus(AiThread.STATUS_IDLE);
+        row.setRunStatus(AiRunStatus.IDLE);
         row.setParentThreadId(thread.getParentThreadId());
         mapper.insertThread(row);
     }
@@ -95,7 +96,7 @@ public class AiConversationStoreService {
         row.setCreatedAt(createdAt > 0 ? createdAt : System.currentTimeMillis());
         row.setLastActiveAt(row.getCreatedAt());
         row.setMessageCount(0);
-        row.setRunStatus(AiThread.STATUS_IDLE);
+        row.setRunStatus(AiRunStatus.IDLE);
         mapper.insertThread(row);
     }
 
@@ -692,7 +693,7 @@ public class AiConversationStoreService {
         run.setRunId(runId);
         run.setThreadId(threadId);
         run.setTurnId(turnId);
-        run.setStatus(AiThread.STATUS_RUNNING);
+        run.setStatus(AiRunStatus.RUNNING);
         run.setStartedAt(startedAt);
         run.setConfigId(configId);
         run.setInput(input);
@@ -766,7 +767,7 @@ public class AiConversationStoreService {
                 turn, MESSAGE_COMMITTED, output, nodes, review, planSnapshot);
         updateTurnMessageStatus(turn, MESSAGE_COMMITTED);
         finishTurn(turn, MESSAGE_COMMITTED);
-        finishRun(turn.runId(), AiThread.STATUS_COMPLETED, turn.startedAt(),
+        finishRun(turn.runId(), AiRunStatus.COMPLETED, turn.startedAt(),
                 output, null, null, null, toolCallCount, turn.leaseToken());
     }
 

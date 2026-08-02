@@ -191,6 +191,8 @@ class AiAgentToolBoundaryBehaviorTest {
         String chat(@MemoryId String memoryId, @UserMessage String message);
     }
 
+    @AiToolPolicy(kind = AiToolKind.COMMAND,
+            operation = AiToolOperation.WRITE)
     private static final class BoundaryTools {
         private final AtomicInteger writeCalls = new AtomicInteger();
 
@@ -200,6 +202,9 @@ class AiAgentToolBoundaryBehaviorTest {
         }
 
         @Tool
+        @AiToolPolicy(kind = AiToolKind.QUERY,
+                operation = AiToolOperation.READ_ONLY,
+                parallelizable = true)
         public String getBoundarySlow() {
             try {
                 Thread.sleep(1_000);
@@ -211,6 +216,9 @@ class AiAgentToolBoundaryBehaviorTest {
         }
 
         @Tool
+        @AiToolPolicy(kind = AiToolKind.QUERY,
+                operation = AiToolOperation.READ_ONLY,
+                parallelizable = true)
         public String getBoundaryLarge() {
             return "x".repeat(5_000);
         }

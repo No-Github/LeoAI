@@ -65,6 +65,11 @@ public class AiTurnArtifacts {
     }
 
     public List<Object> assistantNodes(List<AiSseEvent> eventLog) {
+        return assistantNodes(eventLog, true);
+    }
+
+    public List<Object> assistantNodes(List<AiSseEvent> eventLog,
+                                       boolean includeTextNodes) {
         if (eventLog == null || eventLog.isEmpty()) return List.of();
         List<Object> nodes = new ArrayList<>();
         for (int index = 0; index < eventLog.size(); index++) {
@@ -73,7 +78,7 @@ public class AiTurnArtifacts {
             String kind = kindOf(event.data());
             if ("thinking".equals(name)
                     || ("node".equals(name) && ("thinking".equals(kind)
-                            || "text".equals(kind)
+                            || (includeTextNodes && "text".equals(kind))
                             || "plan".equals(kind)
                             || "subtask".equals(kind)
                             || "user_input".equals(kind)))
@@ -115,14 +120,22 @@ public class AiTurnArtifacts {
                                       long durationMs) {
         LinkedHashMap<String, Object> review = new LinkedHashMap<>();
         int toolCount = 0;
+        int controlCount = 0;
+        int contextCount = 0;
         int successCount = 0;
         int failureCount = 0;
         List<String> tools = new ArrayList<>();
         if (eventLog != null) {
             for (AiSseEvent event : eventLog) {
                 if (!isCompletedTool(event)) continue;
-                toolCount++;
                 if (event.data() instanceof Map<?, ?> map) {
+                    Object rawKind = map.get("toolKind");
+                    String toolKind = rawKind != null ? String.valueOf(rawKind) : "COMMAND";
+                    boolean business = !Boolean.FALSE.equals(map.get("businessTool"));
+                    if (business) toolCount++;
+                    else if ("CONTROL".equals(toolKind)) controlCount++;
+                    else contextCount++;
+                    if (!business) continue;
                     if (Boolean.FALSE.equals(map.get("success"))) {
                         failureCount++;
                     } else {
@@ -134,12 +147,15 @@ public class AiTurnArtifacts {
                         tools.add(name);
                     }
                 } else {
+                    toolCount++;
                     successCount++;
                 }
             }
         }
         review.put("durationMs", Math.max(0L, durationMs));
         review.put("toolCount", toolCount);
+        review.put("controlCount", controlCount);
+        review.put("contextCount", contextCount);
         review.put("successCount", successCount);
         review.put("failureCount", failureCount);
         review.put("tools", tools);
@@ -152,7 +168,7 @@ public class AiTurnArtifacts {
         if (eventLog == null) return 0;
         int count = 0;
         for (AiSseEvent event : eventLog) {
-            if (isCompletedTool(event)) count++;
+            if (isCompletedBusinessTool(event)) count++;
         }
         return count;
     }
@@ -161,6 +177,12 @@ public class AiTurnArtifacts {
         return event != null
                 && "patch".equals(event.name())
                 && "tool".equals(kindOf(event.data()));
+    }
+
+    private boolean isCompletedBusinessTool(AiSseEvent event) {
+        if (!isCompletedTool(event)) return false;
+        return !(event.data() instanceof Map<?, ?> map)
+                || !Boolean.FALSE.equals(map.get("businessTool"));
     }
 
     private Object withSequence(AiSseEvent event, long sequence) {

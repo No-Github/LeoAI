@@ -32,6 +32,7 @@ public class DefineClassJspPacker implements Packer {
             String tpl;
             if (config.getCustomTemplate() != null && !config.getCustomTemplate().trim().isEmpty()) {
                 tpl = config.getCustomTemplate();
+                JspLoaderTemplateValidator.validate(tpl);
             } else {
                 tpl = config.isByPassJavaModule() ? bypassTemplate : template;
             }

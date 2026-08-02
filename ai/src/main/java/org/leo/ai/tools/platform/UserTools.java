@@ -23,6 +23,8 @@ import java.util.UUID;
  */
 @Component("platformUserTools")
 @AiToolAccess(AiToolAccess.Level.ADMIN)
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class UserTools {
 
     private static final String USERNAME_ADMIN = "admin";
@@ -34,11 +36,15 @@ public class UserTools {
     }
 
     @Tool("获取当前平台所有用户。返回结果会清空 password 字段，避免泄露敏感信息。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<User> getAllUser() {
         return sanitize(userService.getAllUser());
     }
 
     @Tool("获取当前平台所有未加入团队的用户。适用于创建团队前挑选 leader。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<User> getAllNoTeamUser() {
         List<User> filtered = new ArrayList<>();
         for (User u : userService.getAllUser()) {
@@ -50,6 +56,8 @@ public class UserTools {
     }
 
     @Tool("根据 userId 获取用户详情。返回结果会清空 password 字段。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public User getUserById(String userId) {
         User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (user == null) throw new IllegalArgumentException("用户不存在");
@@ -58,6 +66,8 @@ public class UserTools {
     }
 
     @Tool("根据用户名获取用户详情。返回结果会清空 password 字段。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public User getUserByName(String userName) {
         User user = userService.getUserByName(requireNonBlank(userName, "userName不能为空"));
         if (user == null) throw new IllegalArgumentException("用户不存在");
@@ -66,6 +76,8 @@ public class UserTools {
     }
 
     @Tool("获取当前平台所有用户名。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<String> getAllUserName() {
         List<String> names = new ArrayList<>();
         for (User u : userService.getAllUser()) {
@@ -153,6 +165,8 @@ public class UserTools {
         return buildResult("updated", updated, existing.getUserId(), existing.getUserName());
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定平台用户。禁止删除 admin 用户。")
     public Map<String, Object> deleteUser(String userId) {
         User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
@@ -163,6 +177,8 @@ public class UserTools {
     }
 
     @Tool("获取平台可用角色列表：admin、leader、normal。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<String> getPrivileges() {
         return Arrays.asList(
                 UserService.PRIVILEGE_ADMIN,

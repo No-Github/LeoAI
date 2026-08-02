@@ -46,7 +46,7 @@ public class PlatformAiThreadService {
     public void createAgent(HttpSession httpSession, User user,
                             Integer configId) {
         PlatformAiState state = recreateState(httpSession);
-        state.resetTurnCount();
+        state.resetRuntimeState();
         AiModelConfig config = resolveOptionalChannel(configId);
         if (config != null) state.setAiConfigId(config.getId());
 

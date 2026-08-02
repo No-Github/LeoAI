@@ -11,7 +11,6 @@ import org.leo.jmg.mem.packer.jsp.JspObfuscationPipeline;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPlanContext;
 import org.leo.jmg.mem.packer.jsp.JspObfuscationPlanner;
 
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -62,9 +61,12 @@ public final class WebShellGenerationPipeline {
 
     private JspObfuscationPipeline buildObfuscationPipeline(boolean jsp) {
         List<String> steps = request.getJspObfuscationSteps();
-        List<String> effectiveSteps = steps == null
-                ? Collections.<String>emptyList()
-                : steps;
+        if (steps == null) {
+            return jsp
+                    ? JspObfuscationPipeline.jspDefault(request.getObfuscationSeed())
+                    : JspObfuscationPipeline.jspxDefault(request.getObfuscationSeed());
+        }
+        List<String> effectiveSteps = steps;
         JspObfuscationPlanContext.Format format = jsp
                 ? JspObfuscationPlanContext.Format.JSP
                 : JspObfuscationPlanContext.Format.JSPX;

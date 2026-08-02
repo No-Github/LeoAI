@@ -11,6 +11,8 @@ import java.util.Map;
 
 @Component
 @AiToolAccess(AiToolAccess.Level.ADMIN)
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class FingerprintTools {
 
     private final FingerprintManageService fingerprintManageService;
@@ -20,16 +22,22 @@ public class FingerprintTools {
     }
 
     @Tool("获取当前平台所有指纹摘要。每项返回 fingerprintId、protocol、name、tags、info。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Map<String, Object>> getFingerprints() {
         return fingerprintManageService.listFingerprints();
     }
 
     @Tool("根据协议类型获取指纹摘要列表。支持如 http、tcp 等协议。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public List<Map<String, Object>> getFingerprintsByProtocol(String protocol) {
         return fingerprintManageService.getFingerprintsByProtocol(protocol);
     }
 
     @Tool("根据 fingerprintId 获取指纹完整配置，返回完整对象，包括 rule。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> getFingerprintById(String fingerprintId) throws Exception {
         return fingerprintManageService.getFingerprintById(fingerprintId);
     }
@@ -41,6 +49,8 @@ public class FingerprintTools {
         return fingerprintManageService.saveFingerprint(userId, name, ruleJson, infoJson, protocol, tagsJson, version);
     }
 
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定 fingerprintId 对应的指纹文件。")
     public Map<String, Object> deleteFingerprint(String userId, String fingerprintId) {
         fingerprintManageService.deleteFingerprint(userId, fingerprintId);

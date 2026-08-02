@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Map;
 
 @Component
+@org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
+        operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class JavaPluginTools {
 
     private final PluginExecutionService pluginExecutionService;
@@ -21,16 +23,22 @@ public class JavaPluginTools {
     }
 
     @Tool("获取当前平台侧已加载的插件列表。适用于先查看可调用插件、pluginId、runtime、插件类型、参数示例和备注，再决定是否调用插件。这里查看的是平台侧插件元数据。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public ArrayList<Plugin> getJavaPlugins() {
         return pluginExecutionService.getAllPlugins();
     }
 
     @Tool("根据 pluginId 获取平台侧指定插件详情。适用于在调用前确认插件名称、runtime、插件类型、paramsDemo、版本和备注。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Plugin getJavaPlugin(String pluginId) {
         return pluginExecutionService.getRequiredPlugin(pluginId);
     }
 
     @Tool("按 pluginType 获取平台侧插件列表。适用于插件较多时按类型筛选候选插件。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public ArrayList<Plugin> getJavaPluginsByType(String pluginType) {
         return pluginExecutionService.getPluginsByType(pluginType);
     }

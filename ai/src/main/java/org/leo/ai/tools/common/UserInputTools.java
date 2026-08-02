@@ -2,15 +2,22 @@ package org.leo.ai.tools.common;
 
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.leo.ai.agent.AiToolKind;
+import org.leo.ai.agent.AiToolOperation;
+import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.service.AiUserInputService;
-import org.springframework.stereotype.Component;
 import org.leo.core.entity.AiUserInputOption;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
 
 /** Platform 与 Puppet Agent 共用的结构化提问工具。 */
 @Component
+@AiToolPolicy(
+        kind = AiToolKind.CONTROL,
+        operation = AiToolOperation.WRITE,
+        terminal = true, exclusive = true, business = false)
 public class UserInputTools {
 
     private final AiUserInputService service;
@@ -22,6 +29,8 @@ public class UserInputTools {
     @Tool(name = "request_user_input", value = """
             当缺少会显著改变结果的用户意图，或执行高风险动作前需要明确确认时，
             创建结构化问题并暂停原任务。调用后不得继续调用其他工具，本轮应立即结束。
+            问题卡片会由系统自动展示；调用成功后不要复述问题、选项、问题 ID、有效期，
+            不要再输出“已发送卡片”“等待回答”等自然语言。
             能通过只读工具查明的信息、低风险且可逆的常规选择不要询问。
             CONFIRMATION 必须传入准确的 toolName 和完整 argumentsJson，参数改变后重新确认。
             """)

