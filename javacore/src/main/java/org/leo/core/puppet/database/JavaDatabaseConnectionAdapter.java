@@ -58,12 +58,14 @@ public final class JavaDatabaseConnectionAdapter {
         return result;
     }
 
-    private String defaultDriver(String type) {
+    public String defaultDriver(String type) {
         return switch (type) {
             case "mysql" -> "com.mysql.cj.jdbc.Driver";
             case "postgresql" -> "org.postgresql.Driver";
             case "sqlserver" -> "com.microsoft.sqlserver.jdbc.SQLServerDriver";
             case "oracle" -> "oracle.jdbc.driver.OracleDriver";
+            case "dm" -> "dm.jdbc.driver.DmDriver";
+            case "kingbasees" -> "com.kingbase8.Driver";
             case "sqlite" -> "org.sqlite.JDBC";
             default -> throw new IllegalArgumentException("Java 不支持数据库类型: " + type);
         };
@@ -83,6 +85,9 @@ public final class JavaDatabaseConnectionAdapter {
             case "sqlserver" -> "jdbc:sqlserver://" + host + ":" + port
                     + value(connection.getDatabase(), ";databaseName=") + sqlServerOptions(connection.getOptions());
             case "oracle" -> oracleUrl(connection, host, port) + suffix(options, "?");
+            case "dm" -> "jdbc:dm://" + host + ":" + port + suffix(options, "?");
+            case "kingbasees" -> "jdbc:kingbase8://" + host + ":" + port + "/"
+                    + path(required(connection.getDatabase(), "connection.database")) + suffix(options, "?");
             default -> throw new IllegalArgumentException("Java 不支持数据库类型: " + type);
         };
     }
@@ -101,6 +106,8 @@ public final class JavaDatabaseConnectionAdapter {
             case "postgresql" -> 5432;
             case "sqlserver" -> 1433;
             case "oracle" -> 1521;
+            case "dm" -> 5236;
+            case "kingbasees" -> 54321;
             default -> throw new IllegalArgumentException("数据库端口不能为空: " + type);
         };
     }

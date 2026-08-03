@@ -109,12 +109,6 @@ public class PuppetNodeSQLController {
         return ApiResponse.success("ok", puppetNodeSqlService.getDialects());
     }
 
-    @GetMapping("/dialects/{type}/data-types")
-    public Map<String, Object> getDataTypes(@PathVariable("type") String type) {
-        return sqlCall("获取数据类型失败",
-                () -> ApiResponse.success("ok", puppetNodeSqlService.getDataTypes(type)));
-    }
-
     @PostMapping("/metadata/databases")
     public Map<String, Object> getDatabases(@RequestBody MetadataRequest request) {
         return sqlCall("获取数据库列表失败", () -> ApiResponse.success(

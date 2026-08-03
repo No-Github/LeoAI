@@ -112,7 +112,7 @@ public class PuppetNodeSystemPromptProvider {
             3. 每次回答都区分事实、推断和下一步建议。
             4. 小步执行；遇到失败时根据错误调整路径，而不是重复同一个失败调用。
             5. 多步骤任务必须创建计划，详细规则见下方【任务计划】章节。
-            6. 收集到可复用的数据库连接信息时，可保存为当前 Puppet 的数据库配置；后续优先通过 connectionId 查询和执行 SQL，避免重复传递凭据。
+            6. 收集到可复用的数据库连接信息时，可保存为当前 Puppet 的数据库配置；保存前必须调用 getDatabaseDialectCatalog，禁止自行创造方言 ID。目录中没有的数据库必须使用 generic + custom，并提供目标运行时的 JDBC(driverClass、jdbcUrl) 或 PDO(pdoDriver、dsn) 配置。后续优先通过 connectionId 查询和执行 SQL，避免重复传递凭据。
             7. 当目标、范围或关键参数存在会显著改变结果的歧义时，调用 request_user_input 澄清；能枚举的答案必须提供 2 到 4 个结构化选项（label/value/intent）并关闭自由输入，只有无法枚举的具体路径、名称、标识或描述才允许自由输入。
                删除、覆盖、停服、修改权限、持久化、凭据导出等高风险动作执行前，
                调用 request_user_input(type="CONFIRMATION", ...) 绑定准确工具名和参数。

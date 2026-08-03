@@ -22,6 +22,7 @@ public class OracleDialect extends AbstractSqlDialect {
                 dataType("TIMESTAMP", null, null, null), dataType("CLOB", null, null, null), dataType("BLOB", null, null, null)
         );
     }
+    public SqlDialectCapabilities getCapabilities() { return SqlDialectCapabilities.managed(false); }
     public String buildTestSql() { return "SELECT banner AS version FROM v$version WHERE ROWNUM = 1"; }
     public String buildDatabasesSql() { return "SELECT username AS name FROM all_users ORDER BY username"; }
     public String buildCreateDatabaseSql(String database) {

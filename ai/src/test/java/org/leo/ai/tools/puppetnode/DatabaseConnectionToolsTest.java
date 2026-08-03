@@ -10,8 +10,12 @@ import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.audit.PuppetAuditService;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,7 +39,8 @@ class DatabaseConnectionToolsTest {
         DatabaseConnectionProfileService profile =
                 mock(DatabaseConnectionProfileService.class);
         PuppetAuditService audit = mock(PuppetAuditService.class);
-        DatabaseConnectionTools tools = new DatabaseConnectionTools(profile, audit);
+        DatabaseConnectionTools tools = new DatabaseConnectionTools(
+                profile, audit, new SqlDialectRegistry());
         registerSession();
         AiToolContext.setFromMemoryId(SESSION_ID + ":thread-1");
         Map<String, Object> config = Map.of(
@@ -61,7 +66,7 @@ class DatabaseConnectionToolsTest {
         DatabaseConnectionProfileService profile =
                 mock(DatabaseConnectionProfileService.class);
         DatabaseConnectionTools tools = new DatabaseConnectionTools(
-                profile, mock(PuppetAuditService.class));
+                profile, mock(PuppetAuditService.class), new SqlDialectRegistry());
         registerSession();
         AiToolContext.setFromMemoryId(SESSION_ID);
 
@@ -69,6 +74,28 @@ class DatabaseConnectionToolsTest {
 
         assertEquals(true, result.get("deleted"));
         verify(profile).delete("user-1", "puppet-1", "connection-1");
+    }
+
+    @Test
+    void exposesTheRegisteredDialectCatalogToTheModel() {
+        DatabaseConnectionTools tools = new DatabaseConnectionTools(
+                mock(DatabaseConnectionProfileService.class),
+                mock(PuppetAuditService.class),
+                new SqlDialectRegistry());
+
+        List<Map<String, Object>> catalog = tools.getDatabaseDialectCatalog();
+        Set<String> dialects = catalog.stream()
+                .map(item -> String.valueOf(item.get("type")))
+                .collect(Collectors.toSet());
+
+        assertEquals(Set.of(
+                "mysql", "postgresql", "sqlserver", "oracle", "dm", "kingbasees", "sqlite", "generic"),
+                dialects);
+        Map<String, Object> dm = catalog.stream()
+                .filter(item -> "dm".equals(item.get("type")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(Map.of("java", true, "php", false), dm.get("runtimeSupport"));
     }
 
     private void registerSession() {

@@ -2,6 +2,7 @@ package org.leo.service;
 
 import org.leo.core.entity.PuppetDatabaseConnection;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -24,9 +25,12 @@ import static org.leo.service.DatabaseConnectionProfileException.Kind.VALIDATION
 public final class DatabaseConnectionProfileService {
 
     private final PuppetDatabaseConnectionService connectionService;
+    private final SqlDialectRegistry sqlDialectRegistry;
 
-    public DatabaseConnectionProfileService(PuppetDatabaseConnectionService connectionService) {
+    public DatabaseConnectionProfileService(PuppetDatabaseConnectionService connectionService,
+                                            SqlDialectRegistry sqlDialectRegistry) {
         this.connectionService = connectionService;
+        this.sqlDialectRegistry = sqlDialectRegistry;
     }
 
     public Map<String, Object> create(String userId,
@@ -111,6 +115,7 @@ public final class DatabaseConnectionProfileService {
         PuppetDatabaseConnection connection = existing == null
                 ? newConnection(userId, puppetId) : existing;
         DatabaseConnectionSpec spec = connectionSpec(params, existing);
+        validateDialect(spec);
         connectionService.applyConnectionSpec(connection, spec);
         applyMetadata(connection, params, spec);
 
@@ -149,10 +154,25 @@ public final class DatabaseConnectionProfileService {
             values = mergeMaps(current, supplied);
         }
         try {
+            String dialect = text(values.get("dialect"));
+            if (dialect != null && sqlDialectRegistry.supports(dialect)) {
+                values.put("dialect", sqlDialectRegistry.canonicalType(dialect));
+            }
             return DatabaseConnectionSpec.fromMap(values);
         } catch (IllegalArgumentException error) {
             throw failure(VALIDATION, error.getMessage());
         }
+    }
+
+    private void validateDialect(DatabaseConnectionSpec spec) {
+        if (sqlDialectRegistry.supports(spec.getDialect())) {
+            return;
+        }
+        throw failure(VALIDATION, "不支持的数据库方言: " + spec.getDialect()
+                + "。支持的方言: " + String.join(", ", sqlDialectRegistry.getSupportedTypes())
+                + "。未内置的数据库请使用 dialect=generic、connectionMode=custom，"
+                + "并配置 runtimeOptions.java(driverClass、jdbcUrl) 或 "
+                + "runtimeOptions.php(pdoDriver、dsn)");
     }
 
     private void applyMetadata(PuppetDatabaseConnection connection,

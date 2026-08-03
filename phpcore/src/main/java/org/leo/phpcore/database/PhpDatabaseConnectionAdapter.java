@@ -31,7 +31,7 @@ public final class PhpDatabaseConnectionAdapter {
         return result;
     }
 
-    private String defaultDriver(String type) {
+    public String defaultDriver(String type) {
         return switch (type) {
             case "mysql" -> "mysql";
             case "postgresql" -> "pgsql";
@@ -43,13 +43,14 @@ public final class PhpDatabaseConnectionAdapter {
     }
 
     private String buildDsn(DatabaseConnectionSpec connection, String pdoDriver) {
-        if ("sqlite".equals(connection.getDialect())) {
+        String dialect = connection.getDialect();
+        if ("sqlite".equals(dialect)) {
             return "sqlite:" + required(connection.getFile(), "connection.file");
         }
         String host = clean(required(connection.getHost(), "connection.host"));
-        int port = connection.getPort() == null ? defaultPort(connection.getDialect()) : connection.getPort();
+        int port = connection.getPort() == null ? defaultPort(dialect) : connection.getPort();
         String database = clean(connection.getDatabase());
-        return switch (connection.getDialect()) {
+        return switch (dialect) {
             case "mysql" -> "mysql:host=" + host + ";port=" + port
                     + optional(";dbname=", database) + ";charset=" + mysqlCharset(connection.getOptions());
             case "postgresql" -> "pgsql:host=" + host + ";port=" + port

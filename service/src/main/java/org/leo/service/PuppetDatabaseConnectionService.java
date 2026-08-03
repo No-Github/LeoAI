@@ -40,8 +40,11 @@ public class PuppetDatabaseConnectionService {
     }
 
     public boolean saveOrUpdate(PuppetDatabaseConnection connection) {
-        String plaintextPassword = connection.getPassword();
-        connection.setPassword(credentialCrypto.encrypt(plaintextPassword));
+        String callerPassword = connection.getPassword();
+        String persistedPassword = credentialCrypto.isEncrypted(callerPassword)
+                ? callerPassword
+                : credentialCrypto.encrypt(callerPassword);
+        connection.setPassword(persistedPassword);
         try {
             if (connection.getConnectionId() == null || connection.getConnectionId().isBlank()) {
                 connection.setConnectionId(UUID.randomUUID().toString());
@@ -53,7 +56,7 @@ public class PuppetDatabaseConnectionService {
             connection.setUpdateTime(new Date());
             return mapper.update(connection) > 0;
         } finally {
-            connection.setPassword(plaintextPassword);
+            connection.setPassword(callerPassword);
         }
     }
 

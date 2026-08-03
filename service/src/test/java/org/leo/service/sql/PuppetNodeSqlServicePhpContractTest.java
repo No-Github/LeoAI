@@ -8,7 +8,7 @@ import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.core.util.json.PortableJsonCodec;
 import org.leo.phpcore.database.PhpDatabaseConnectionAdapter;
-import org.leo.service.sql.dialect.SqlDialectFactory;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 
 import java.io.IOException;
 import java.net.URL;
@@ -52,7 +52,7 @@ class PuppetNodeSqlServicePhpContractTest {
             component = Paths.get(resource.toURI());
         }
         database = Files.createTempFile("leo-php-sql-service-", ".sqlite");
-        service = new PuppetNodeSqlService(new SqlDialectFactory());
+        service = new PuppetNodeSqlService(new SqlDialectRegistry());
         connection = new LinkedHashMap<>();
         connection.put("dialect", "sqlite");
         connection.put("connectionMode", "standard");

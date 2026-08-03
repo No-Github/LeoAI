@@ -22,6 +22,14 @@ public abstract class AbstractSqlDialect {
 
     public abstract String buildTableColumnsSql(String database, String table);
 
+    public SqlDialectCapabilities getCapabilities() {
+        return SqlDialectCapabilities.managed(true);
+    }
+
+    public Map<String, Boolean> getRuntimeSupport() {
+        return Map.of("java", true, "php", true);
+    }
+
     protected abstract String buildQualifiedTable(String database, String table);
 
     protected abstract String buildPaginationSql(String baseSql, int offset, int pageSize);
@@ -139,8 +147,11 @@ public abstract class AbstractSqlDialect {
         item.put("type", getType());
         item.put("name", getName());
         item.put("defaultPort", getDefaultPort());
-        item.put("variants", getVariants());
-        item.put("runtimeSupport", Map.of("java", true, "php", true));
+        item.put("variants", immutableMetadataList(getVariants()));
+        item.put("dataTypes", immutableMetadataList(getDataTypes()));
+        item.put("runtimeSupport", Collections.unmodifiableMap(
+                new LinkedHashMap<String, Boolean>(getRuntimeSupport())));
+        item.put("capabilities", getCapabilities().toMap());
         return item;
     }
 
@@ -301,6 +312,20 @@ public abstract class AbstractSqlDialect {
         }
         String text = String.valueOf(value);
         return "'" + text.replace("'", "''") + "'";
+    }
+
+    private List<Map<String, Object>> immutableMetadataList(List<Map<String, Object>> source) {
+        if (source == null || source.isEmpty()) return List.of();
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>(source.size());
+        for (Map<String, Object> item : source) {
+            Map<String, Object> copy = new LinkedHashMap<String, Object>(item);
+            Object fields = copy.get("fields");
+            if (fields instanceof List<?>) {
+                copy.put("fields", List.copyOf((List<?>) fields));
+            }
+            result.add(Collections.unmodifiableMap(copy));
+        }
+        return List.copyOf(result);
     }
 
     protected Map<String, Object> variant(String key, String name, String... fields) {

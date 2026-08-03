@@ -29,6 +29,7 @@ public final class GenericSqlDialect extends AbstractSqlDialect {
                 dataType("BLOB", null, null, null)
         );
     }
+    public SqlDialectCapabilities getCapabilities() { return SqlDialectCapabilities.rawOnly(); }
     public String buildTestSql() { return "SELECT 1 AS version"; }
     public String buildDatabasesSql() { throw unsupported("获取数据库列表"); }
     public String buildTablesSql(String database) { throw unsupported("获取数据表列表"); }

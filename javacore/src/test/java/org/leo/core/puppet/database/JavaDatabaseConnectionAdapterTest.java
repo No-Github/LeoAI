@@ -40,6 +40,21 @@ class JavaDatabaseConnectionAdapterTest {
     }
 
     @Test
+    void createsOfficialDmAndKingbaseJdbcParameters() {
+        Map<String, Object> dm = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "dm", "connectionMode", "standard",
+                "host", "dm.internal", "database", "APP")));
+        assertEquals("dm.jdbc.driver.DmDriver", dm.get("driverClass"));
+        assertEquals("jdbc:dm://dm.internal:5236", dm.get("jdbcUrl"));
+
+        Map<String, Object> kingbase = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "kingbasees", "connectionMode", "standard",
+                "host", "kes.internal", "database", "inventory")));
+        assertEquals("com.kingbase8.Driver", kingbase.get("driverClass"));
+        assertEquals("jdbc:kingbase8://kes.internal:54321/inventory", kingbase.get("jdbcUrl"));
+    }
+
+    @Test
     void forwardsGenericJdbcPropertiesAndExecutionLimits() {
         Map<String, Object> result = adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
                 "dialect", "generic", "connectionMode", "custom",

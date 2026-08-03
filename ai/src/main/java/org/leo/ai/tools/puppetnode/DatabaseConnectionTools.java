@@ -8,6 +8,7 @@ import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.service.DatabaseConnectionProfileException;
 import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.audit.PuppetAuditService;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -25,11 +26,14 @@ public final class DatabaseConnectionTools {
 
     private final DatabaseConnectionProfileService profileService;
     private final PuppetAuditService auditService;
+    private final SqlDialectRegistry sqlDialectRegistry;
 
     public DatabaseConnectionTools(DatabaseConnectionProfileService profileService,
-                                   PuppetAuditService auditService) {
+                                   PuppetAuditService auditService,
+                                   SqlDialectRegistry sqlDialectRegistry) {
         this.profileService = profileService;
         this.auditService = auditService;
+        this.sqlDialectRegistry = sqlDialectRegistry;
     }
 
     @Tool("""
@@ -44,9 +48,26 @@ public final class DatabaseConnectionTools {
     }
 
     @Tool("""
+            获取当前系统支持的数据库方言目录，包括 dialect、名称、默认端口、连接变体和字段。
+            新增或修改数据库连接前先调用本工具。只能使用目录返回的 dialect；未列出的厂商必须使用 generic + custom，
+            通过 runtimeOptions.java(driverClass、jdbcUrl) 或 runtimeOptions.php(pdoDriver、dsn) 连接。
+            """)
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
+            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
+    public List<Map<String, Object>> getDatabaseDialectCatalog() {
+        return sqlDialectRegistry.getDialectInfos();
+    }
+
+    @Tool("""
             为当前 Puppet 新增数据库连接配置，用于保存刚收集到的连接信息。
-            config.connection 必填，标准连接至少包含 dialect、connectionMode="standard"、host、port、
-            database、username、password；SQLite 使用 file；Oracle 可使用 service 或 sid。
+            保存前先调用 getDatabaseDialectCatalog，严格使用目录返回的 dialect，禁止自行创造方言 ID。
+            当前目录是方言与 Runtime 支持的唯一事实来源；不得依赖静态方言列表。
+            标准连接使用 connectionMode="standard"；SQLite 使用 file；Oracle 使用 service 或 sid。
+            达梦 DM(dialect="dm") 和 KingbaseES(dialect="kingbasees") 已内置 Java Standard JDBC；其 PHP Standard 支持以目录 runtimeSupport 为准。
+            目录中没有的数据库必须使用 dialect="generic"、connectionMode="custom"，并至少完整提供：
+            Java: runtimeOptions.java={"driverClass":"厂商 JDBC Driver 类","jdbcUrl":"厂商 JDBC URL"}；或
+            PHP: runtimeOptions.php={"pdoDriver":"PDO Driver","dsn":"厂商 DSN"}。
+            generic 可配置 dialectOptions.testSql，仅支持连接测试和原始 querySql/execSql，不支持结构化库表管理。
             config 还可包含 connectionName、description、remark、status、maxConnections、timeoutSeconds。
             返回可供 querySql/execSql 使用的 connectionId，响应不会回显密码。
             """)
@@ -61,7 +82,8 @@ public final class DatabaseConnectionTools {
             编辑当前 Puppet 的数据库连接配置。connectionId 必填；patch 只传需要修改的字段，
             可修改 connectionName、description、remark、status、maxConnections、timeoutSeconds，
             以及 patch.connection 中的 host、port、database、username、password 等连接字段。
-            未传字段保持原值；返回内容不会回显密码。
+            修改 dialect、connectionMode、variant 或 runtimeOptions 前先调用 getDatabaseDialectCatalog；禁止使用目录之外的方言。
+            未传字段保持原值；不修改密码时不要传 password，返回内容不会回显密码。
             """)
     public Map<String, Object> updateDatabaseConnection(String connectionId,
                                                         Map<String, Object> patch) {

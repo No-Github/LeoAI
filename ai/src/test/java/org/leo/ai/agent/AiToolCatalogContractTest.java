@@ -77,7 +77,7 @@ class AiToolCatalogContractTest {
         List<Declaration> declarations = declarations();
         Set<String> names = new HashSet<>();
 
-        assertEquals(98, declarations.size(),
+        assertEquals(99, declarations.size(),
                 "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
         for (Declaration declaration : declarations) {
             assertTrue(names.add(declaration.name()),
@@ -93,6 +93,8 @@ class AiToolCatalogContractTest {
                         "破坏性工具必须独占执行: " + declaration.name());
             }
         }
+        assertTrue(names.contains("getDatabaseDialectCatalog"),
+                "数据库配置必须暴露权威方言目录，避免模型创造方言 ID");
         for (String removed : REMOVED_TOOL_NAMES) {
             assertFalse(names.contains(removed), "已清理工具被重新暴露: " + removed);
         }

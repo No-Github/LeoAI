@@ -8,6 +8,7 @@ import org.leo.dao.mapper.PuppetDatabaseConnectionMapper;
 import org.leo.service.DatabaseConnectionProfileService;
 import org.leo.service.PuppetDatabaseConnectionService;
 import org.leo.service.security.DatabaseCredentialCryptoService;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.leo.web.exception.ApiException;
 
 import java.util.LinkedHashMap;
@@ -147,6 +148,6 @@ class DatabaseConnectionManagementServiceTest {
     private DatabaseConnectionManagementService management(
             PuppetDatabaseConnectionService persistence) {
         return new DatabaseConnectionManagementService(
-                new DatabaseConnectionProfileService(persistence));
+                new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry()));
     }
 }

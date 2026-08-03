@@ -865,14 +865,11 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
             }
         }
         String dialect = String.valueOf(connection.getOrDefault("dialect", "")).trim().toLowerCase();
-        return switch (dialect) {
-            case "mysql" -> "mysql";
-            case "postgresql" -> "pgsql";
-            case "sqlserver" -> "sqlsrv";
-            case "oracle" -> "oci";
-            case "sqlite" -> "sqlite";
-            default -> "";
-        };
+        try {
+            return databaseConnectionAdapter.defaultDriver(dialect);
+        } catch (IllegalArgumentException ignored) {
+            return "";
+        }
     }
 
     @Override

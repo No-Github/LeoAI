@@ -5,12 +5,14 @@ import org.leo.core.entity.PuppetDatabaseConnection;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.dao.mapper.PuppetDatabaseConnectionMapper;
 import org.leo.service.security.DatabaseCredentialCryptoService;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -43,7 +45,11 @@ class DatabaseConnectionProfileServiceTest {
         Fixture fixture = fixture();
         PuppetDatabaseConnection existing = existing(fixture.persistence(), fixture.crypto());
         when(fixture.mapper().selectById("connection-1")).thenReturn(existing);
-        when(fixture.mapper().update(any(PuppetDatabaseConnection.class))).thenReturn(1);
+        doAnswer(invocation -> {
+            PuppetDatabaseConnection persisted = invocation.getArgument(0);
+            assertEquals("existing-secret", fixture.crypto().decrypt(persisted.getPassword()));
+            return 1;
+        }).when(fixture.mapper()).update(any(PuppetDatabaseConnection.class));
 
         fixture.profile().update("user-2", "puppet-1", "connection-1", Map.of(
                 "description", "collected from application.yml",
@@ -54,6 +60,56 @@ class DatabaseConnectionProfileServiceTest {
         assertEquals("inventory", restored.getDatabase());
         assertEquals("existing-secret", restored.getPassword());
         assertEquals("collected from application.yml", existing.getDescription());
+    }
+
+    @Test
+    void rejectsUnknownStandardDialectAndExplainsGenericCustomFallback() {
+        Fixture fixture = fixture();
+
+        DatabaseConnectionProfileException error = assertThrows(
+                DatabaseConnectionProfileException.class,
+                () -> fixture.profile().create("user-1", "puppet-1", Map.of(
+                        "connection", Map.of(
+                                "dialect", "inventeddb",
+                                "connectionMode", "standard",
+                                "host", "db.internal"))));
+
+        assertEquals(DatabaseConnectionProfileException.Kind.VALIDATION, error.getKind());
+        assertTrue(error.getMessage().contains("dialect=generic"));
+        assertTrue(error.getMessage().contains("driverClass"));
+        assertTrue(error.getMessage().contains("jdbcUrl"));
+    }
+
+    @Test
+    void acceptsDomesticStandardDialectAliasesAndPersistsCanonicalIds() {
+        Fixture fixture = fixture();
+        when(fixture.mapper().insert(any(PuppetDatabaseConnection.class))).thenReturn(1);
+
+        Map<String, Object> dm = fixture.profile().create(
+                "user-1", "puppet-1", Map.of(
+                        "connection", Map.of(
+                                "dialect", "dameng",
+                                "connectionMode", "standard",
+                                "host", "dm.internal")));
+
+        assertEquals("dm", ((Map<?, ?>) dm.get("connection")).get("dialect"));
+    }
+
+    @Test
+    void acceptsGenericCustomJdbcProfile() {
+        Fixture fixture = fixture();
+        when(fixture.mapper().insert(any(PuppetDatabaseConnection.class))).thenReturn(1);
+
+        Map<String, Object> result = fixture.profile().create(
+                "user-1", "puppet-1", Map.of(
+                        "connection", Map.of(
+                                "dialect", "generic",
+                                "connectionMode", "custom",
+                                "runtimeOptions", Map.of("java", Map.of(
+                                        "driverClass", "dm.jdbc.driver.DmDriver",
+                                        "jdbcUrl", "jdbc:dm://db.internal:5236/APP")))));
+
+        assertEquals("generic", ((Map<?, ?>) result.get("connection")).get("dialect"));
     }
 
     @Test
@@ -100,7 +156,7 @@ class DatabaseConnectionProfileServiceTest {
         PuppetDatabaseConnectionService persistence =
                 new PuppetDatabaseConnectionService(mapper, crypto);
         return new Fixture(mapper, crypto, persistence,
-                new DatabaseConnectionProfileService(persistence));
+                new DatabaseConnectionProfileService(persistence, new SqlDialectRegistry()));
     }
 
     private PuppetDatabaseConnection existing(PuppetDatabaseConnectionService persistence,

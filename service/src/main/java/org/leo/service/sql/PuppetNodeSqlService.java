@@ -3,7 +3,7 @@ package org.leo.service.sql;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.service.sql.dialect.AbstractSqlDialect;
-import org.leo.service.sql.dialect.SqlDialectFactory;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -12,11 +12,11 @@ import java.util.*;
 @Service
 public class PuppetNodeSqlService {
 
-    private final SqlDialectFactory sqlDialectFactory;
+    private final SqlDialectRegistry sqlDialectRegistry;
 
     @Autowired
-    public PuppetNodeSqlService(SqlDialectFactory sqlDialectFactory) {
-        this.sqlDialectFactory = sqlDialectFactory;
+    public PuppetNodeSqlService(SqlDialectRegistry sqlDialectRegistry) {
+        this.sqlDialectRegistry = sqlDialectRegistry;
     }
 
     public Map<String, Object> testConnection(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
@@ -42,7 +42,7 @@ public class PuppetNodeSqlService {
 
         try {
             AbstractSqlDialect dialect = dialect(connection);
-            DatabaseConnectionSpec connectionSpec = DatabaseConnectionSpec.fromMap(connection);
+            DatabaseConnectionSpec connectionSpec = connectionSpec(connection);
             String configuredTestSql = stringValue(connectionSpec.getDialectOptions().get("testSql"));
             String testSql = configuredTestSql == null || configuredTestSql.isBlank()
                     ? dialect.buildTestSql()
@@ -92,8 +92,7 @@ public class PuppetNodeSqlService {
     public Map<String, Object> getRuntimeCapabilities(SqlCapable puppetNode,
                                                        Map<String, Object> connection) {
         try {
-            Map<String, Object> result = puppetNode.inspectDatabaseRuntime(
-                    connection == null ? Collections.emptyMap() : connection);
+            Map<String, Object> result = puppetNode.inspectDatabaseRuntime(canonicalConnection(connection));
             if (result != null) return new LinkedHashMap<String, Object>(result);
             return Map.of("code", 500, "available", false, "msg", "Puppet 运行时能力响应为空");
         } catch (Exception error) {
@@ -103,15 +102,12 @@ public class PuppetNodeSqlService {
     }
 
     public List<Map<String, Object>> getDialects() {
-        return sqlDialectFactory.getDialectInfos();
-    }
-
-    public List<Map<String, Object>> getDataTypes(String type) {
-        return sqlDialectFactory.require(type).getDataTypes();
+        return sqlDialectRegistry.getDialectInfos();
     }
 
     public Map<String, Object> getDatabases(SqlCapable puppetNode, Map<String, Object> connection) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "listDatabases", dialect.getCapabilities().listDatabases());
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildDatabasesSql());
         List<Map<String, Object>> databases = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows(raw)) {
@@ -130,6 +126,7 @@ public class PuppetNodeSqlService {
 
     public Map<String, Object> getTables(SqlCapable puppetNode, Map<String, Object> connection, String database) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "listTables", dialect.getCapabilities().listTables());
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildTablesSql(database));
         List<Map<String, Object>> tables = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows(raw)) {
@@ -151,6 +148,7 @@ public class PuppetNodeSqlService {
 
     public Map<String, Object> getTableColumns(SqlCapable puppetNode, Map<String, Object> connection, String database, String table) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "listColumns", dialect.getCapabilities().listColumns());
         Map<String, Object> raw = executeRaw(puppetNode, connection, dialect.buildTableColumnsSql(database, table));
         List<Map<String, Object>> columns = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows(raw)) {
@@ -185,6 +183,7 @@ public class PuppetNodeSqlService {
                                           List<Map<String, Object>> orderBy,
                                           List<Map<String, Object>> filters) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "structuredQuery", dialect.getCapabilities().structuredQuery());
         int actualPage = page == null || page < 1 ? 1 : page;
         int actualPageSize = pageSize == null || pageSize < 1 ? 20 : pageSize;
         Map<String, Object> rawQuery = executeRaw(puppetNode, connection,
@@ -211,6 +210,7 @@ public class PuppetNodeSqlService {
                                            String table,
                                            List<Map<String, Object>> columns) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "createTable", dialect.getCapabilities().createTable());
         String sql = dialect.buildCreateTableSql(database, table, columns);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -223,6 +223,7 @@ public class PuppetNodeSqlService {
 
     public Map<String, Object> createDatabase(SqlCapable puppetNode, Map<String, Object> connection, String database) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "createDatabase", dialect.getCapabilities().createDatabase());
         String sql = dialect.buildCreateDatabaseSql(database);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -238,6 +239,7 @@ public class PuppetNodeSqlService {
                                          String table,
                                          Map<String, Object> row) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "insert", dialect.getCapabilities().insert());
         String sql = dialect.buildInsertSql(database, table, row);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -255,6 +257,7 @@ public class PuppetNodeSqlService {
                                           Map<String, Object> where,
                                           Map<String, Object> update) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "update", dialect.getCapabilities().update());
         String sql = dialect.buildUpdateSql(database, table, where, update);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -271,6 +274,7 @@ public class PuppetNodeSqlService {
                                           String table,
                                           Map<String, Object> where) throws Exception {
         AbstractSqlDialect dialect = dialect(connection);
+        requireCapability(dialect, "delete", dialect.getCapabilities().delete());
         String sql = dialect.buildDeleteSql(database, table, where);
         Map<String, Object> raw = executeRaw(puppetNode, connection, sql);
         Map<String, Object> data = new LinkedHashMap<String, Object>();
@@ -296,7 +300,7 @@ public class PuppetNodeSqlService {
     }
 
     private Map<String, Object> executeRaw(SqlCapable puppetNode, Map<String, Object> connection, String sql) throws Exception {
-        Map<String, Object> result = puppetNode.executeSql(DatabaseConnectionSpec.fromMap(connection), sql);
+        Map<String, Object> result = puppetNode.executeSql(connectionSpec(connection), sql);
         if (result == null) {
             throw new IllegalStateException("puppet 执行结果为空");
         }
@@ -468,7 +472,30 @@ public class PuppetNodeSqlService {
     }
 
     private AbstractSqlDialect dialect(Map<String, Object> connection) {
-        return sqlDialectFactory.require(stringValue(connection.get("dialect")));
+        return sqlDialectRegistry.require(stringValue(connection.get("dialect")));
+    }
+
+    private DatabaseConnectionSpec connectionSpec(Map<String, Object> connection) {
+        return DatabaseConnectionSpec.fromMap(canonicalConnection(connection));
+    }
+
+    private Map<String, Object> canonicalConnection(Map<String, Object> connection) {
+        if (connection == null || connection.isEmpty()) return Collections.emptyMap();
+        Map<String, Object> canonical = new LinkedHashMap<String, Object>(connection);
+        String dialect = stringValue(connection.get("dialect"));
+        if (dialect != null && !dialect.isBlank()) {
+            canonical.put("dialect", sqlDialectRegistry.canonicalType(dialect));
+        }
+        return canonical;
+    }
+
+    private void requireCapability(AbstractSqlDialect dialect,
+                                   String capability,
+                                   boolean supported) {
+        if (!supported) {
+            throw new IllegalArgumentException(dialect.getName()
+                    + " 方言不支持能力 " + capability + "，请直接执行厂商 SQL");
+        }
     }
 
     private Object firstValue(Map<String, Object> row, String... keys) {

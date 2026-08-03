@@ -17,6 +17,7 @@ public class SqliteDialect extends AbstractSqlDialect {
                 dataType("REAL", null, null, null), dataType("BLOB", null, null, null), dataType("NUMERIC", null, null, null)
         );
     }
+    public SqlDialectCapabilities getCapabilities() { return SqlDialectCapabilities.managed(false); }
     public String buildTestSql() { return "SELECT sqlite_version() AS version"; }
     public String buildDatabasesSql() { return "SELECT 'main' AS name"; }
     public String buildCreateDatabaseSql(String database) {

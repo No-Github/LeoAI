@@ -3,7 +3,7 @@ package org.leo.service.sql;
 import org.junit.jupiter.api.Test;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
-import org.leo.service.sql.dialect.SqlDialectFactory;
+import org.leo.service.sql.dialect.SqlDialectRegistry;
 
 import java.util.List;
 import java.util.Map;
@@ -16,7 +16,7 @@ class PuppetNodeSqlServiceResultBoundaryTest {
 
     @Test
     void exposesRuntimeResultBoundariesToApiCallers() throws Exception {
-        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectFactory());
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         SqlCapable puppet = new SqlCapable() {
             @Override
             public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
@@ -48,7 +48,7 @@ class PuppetNodeSqlServiceResultBoundaryTest {
 
     @Test
     void genericDialectUsesConfiguredHealthCheckAndRejectsStructuredMetadata() throws Exception {
-        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectFactory());
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         String[] executedSql = new String[1];
         SqlCapable puppet = (connection, sqlScript) -> {
             executedSql[0] = sqlScript;
@@ -68,12 +68,40 @@ class PuppetNodeSqlServiceResultBoundaryTest {
         assertEquals("ok", result.get("databaseVersion"));
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                 () -> service.getDatabases(puppet, connection));
-        assertEquals("Generic SQL 方言不支持获取数据库列表，请直接执行厂商 SQL", error.getMessage());
+        assertEquals("Generic SQL 方言不支持能力 listDatabases，请直接执行厂商 SQL", error.getMessage());
+    }
+
+    @Test
+    void canonicalizesDialectAliasesBeforeRuntimeInspectionAndExecution() throws Exception {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        String[] inspectedDialect = new String[1];
+        String[] executedDialect = new String[1];
+        SqlCapable puppet = new SqlCapable() {
+            @Override
+            public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) {
+                inspectedDialect[0] = String.valueOf(connection.get("dialect"));
+                return Map.of("code", 501, "available", true, "msg", "inspection unsupported");
+            }
+
+            @Override
+            public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {
+                executedDialect[0] = connection.getDialect();
+                return Map.of("code", 200, "rows", List.of(Map.of("version", "DM8")));
+            }
+        };
+
+        Map<String, Object> result = service.testConnection(puppet,
+                Map.of("dialect", "dameng", "connectionMode", "standard",
+                        "host", "dm.internal", "port", 5236, "database", "APP"));
+
+        assertEquals(true, result.get("success"));
+        assertEquals("dm", inspectedDialect[0]);
+        assertEquals("dm", executedDialect[0]);
     }
 
     @Test
     void unavailableDriverStopsBeforeConnectionAndReturnsActionableDiagnostics() throws Exception {
-        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectFactory());
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         AtomicBoolean executed = new AtomicBoolean();
         SqlCapable puppet = new SqlCapable() {
             @Override
@@ -109,7 +137,7 @@ class PuppetNodeSqlServiceResultBoundaryTest {
 
     @Test
     void classifiesProviderAuthenticationAndNetworkFailuresByStage() throws Exception {
-        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectFactory());
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
         SqlCapable missingProvider = new SqlCapable() {
             @Override
             public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) {

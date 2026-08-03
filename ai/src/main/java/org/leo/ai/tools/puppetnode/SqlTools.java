@@ -13,26 +13,18 @@ import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
+import java.util.Set;
 
 @Component
 @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
         operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class SqlTools {
 
-    private static final java.util.Set<String> DDL_DML_KEYWORDS = java.util.Set.of(
-            "insert", "update", "delete", "drop", "truncate", "alter",
-            "create", "rename", "replace", "merge", "call", "exec",
-            "execute", "grant", "revoke", "lock", "unlock"
+    private static final Set<String> READ_ONLY_KEYWORDS = Set.of(
+            "select", "show", "describe", "desc"
     );
-
-    /** 行注释 */
-    private static final Pattern LINE_COMMENT = Pattern.compile("--[^\n]*");
-    /** 块注释 */
-    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
-    /** 单引号字符串字面量 */
-    private static final Pattern STRING_LITERAL = Pattern.compile("'(?:[^'\\\\]|\\\\.)*'");
 
     private final PuppetAuditService auditService;
     private final DatabaseConnectionProfileService profileService;
@@ -70,9 +62,10 @@ public class SqlTools {
     }
 
     @Tool("""
-            执行只读 SQL 查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH）。connection 可直接提供完整连接字段，
-            也可传 {"connectionId":"已保存配置ID"} 使用当前 Puppet 已启用的数据库配置。
-            写入或结构变更请使用 execSql。
+            执行单条只读 SQL 查询，仅允许 SELECT、SHOW、DESCRIBE/DESC。
+            connection 可直接提供完整连接字段，也可传 {"connectionId":"已保存配置ID"}
+            使用当前 Puppet 已启用的数据库配置。P0 安全边界暂不接受 WITH/CTE；
+            写入、结构变更或无法明确证明只读的 SQL 请使用 execSql。
             """)
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
@@ -102,52 +95,143 @@ public class SqlTools {
     }
 
     /**
-     * 检测 SQL 是否违反只读约束。
+     * Conservatively proves that a script is one read-only statement.
+     * Comments and quoted literals/identifiers are scanned character by
+     * character so semicolons inside them are not treated as delimiters.
+     * CTEs are intentionally rejected until a real SQL parser is introduced.
      *
-     * <p>两道防线：
-     * <ol>
-     *   <li>多语句检测：去掉注释和字符串字面量后按分号分割，
-     *       若存在多条非空语句则拒绝。</li>
-     *   <li>首 token 检测：每条语句的首个关键字不得为 DDL/DML。</li>
-     * </ol>
-     *
-     * @return 违规原因字符串；无违规时返回 {@code null}
+     * @return violation reason, or {@code null} when the statement is allowed
      */
     private String detectSqlViolation(String sql) {
         if (sql == null || sql.isBlank()) {
-            return null;
+            return "querySql 的 SQL 不能为空。";
         }
-        // 去掉行注释（-- ...）和块注释（/* ... */）
-        String stripped = LINE_COMMENT.matcher(sql).replaceAll(" ");
-        stripped = BLOCK_COMMENT.matcher(stripped).replaceAll(" ").trim();
-
-        // 去掉单引号字符串字面量（用占位符替换），避免字面量内的分号被误判为多语句分隔符
-        // 例如 SELECT * FROM t WHERE name='hello; world' 不应被拒绝
-        String noLiteral = STRING_LITERAL.matcher(stripped).replaceAll("''");
-
-        // 按分号分割，过滤空段
-        String[] segments = noLiteral.split(";");
-        java.util.List<String> nonEmpty = new java.util.ArrayList<>();
-        for (String seg : segments) {
-            if (!seg.isBlank()) nonEmpty.add(seg.trim());
+        SqlScanResult scan = scanSql(sql);
+        if (scan.unterminated()) {
+            return "querySql 检测到未闭合的注释或引号，已拒绝执行。";
         }
-
-        // 多语句拒绝
-        if (nonEmpty.size() > 1) {
-            return "querySql 不允许多语句（检测到 " + nonEmpty.size() + " 条语句），已拒绝执行。如需写操作请使用 execSql。";
+        if (scan.statementCount() != 1) {
+            return "querySql 只允许一条 SQL（检测到 " + scan.statementCount()
+                    + " 条语句），已拒绝执行。如需写操作请使用 execSql。";
         }
-
-        // 逐条检测首 token（使用去字面量后的片段，避免引号内关键字误判）
-        for (String seg : nonEmpty) {
-            String[] tokens = seg.split("\\s+");
-            if (tokens.length == 0) continue;
-            String firstToken = tokens[0].toLowerCase();
-            if (DDL_DML_KEYWORDS.contains(firstToken)) {
-                return "querySql 仅允许只读查询（SELECT/SHOW/DESCRIBE/EXPLAIN/WITH），检测到写入或结构变更语句（" + tokens[0] + "），已拒绝执行。如需写操作请使用 execSql。";
-            }
+        String firstKeyword = scan.firstKeyword();
+        if ("with".equals(firstKeyword)) {
+            return "querySql 暂不允许 WITH/CTE，因为其中可能包含写入语句；请改写为单条 SELECT，"
+                    + "或在确认需要写入后使用 execSql。";
+        }
+        if (!READ_ONLY_KEYWORDS.contains(firstKeyword)) {
+            return "querySql 仅允许 SELECT、SHOW、DESCRIBE/DESC，检测到 "
+                    + (firstKeyword == null ? "未知语句" : firstKeyword.toUpperCase(Locale.ROOT))
+                    + "，已拒绝执行。如需写操作请使用 execSql。";
         }
         return null;
     }
+
+    private SqlScanResult scanSql(String sql) {
+        StringBuilder visible = new StringBuilder(sql.length());
+        int statementCount = 0;
+        boolean statementHasContent = false;
+        ScanState state = ScanState.NORMAL;
+
+        for (int i = 0; i < sql.length(); i++) {
+            char current = sql.charAt(i);
+            char next = i + 1 < sql.length() ? sql.charAt(i + 1) : '\0';
+            switch (state) {
+                case NORMAL -> {
+                    if (current == '-' && next == '-') {
+                        state = ScanState.LINE_COMMENT;
+                        visible.append(' ');
+                        i++;
+                    } else if (current == '/' && next == '*') {
+                        state = ScanState.BLOCK_COMMENT;
+                        visible.append(' ');
+                        i++;
+                    } else if (current == '\'') {
+                        state = ScanState.SINGLE_QUOTE;
+                        visible.append(' ');
+                    } else if (current == '"') {
+                        state = ScanState.DOUBLE_QUOTE;
+                        visible.append(' ');
+                    } else if (current == '`') {
+                        state = ScanState.BACKTICK;
+                        visible.append(' ');
+                    } else if (current == '[') {
+                        state = ScanState.BRACKET_IDENTIFIER;
+                        visible.append(' ');
+                    } else if (current == ';') {
+                        if (statementHasContent) {
+                            statementCount++;
+                            statementHasContent = false;
+                        }
+                        visible.append(' ');
+                    } else {
+                        visible.append(current);
+                        if (!Character.isWhitespace(current)) statementHasContent = true;
+                    }
+                }
+                case LINE_COMMENT -> {
+                    if (current == '\n' || current == '\r') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                    }
+                }
+                case BLOCK_COMMENT -> {
+                    if (current == '*' && next == '/') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                        i++;
+                    }
+                }
+                case SINGLE_QUOTE -> {
+                    if (current == '\'' && next == '\'') {
+                        i++;
+                    } else if (current == '\'') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                    }
+                }
+                case DOUBLE_QUOTE -> {
+                    if (current == '"' && next == '"') {
+                        i++;
+                    } else if (current == '"') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                    }
+                }
+                case BACKTICK -> {
+                    if (current == '`' && next == '`') {
+                        i++;
+                    } else if (current == '`') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                    }
+                }
+                case BRACKET_IDENTIFIER -> {
+                    if (current == ']' && next == ']') {
+                        i++;
+                    } else if (current == ']') {
+                        state = ScanState.NORMAL;
+                        visible.append(' ');
+                    }
+                }
+            }
+        }
+        if (statementHasContent) statementCount++;
+        boolean unterminated = state != ScanState.NORMAL && state != ScanState.LINE_COMMENT;
+        String normalized = visible.toString().trim();
+        String firstKeyword = normalized.isEmpty()
+                ? null : normalized.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
+        return new SqlScanResult(statementCount, firstKeyword, unterminated);
+    }
+
+    private enum ScanState {
+        NORMAL, LINE_COMMENT, BLOCK_COMMENT, SINGLE_QUOTE,
+        DOUBLE_QUOTE, BACKTICK, BRACKET_IDENTIFIER
+    }
+
+    private record SqlScanResult(int statementCount,
+                                 String firstKeyword,
+                                 boolean unterminated) {}
 
     private ResolvedConnection resolveConnection(String sessionId,
                                                  Map<String, Object> connection) {

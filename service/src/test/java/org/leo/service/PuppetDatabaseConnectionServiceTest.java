@@ -38,6 +38,25 @@ class PuppetDatabaseConnectionServiceTest {
     }
 
     @Test
+    void doesNotEncryptAnExistingCiphertextAgainAtMapperBoundary() {
+        PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
+        DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");
+        PuppetDatabaseConnectionService service = new PuppetDatabaseConnectionService(mapper, crypto);
+        String encrypted = crypto.encrypt("plain-secret");
+        PuppetDatabaseConnection connection = connection(encrypted);
+        connection.setConnectionId("connection-1");
+        doAnswer(invocation -> {
+            PuppetDatabaseConnection persisted = invocation.getArgument(0);
+            assertEquals(encrypted, persisted.getPassword());
+            assertEquals("plain-secret", crypto.decrypt(persisted.getPassword()));
+            return 1;
+        }).when(mapper).update(any(PuppetDatabaseConnection.class));
+
+        assertTrue(service.saveOrUpdate(connection));
+        assertEquals(encrypted, connection.getPassword());
+    }
+
+    @Test
     void keepsStoredPasswordEncryptedUntilRuntimeSpecResolution() {
         PuppetDatabaseConnectionMapper mapper = mock(PuppetDatabaseConnectionMapper.class);
         DatabaseCredentialCryptoService crypto = new DatabaseCredentialCryptoService("service-key", "unused");

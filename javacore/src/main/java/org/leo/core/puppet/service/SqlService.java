@@ -45,13 +45,10 @@ public class SqlService extends ComponentService {
             }
         }
         String dialect = String.valueOf(connection.getOrDefault("dialect", "")).trim().toLowerCase();
-        return switch (dialect) {
-            case "mysql" -> "com.mysql.cj.jdbc.Driver";
-            case "postgresql" -> "org.postgresql.Driver";
-            case "sqlserver" -> "com.microsoft.sqlserver.jdbc.SQLServerDriver";
-            case "oracle" -> "oracle.jdbc.driver.OracleDriver";
-            case "sqlite" -> "org.sqlite.JDBC";
-            default -> "";
-        };
+        try {
+            return connectionAdapter.defaultDriver(dialect);
+        } catch (IllegalArgumentException ignored) {
+            return "";
+        }
     }
 }

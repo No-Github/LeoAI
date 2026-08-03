@@ -8,6 +8,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PhpDatabaseConnectionAdapterTest {
 
@@ -38,6 +39,20 @@ class PhpDatabaseConnectionAdapterTest {
                 "dialect", "oracle", "connectionMode", "standard",
                 "variant", "service", "host", "oracle.internal", "service", "ORCLPDB1")));
         assertTrue(String.valueOf(oracle.get("dsn")).startsWith("oci:dbname=//oracle.internal:1521/ORCLPDB1"));
+    }
+
+    @Test
+    void doesNotInventStandardPdoContractsForDmOrKingbase() {
+        IllegalArgumentException dm = assertThrows(IllegalArgumentException.class,
+                () -> adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                        "dialect", "dm", "connectionMode", "standard", "host", "dm.internal"))));
+        assertTrue(dm.getMessage().contains("PHP 不支持数据库类型"));
+
+        IllegalArgumentException kingbase = assertThrows(IllegalArgumentException.class,
+                () -> adapter.adapt(DatabaseConnectionSpec.fromMap(Map.of(
+                        "dialect", "kingbasees", "connectionMode", "standard",
+                        "host", "kes.internal", "database", "inventory"))));
+        assertTrue(kingbase.getMessage().contains("PHP 不支持数据库类型"));
     }
 
     @Test
