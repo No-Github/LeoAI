@@ -305,39 +305,6 @@ public class AgentWorkspaceService {
         }
     }
 
-    public Path resolveFile(Workspace workspace, String relativePath) {
-        return requireRegularFile(workspace, relativePath);
-    }
-
-    public Map<String, String> snapshotHashes(Workspace workspace) {
-        Map<String, String> hashes = new LinkedHashMap<>();
-        try (var stream = Files.walk(workspace.filesRoot())) {
-            for (Path path : stream.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-                    .filter(p -> !Files.isSymbolicLink(p)).toList()) {
-                hashes.put(toRelative(workspace, path), sha256(path));
-            }
-            return hashes;
-        } catch (IOException e) {
-            throw new IllegalStateException("无法创建工作空间快照", e);
-        }
-    }
-
-    /** 在外部受限执行器修改文件前保存所有旧版本。 */
-    public void archiveCurrentFiles(Workspace workspace) {
-        ReentrantReadWriteLock.WriteLock lock = workspace.lock().writeLock();
-        lock.lock();
-        try (var stream = Files.walk(workspace.filesRoot())) {
-            for (Path path : stream.filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
-                    .filter(p -> !Files.isSymbolicLink(p)).toList()) {
-                archiveVersion(workspace, readManagedBytes(path));
-            }
-        } catch (IOException e) {
-            throw new IllegalStateException("无法归档工作空间旧版本", e);
-        } finally {
-            lock.unlock();
-        }
-    }
-
     /** 保存系统生成的日志或抓取结果，仍然执行容量、版本与原子写校验。 */
     public Map<String, Object> writeGeneratedBytes(Workspace workspace, String relativePath,
                                                    byte[] bytes) {
@@ -356,96 +323,92 @@ public class AgentWorkspaceService {
         }
     }
 
-    /** 创建隔离执行副本，容器永远不会直接挂载用户可见目录。调用方须持有 workspace 写锁。 */
-    public Path prepareSandboxCopy(Workspace workspace, String runId) {
-        Path sandboxRoot = workspace.internalRoot().resolve("sandbox").resolve(runId).resolve("workspace");
+    /**
+     * 在启动外部文件传输前校验工作空间目标和预计大小，避免下载完成后才发现配额不足。
+     */
+    public Map<String, Object> validateGeneratedFileTarget(Workspace workspace,
+                                                            String relativePath,
+                                                            long expectedBytes) {
+        ReentrantReadWriteLock.ReadLock lock = workspace.lock().readLock();
+        lock.lock();
         try {
-            Files.createDirectories(sandboxRoot);
-            try (var stream = Files.walk(workspace.filesRoot())) {
-                for (Path source : stream.toList()) {
-                    if (Files.isSymbolicLink(source)) {
-                        throw new IllegalArgumentException("工作空间包含符号链接，不能进入脚本沙箱");
-                    }
-                    Path relative = workspace.filesRoot().relativize(source);
-                    Path target = sandboxRoot.resolve(relative).normalize();
-                    if (!target.startsWith(sandboxRoot)) throw new SecurityException("沙箱副本路径越界");
-                    if (Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
-                        Files.createDirectories(target);
-                    } else if (Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
-                        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING,
-                                StandardCopyOption.COPY_ATTRIBUTES);
-                    } else {
-                        throw new IllegalArgumentException("工作空间包含不支持的特殊文件");
-                    }
-                }
+            Path target = resolve(workspace, relativePath, false);
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("系统生成文件目标已存在，请使用新路径");
             }
-            return sandboxRoot;
+            long safeSize = Math.max(0L, expectedBytes);
+            if (safeSize > properties.getMaxFileBytes()) {
+                throw new IllegalArgumentException("文件超过 Agent 单文件上限");
+            }
+            checkQuota(workspace, 0L, safeSize, true);
+            Map<String, Object> result = baseResult(workspace);
+            result.put("path", toRelative(workspace, target));
+            result.put("expectedBytes", safeSize);
+            return result;
         } catch (IOException e) {
-            throw new IllegalStateException("无法创建脚本沙箱副本", e);
+            throw new IllegalStateException("校验工作空间文件目标失败", e);
+        } finally {
+            lock.unlock();
         }
     }
 
-    /** 校验并提交成功脚本产生的普通文件；符号链接或特殊文件会让整次提交失败。 */
-    public List<Map<String, Object>> commitSandboxCopy(Workspace workspace, Path sandboxRoot) {
-        if (sandboxRoot == null || !sandboxRoot.normalize().startsWith(
-                workspace.internalRoot().resolve("sandbox").normalize())) {
-            throw new SecurityException("非法沙箱目录");
-        }
+    /**
+     * 将平台侧已经落盘的普通文件原子复制进当前 Agent 工作空间。
+     * 相同内容的重复提交是幂等的，目标路径存在但内容不同时保持冲突语义。
+     */
+    public Map<String, Object> writeGeneratedFile(Workspace workspace, String relativePath,
+                                                  Path source) {
+        ReentrantReadWriteLock.WriteLock lock = workspace.lock().writeLock();
+        lock.lock();
+        Path temp = null;
         try {
-            Map<String, Path> staged = new LinkedHashMap<>();
-            long totalBytes = 0;
-            try (var stream = Files.walk(sandboxRoot)) {
-                for (Path source : stream.toList()) {
-                    if (Files.isSymbolicLink(source)) {
-                        throw new SecurityException("脚本生成了符号链接，已拒绝提交全部变更");
-                    }
-                    if (Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) continue;
-                    if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
-                        throw new SecurityException("脚本生成了特殊文件，已拒绝提交全部变更");
-                    }
-                    long size = Files.size(source);
-                    if (size > properties.getMaxFileBytes()) {
-                        throw new IllegalArgumentException("脚本生成文件超过单文件上限");
-                    }
-                    totalBytes += size;
-                    if (totalBytes > properties.getQuotaBytes()) {
-                        throw new IllegalArgumentException("脚本输出超过工作空间容量上限");
-                    }
-                    String relative = sandboxRoot.relativize(source).toString().replace('\\', '/');
-                    staged.put(relative, source);
+            if (source == null || Files.isSymbolicLink(source)
+                    || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("导入源不是普通文件");
+            }
+            long sourceSize = Files.size(source);
+            if (sourceSize > properties.getMaxFileBytes()) {
+                throw new IllegalArgumentException("文件超过 Agent 单文件上限");
+            }
+            String sourceSha256 = sha256(source);
+            Path target = resolve(workspace, relativePath, false);
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isSymbolicLink(target)
+                        && Files.size(target) == sourceSize
+                        && sourceSha256.equalsIgnoreCase(sha256(target))) {
+                    Map<String, Object> existing = fileRef(
+                            workspace, target, sourceSize, sourceSha256);
+                    existing.put("created", false);
+                    existing.put("reused", true);
+                    return existing;
                 }
+                throw new IllegalArgumentException("系统生成文件目标已存在且内容不同，请使用新路径");
             }
-            if (staged.size() > properties.getMaxFiles()) {
-                throw new IllegalArgumentException("脚本输出超过工作空间文件数上限");
+            checkQuota(workspace, 0L, sourceSize, true);
+            Files.createDirectories(target.getParent());
+            temp = Files.createTempFile(workspace.internalRoot().resolve("tmp"),
+                    "import-", ".tmp");
+            Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
+            if (Files.size(temp) != sourceSize
+                    || !sourceSha256.equalsIgnoreCase(sha256(temp))) {
+                throw new IllegalStateException("导入源在复制期间发生变化");
             }
-
-            Map<String, String> before = snapshotHashes(workspace);
-            List<Map<String, Object>> changes = new ArrayList<>();
-            for (Map.Entry<String, Path> entry : staged.entrySet()) {
-                Path target = resolve(workspace, entry.getKey(), false);
-                String nextHash = sha256(entry.getValue());
-                String previousHash = before.get(entry.getKey());
-                if (nextHash.equals(previousHash)) continue;
-                byte[] old = Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                        ? readManagedBytes(requireRegularFile(workspace, entry.getKey())) : null;
-                byte[] bytes = readManagedBytes(entry.getValue());
-                writeLocked(workspace, target, old, bytes);
-                Map<String, Object> change = new LinkedHashMap<>();
-                change.put("path", entry.getKey());
-                change.put("change", previousHash == null ? "CREATED" : "MODIFIED");
-                change.put("sha256", nextHash);
-                changes.add(change);
-            }
-            for (String relative : before.keySet()) {
-                if (staged.containsKey(relative)) continue;
-                Path target = resolve(workspace, relative, false);
-                String trashId = "sandbox-" + Instant.now().toEpochMilli() + "-" + target.getFileName();
-                move(target, workspace.internalRoot().resolve("trash").resolve(trashId));
-                changes.add(Map.of("path", relative, "change", "DELETED"));
-            }
-            return changes;
+            move(temp, target);
+            temp = null;
+            Map<String, Object> result = fileRef(
+                    workspace, target, sourceSize, sourceSha256);
+            result.put("created", true);
+            result.put("reused", false);
+            return result;
         } catch (IOException e) {
-            throw new IllegalStateException("提交脚本沙箱变更失败", e);
+            throw new IllegalStateException("导入系统生成文件失败", e);
+        } finally {
+            if (temp != null) {
+                try { Files.deleteIfExists(temp); }
+                catch (IOException ignored) { }
+            }
+            lock.unlock();
         }
     }
 
@@ -562,11 +525,16 @@ public class AgentWorkspaceService {
     }
 
     private Map<String, Object> fileRef(Workspace workspace, Path target, byte[] bytes) {
+        return fileRef(workspace, target, bytes.length, sha256(bytes));
+    }
+
+    private Map<String, Object> fileRef(Workspace workspace, Path target,
+                                        long size, String sha256) {
         Map<String, Object> result = baseResult(workspace);
         String path = toRelative(workspace, target);
         result.put("path", path);
-        result.put("size", bytes.length);
-        result.put("sha256", sha256(bytes));
+        result.put("size", size);
+        result.put("sha256", sha256);
         result.put("userWorkspacePath", TASKS_DIR + "/" + workspace.workspaceId()
                 + "/files/" + path);
         result.put("downloadEndpoint", "/platform/user/file/download");

@@ -80,11 +80,6 @@ public class ControllerUtil {
             "_UPLOAD",
             "_WRITE"
     ));
-    private static final Set<String> GENERIC_AUDIT_ALWAYS_TYPES = new LinkedHashSet<>(Set.of(
-            "BROWSER_DATA_BOOKMARKS",
-            "BROWSER_DATA_HISTORY",
-            "BROWSER_DATA_SENSITIVE_FILES"
-    ));
     
     /**
      * 获取必需的字符串参数
@@ -461,9 +456,6 @@ public class ControllerUtil {
             return false;
         }
         String normalizedType = operationType.trim().toUpperCase(Locale.ROOT);
-        if (GENERIC_AUDIT_ALWAYS_TYPES.contains(normalizedType)) {
-            return true;
-        }
         for (String skipPart : GENERIC_AUDIT_SKIP_PARTS) {
             if (normalizedType.endsWith(skipPart) || normalizedType.contains(skipPart + "_")) {
                 return false;

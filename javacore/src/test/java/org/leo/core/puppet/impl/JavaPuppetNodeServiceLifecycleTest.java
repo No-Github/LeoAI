@@ -26,7 +26,7 @@ class JavaPuppetNodeServiceLifecycleTest {
 
         List<ComponentService> services = componentServices(node);
         try {
-            assertEquals(28, services.size());
+            assertEquals(27, services.size());
             assertTrue(services.stream().allMatch(service ->
                     "host-before-init".equals(service.getHostId())));
             assertTrue(services.stream().allMatch(service -> service.getMaxReqCount() == 7));

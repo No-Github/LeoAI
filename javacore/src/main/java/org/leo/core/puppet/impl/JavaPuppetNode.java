@@ -11,7 +11,6 @@ import org.leo.core.net.layer.PaddingStrategy;
 import org.leo.core.net.layer.HeaderNoiseStrategy;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
-import org.leo.core.puppet.capability.BrowserDataCapable;
 import org.leo.core.puppet.capability.WebRuntimeManageCapable;
 import org.leo.core.puppet.capability.ComponentInvokeCapable;
 import org.leo.core.puppet.capability.ComponentManageCapable;
@@ -61,7 +60,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
-public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, SqlCapable, ScriptCapable, ResourceCapable, BrowserDataCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
+public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapable, TerminalCapable, FileCapable, NetworkInfoCapable, SqlCapable, ScriptCapable, ResourceCapable, HttpSenderCapable, ProcessCapable, RegistryCapable, ScheduledTaskCapable, ServiceCapable, EventLogCapable, UserAccountCapable, FirewallCapable, NetworkConnectionCapable, NetworkShareCapable, InstalledSoftwareCapable, PersistenceCapable, DockerCapable, SuidCapabilityCapable, HttpProxyCapable, LocalForwardCapable, ReverseTunnelCapable, Socks5ProxyCapable, ScanCapable, ComponentInvokeCapable, ComponentManageCapable, WebRuntimeManageCapable, JavaPluginCapable, CredentialHarvestCapable, HostScopedCapable, LoadedComponentCacheCapable {
 
     /** 最大请求总数，包含首次请求。 */
     private int maxReqCount = Puppet.DEFAULT_MAX_REQUEST_COUNT;
@@ -101,7 +100,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     InstalledSoftwareService installedSoftwareService;
     DockerContainerService dockerContainerService;
     SuidCapabilityService suidCapabilityService;
-    BrowserDataService browserDataService;
     PersistenceService persistenceService;
     NetworkConnectionService networkConnectionService;
     private volatile String hostId;
@@ -180,7 +178,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
         installedSoftwareService=new InstalledSoftwareService(communication,requestLayers,responseLayers);
         dockerContainerService=new DockerContainerService(communication,requestLayers,responseLayers);
         suidCapabilityService=new SuidCapabilityService(communication,requestLayers,responseLayers);
-        browserDataService=new BrowserDataService(communication,requestLayers,responseLayers);
         persistenceService=new PersistenceService(communication,requestLayers,responseLayers);
         networkConnectionService=new NetworkConnectionService(communication,requestLayers,responseLayers);
 
@@ -192,7 +189,7 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
                 processService, registryService, scheduledTaskService,
                 serviceManagerService, eventLogService, userAccountService,
                 firewallService, networkShareService, installedSoftwareService,
-                dockerContainerService, suidCapabilityService, browserDataService,
+                dockerContainerService, suidCapabilityService,
                 persistenceService, networkConnectionService);
         serviceRegistry.setHostIdMismatchRecovery(this::recoverHostAffinity);
 
@@ -1212,28 +1209,6 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     @Override
     public Map<String, Object> listAllSuidCaps() throws Exception {
         return suidCapabilityService.listAll();
-    }
-
-    // ==================== 浏览器数据提取 ====================
-
-    @Override
-    public Map<String, Object> scanBrowserProfiles() throws Exception {
-        return browserDataService.scanProfiles();
-    }
-
-    @Override
-    public Map<String, Object> extractBrowserBookmarks() throws Exception {
-        return browserDataService.extractBookmarks();
-    }
-
-    @Override
-    public Map<String, Object> extractBrowserHistory(int limit) throws Exception {
-        return browserDataService.extractHistory(limit);
-    }
-
-    @Override
-    public Map<String, Object> listBrowserSensitiveFiles() throws Exception {
-        return browserDataService.listSensitiveFiles();
     }
 
     // ==================== Persistence ====================

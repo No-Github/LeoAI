@@ -2,11 +2,10 @@ package org.leo.ai.agent;
 
 import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.common.UserInputTools;
-import org.leo.ai.tools.common.AgentSandboxTools;
+import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
 import org.leo.ai.tools.common.AgentWorkspaceTools;
 import org.leo.ai.tools.common.WebResearchTools;
 import org.leo.ai.tools.puppetnode.BasicInfoTools;
-import org.leo.ai.tools.puppetnode.BrowserDataTools;
 import org.leo.ai.tools.puppetnode.CommandTools;
 import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
 import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
@@ -37,7 +36,6 @@ public class PuppetNodeToolBundle {
             ReverseTunnelTools reverseTunnelTools,
             FileTools fileTools,
             ScanTools scanTools,
-            BrowserDataTools browserDataTools,
             CredentialHarvestTools credentialHarvestTools,
             DatabaseConnectionTools databaseConnectionTools,
             WebRuntimeTools webRuntimeTools,
@@ -47,18 +45,18 @@ public class PuppetNodeToolBundle {
             SqlTools sqlTools,
             ResourceTools resourceTools,
             AgentWorkspaceTools agentWorkspaceTools,
-            AgentSandboxTools agentSandboxTools,
+            AgentWorkspaceCommandTools agentWorkspaceCommandTools,
             WebResearchTools webResearchTools,
             PlanTools planTools,
             UserInputTools userInputTools,
             @Qualifier("puppetNodeSkillActivationTools") SkillActivationTools skillActivationTools) {
         this.tools = List.of(
                 commandTools, basicInfoTools, reverseTunnelTools,
-                fileTools, scanTools, browserDataTools,
+                fileTools, scanTools,
                 credentialHarvestTools, databaseConnectionTools,
                 webRuntimeTools, javaPluginTools,
                 httpRequestTools, scriptTools, sqlTools, resourceTools,
-                agentWorkspaceTools, agentSandboxTools,
+                agentWorkspaceTools, agentWorkspaceCommandTools,
                 webResearchTools, planTools, userInputTools, skillActivationTools);
     }
 

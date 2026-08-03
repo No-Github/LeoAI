@@ -10,7 +10,7 @@ import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.ai.tools.common.UserInputTools;
 import org.leo.ai.tools.common.PlanTools;
-import org.leo.ai.tools.common.AgentSandboxTools;
+import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
 import org.leo.ai.tools.common.AgentWorkspaceTools;
 import org.leo.ai.tools.common.WebResearchTools;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -34,7 +34,7 @@ public class PlatformToolBundle {
             DisguiseTools disguiseTools,
             ShellGeneratorTools shellGeneratorTools,
             AgentWorkspaceTools agentWorkspaceTools,
-            AgentSandboxTools agentSandboxTools,
+            AgentWorkspaceCommandTools agentWorkspaceCommandTools,
             WebResearchTools webResearchTools,
             PlanTools planTools,
             UserInputTools userInputTools,
@@ -42,7 +42,7 @@ public class PlatformToolBundle {
         this.tools = List.of(
                 puppetTools, userTools, teamTools,
                 pluginTools, fingerprintTools, disguiseTools,
-                shellGeneratorTools, agentWorkspaceTools, agentSandboxTools,
+                shellGeneratorTools, agentWorkspaceTools, agentWorkspaceCommandTools,
                 webResearchTools, planTools, userInputTools,
                 skillActivationTools);
     }

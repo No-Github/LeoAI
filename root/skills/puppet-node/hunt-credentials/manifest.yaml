@@ -18,7 +18,7 @@ source: builtin
 owner: leo
 enabled: true
 requires:
-  tools: [harvestAll, exec, readTextFile, searchFileContent, getResource, readSpringBootConfigResources, manage_recon_summary]
+  tools: [harvestAll, exec, readTextFile, searchFileContent, readResources]
   skills: [recon-basic-info]
   facts: [target.authorized]
 produces: [credential-leads, identity-target-map]

@@ -38,7 +38,7 @@ description: 在已授权的 Puppet 立足点上定向搜集与红队任务相�
 4. 用一次受限 `exec` 枚举环境、进程参数和当前用户候选文件。
 5. 只对高相关候选调用 `readTextFile`、`searchFileContent` 或 `ResourceTools`。
 6. 解析占位符和连接关系，构建凭据—目标矩阵，去重并掩码。
-7. 用一次 `manage_recon_summary(action="append")` 保存可复用线索。
+7. 输出可复用线索及来源；系统会从成功工具结果中自动维护侦察摘要。
 
 ## 系统枚举
 

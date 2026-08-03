@@ -20,6 +20,7 @@ class BuiltinPuppetNodeSkillsTest {
 
     private static final List<String> SKILL_NAMES = List.of(
             "recon-basic-info",
+            "analyze-browser-artifacts",
             "hunt-credentials",
             "escalate-linux-privilege",
             "lateral-move-ssh",

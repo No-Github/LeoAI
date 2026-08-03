@@ -21,7 +21,6 @@ public final class PuppetNodeCapabilityRegistry {
             descriptor("sql", SqlCapable.class),
             descriptor("script", ScriptCapable.class),
             descriptor("resource", ResourceCapable.class),
-            descriptor("browserData", BrowserDataCapable.class),
             descriptor("httpSender", HttpSenderCapable.class),
             descriptor("process", ProcessCapable.class),
             descriptor("registry", RegistryCapable.class),

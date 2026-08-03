@@ -2,6 +2,7 @@ package org.leo.ai.tools.puppetnode;
 
 import org.leo.ai.agent.AiToolContext;
 import org.leo.ai.agent.AiToolException;
+import org.leo.ai.service.workspace.AgentWorkspaceService;
 import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.entity.User;
@@ -31,6 +32,7 @@ import java.util.Map;
  * <p>方法：
  * <ul>
  *   <li>{@code startDownloadTask} / {@code startUploadTask} — 分块二进制传输</li>
+ *   <li>{@code stageRemoteFileToWorkspace} / {@code queryRemoteFileStage} — 远端文件采集到 Agent 工作空间</li>
  *   <li>{@code readTextFile} — 读取小体积文本文件，会话级缓存（替代 exec cat）</li>
  *   <li>{@code searchFileContent} — grep 封装，结构化返回匹配结果</li>
  * </ul>
@@ -46,15 +48,18 @@ public class FileTools {
     private final UploadEngineService uploadEngineService;
     private final UserService userService;
     private final PuppetAuditService auditService;
+    private final AgentWorkspaceService workspaceService;
 
     public FileTools(DownloadEngineService downloadEngineService,
                      UploadEngineService uploadEngineService,
                      UserService userService,
-                     PuppetAuditService auditService) {
+                     PuppetAuditService auditService,
+                     AgentWorkspaceService workspaceService) {
         this.downloadEngineService = downloadEngineService;
         this.uploadEngineService = uploadEngineService;
         this.userService = userService;
         this.auditService = auditService;
+        this.workspaceService = workspaceService;
     }
 
     // ── 分块传输 ─────────────────────────────────────────────────────────────
@@ -89,6 +94,80 @@ public class FileTools {
         } catch (Exception e) {
             auditService.logFailure(sessionId, auditNode, "FILE_DOWNLOAD", "AI下载文件", filePath,
                     auditParams, e.getMessage());
+            throw e;
+        }
+    }
+
+    @Tool("启动或续传文件采集任务，将 puppet 侧普通文件下载后导入当前 Agent 任务工作空间。"
+            + "workspacePath 必须是当前工作空间中的新相对路径。返回 taskId；未完成时使用 queryRemoteFileStage 查询。")
+    public Map<String, Object> stageRemoteFileToWorkspace(
+            @P("puppet 侧文件绝对路径") String filePath,
+            @P("当前 Agent 工作空间中的目标相对路径，如 input/browser/history.sqlite") String workspacePath,
+            @P(value = "下载线程数，默认4，最大16", required = false, defaultValue = "4") Integer threads,
+            @P(value = "分块大小，默认1048576", required = false, defaultValue = "1048576") Integer chunkSize) throws Exception {
+        String sessionId = AiToolContext.requireSessionId();
+        PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
+        String userId = requireSessionUser(session, "采集");
+        FileCapable fileNode = PuppetNodeSessionUtils.requireCapability(sessionId, FileCapable.class);
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
+        var workspace = workspaceService.workspaceFromContext();
+        workspaceService.validateGeneratedFileTarget(workspace, workspacePath, 0L);
+        int resolvedThreads = threads == null ? 4 : threads;
+        int resolvedChunkSize = chunkSize == null ? (1024 * 1024) : chunkSize;
+        Map<String, Object> auditParams = fileAuditParams(sessionId, filePath, null, null);
+        auditParams.put("workspacePath", workspacePath);
+        auditParams.put("threads", resolvedThreads);
+        auditParams.put("chunkSize", resolvedChunkSize);
+        try {
+            Map<String, Object> task = downloadEngineService.startOrResume(
+                    fileNode, userId, sessionId, filePath,
+                    resolvedThreads, resolvedChunkSize);
+            long expectedLength = numberValue(task.get("expectedLength"));
+            workspaceService.validateGeneratedFileTarget(
+                    workspace, workspacePath, expectedLength);
+            Map<String, Object> result = finalizeWorkspaceStage(
+                    task, userId, sessionId, workspacePath);
+            auditParams.put("taskId", result.get("taskId"));
+            auditService.logSuccess(sessionId, auditNode, "FILE_DOWNLOAD",
+                    "AI采集文件到任务工作空间", filePath, auditParams,
+                    Boolean.TRUE.equals(result.get("staged"))
+                            ? "文件已导入任务工作空间" : "文件采集任务已启动");
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, auditNode, "FILE_DOWNLOAD",
+                    "AI采集文件到任务工作空间", filePath, auditParams, e.getMessage());
+            throw e;
+        }
+    }
+
+    @Tool("查询远端文件采集任务；下载完成时自动把文件原子导入当前 Agent 工作空间。"
+            + "workspacePath 是当前工作空间中的新目标相对路径。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE)
+    public Map<String, Object> queryRemoteFileStage(
+            @P("stageRemoteFileToWorkspace 返回的 taskId") String taskId,
+            @P("启动采集时使用的工作空间目标相对路径") String workspacePath) throws Exception {
+        String sessionId = AiToolContext.requireSessionId();
+        PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
+        String userId = requireSessionUser(session, "查询采集任务");
+        AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
+        Map<String, Object> auditParams = fileAuditParams(sessionId, null, null, null);
+        auditParams.put("taskId", taskId);
+        auditParams.put("workspacePath", workspacePath);
+        try {
+            Map<String, Object> task = flattenPersistedDownloadSnapshot(
+                    downloadEngineService.progress(userId, taskId));
+            Map<String, Object> result = finalizeWorkspaceStage(
+                    task, userId, sessionId, workspacePath);
+            if (Boolean.TRUE.equals(result.get("staged"))) {
+                auditService.logSuccess(sessionId, auditNode, "FILE_DOWNLOAD",
+                        "AI完成文件采集", String.valueOf(result.get("filePath")),
+                        auditParams, "文件已导入任务工作空间");
+            }
+            return result;
+        } catch (Exception e) {
+            auditService.logFailure(sessionId, auditNode, "FILE_DOWNLOAD",
+                    "AI查询文件采集任务", taskId, auditParams, e.getMessage());
             throw e;
         }
     }
@@ -270,6 +349,79 @@ public class FileTools {
         params.put("sourcePath", sourcePath);
         params.put("maxBytes", maxBytes);
         return params;
+    }
+
+    private String requireSessionUser(PuppetNodeSession session, String operation) {
+        String userId = session == null ? null : session.getCreateByUser();
+        if (userId == null || userId.isBlank()) {
+            throw missingSessionUser(operation);
+        }
+        return userId;
+    }
+
+    private Map<String, Object> finalizeWorkspaceStage(Map<String, Object> task,
+                                                       String userId,
+                                                       String sessionId,
+                                                       String workspacePath) {
+        Map<String, Object> result = new HashMap<>(task == null ? Map.of() : task);
+        String taskSessionId = stringValue(result.get("sessionId"));
+        if (taskSessionId == null || !sessionId.equals(taskSessionId)) {
+            throw new SecurityException("采集任务不属于当前会话");
+        }
+        result.put("workspacePath", workspacePath);
+        String state = stringValue(result.get("state"));
+        if (!"COMPLETED".equalsIgnoreCase(state)) {
+            result.put("staged", false);
+            if ("FAILED".equalsIgnoreCase(state) || "CANCELLED".equalsIgnoreCase(state)) {
+                result.put("nextAction", "查看 lastError/errorStage；需要重试时重新调用 stageRemoteFileToWorkspace");
+            } else if ("PAUSED".equalsIgnoreCase(state)) {
+                result.put("nextAction", "重新调用 stageRemoteFileToWorkspace 恢复采集，随后查询任务状态");
+            } else {
+                result.put("nextAction", "继续调用 queryRemoteFileStage，直到 state=COMPLETED 或任务进入终态");
+            }
+            return result;
+        }
+        String downloadPath = stringValue(result.get("downloadPath"));
+        if (downloadPath == null || downloadPath.isBlank()) {
+            throw new IllegalStateException("已完成下载缺少平台侧文件路径");
+        }
+        User user = userService.getUserById(userId);
+        String privilege = user == null ? null : user.getPrivilege();
+        Path source = uploadEngineService.resolveVfsFilePath(
+                "users/" + userId + "/" + downloadPath);
+        uploadEngineService.validateReadPermission(userId, privilege, source);
+        Map<String, Object> workspaceFile = workspaceService.writeGeneratedFile(
+                workspaceService.workspaceFromContext(), workspacePath, source);
+        result.put("workspaceFile", workspaceFile);
+        result.put("staged", true);
+        result.put("nextAction", "使用 workspaceList、workspaceReadText、workspaceSearch 或 workspaceExec 分析该文件");
+        return result;
+    }
+
+    private Map<String, Object> flattenPersistedDownloadSnapshot(Map<String, Object> snapshot) {
+        Map<String, Object> result = new HashMap<>(snapshot == null ? Map.of() : snapshot);
+        Object meta = result.get("meta");
+        if (meta instanceof Map<?, ?> persisted) {
+            persisted.forEach((key, value) -> {
+                if (key instanceof String stringKey) {
+                    result.putIfAbsent(stringKey, value);
+                }
+            });
+        }
+        return result;
+    }
+
+    private String stringValue(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private long numberValue(Object value) {
+        if (value instanceof Number number) return number.longValue();
+        if (value == null) return 0L;
+        try { return Long.parseLong(String.valueOf(value)); }
+        catch (NumberFormatException ignored) { return 0L; }
     }
 
     /** 构造跨平台搜索命令。 */

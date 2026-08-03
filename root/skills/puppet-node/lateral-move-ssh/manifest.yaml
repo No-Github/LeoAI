@@ -19,7 +19,7 @@ source: builtin
 owner: leo
 enabled: false
 requires:
-  tools: [exec, queryTask, stopTask, manage_recon_summary]
+  tools: [exec, queryTask, stopTask]
   facts: [target.authorized, ssh.target, ssh.username, ssh.private-key-path]
 produces: [validated-foothold]
 next: [recon-basic-info]

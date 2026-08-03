@@ -16,5 +16,5 @@ source: builtin
 owner: leo
 enabled: true
 requires:
-  tools: [getDisguises, getDisguiseById, testDisguise, addDisguise, updateDisguise]
+  tools: [getDisguises, getDisguiseById, testDisguise, addDisguise, updateDisguise, deleteDisguise]
 produces: [disguise-profile]

@@ -2,7 +2,7 @@ package org.leo.ai.agent;
 
 import dev.langchain4j.agent.tool.Tool;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.tools.common.AgentSandboxTools;
+import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
 import org.leo.ai.tools.common.AgentWorkspaceTools;
 import org.leo.ai.tools.common.PlanTools;
 import org.leo.ai.tools.common.UserInputTools;
@@ -16,7 +16,6 @@ import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.ai.tools.puppetnode.BasicInfoTools;
-import org.leo.ai.tools.puppetnode.BrowserDataTools;
 import org.leo.ai.tools.puppetnode.CommandTools;
 import org.leo.ai.tools.puppetnode.CredentialHarvestTools;
 import org.leo.ai.tools.puppetnode.DatabaseConnectionTools;
@@ -45,12 +44,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AiToolCatalogContractTest {
 
     private static final List<Class<?>> TOOL_CLASSES = List.of(
-            AgentSandboxTools.class, AgentWorkspaceTools.class, PlanTools.class,
+            AgentWorkspaceCommandTools.class, AgentWorkspaceTools.class, PlanTools.class,
             UserInputTools.class, WebResearchTools.class,
             DisguiseTools.class, FingerprintTools.class, PluginTools.class,
             PuppetTools.class, ShellGeneratorTools.class, SkillActivationTools.class,
             TeamTools.class, UserTools.class,
-            BasicInfoTools.class, BrowserDataTools.class,
+            BasicInfoTools.class,
             CommandTools.class, CredentialHarvestTools.class,
             DatabaseConnectionTools.class, FileTools.class, HttpRequestTools.class,
             JavaPluginTools.class, ResourceTools.class, ReverseTunnelTools.class,
@@ -78,7 +77,7 @@ class AiToolCatalogContractTest {
         List<Declaration> declarations = declarations();
         Set<String> names = new HashSet<>();
 
-        assertEquals(100, declarations.size(),
+        assertEquals(98, declarations.size(),
                 "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
         for (Declaration declaration : declarations) {
             assertTrue(names.add(declaration.name()),

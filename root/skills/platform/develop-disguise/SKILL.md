@@ -176,7 +176,7 @@ Headers 与协议体必须一致：JSON Content-Type 时 encode 产出 JSON 风�
 
 ### 辅助工具：`platform_user_agent`
 
-创建 Disguise 且缺少 `userId` 时，用 `getUserById` / `getUserByName` / `getAllUser` 补齐。
+创建 Disguise 且缺少 `userId` 时，用 `getUser(userId?, userName?)` 或 `listUsers(withoutTeam?)` 补齐。
 
 ---
 

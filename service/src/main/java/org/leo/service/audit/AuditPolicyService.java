@@ -62,7 +62,6 @@ public class AuditPolicyService {
 
     private static final Set<String> HIGH_RISK_PREFIXES = new LinkedHashSet<>(Arrays.asList(
             "AUDIT_",
-            "BROWSER_DATA_",
             "COMMAND_",
             "COMPONENT_",
             "EXEC_",
@@ -252,10 +251,6 @@ public class AuditPolicyService {
             "INSTALLED_SOFTWARE_SYSTEM",
             "INSTALLED_SOFTWARE_USER",
             "INSTALLED_SOFTWARE_SEARCH",
-            "BROWSER_DATA_SCAN",
-            "BROWSER_DATA_BOOKMARKS",
-            "BROWSER_DATA_HISTORY",
-            "BROWSER_DATA_SENSITIVE_FILES",
             "DOCKER_CONTAINER_LIST",
             "DOCKER_IMAGE_LIST",
             "DOCKER_CONTAINER_INSPECT",

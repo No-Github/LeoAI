@@ -27,7 +27,7 @@ class BuiltinSkillCatalogTest {
             copyBuiltin("platform", List.of(
                     "develop-disguise", "develop-fingerprint", "exploit-suggest", "shell-obfuscation"));
             copyBuiltin("puppet-node", List.of(
-                    "recon-basic-info", "hunt-credentials", "escalate-linux-privilege",
+                    "recon-basic-info", "analyze-browser-artifacts", "hunt-credentials", "escalate-linux-privilege",
                     "lateral-move-ssh", "persistence-linux"));
 
             SkillRegistryService registry = new SkillRegistryService();
@@ -35,14 +35,14 @@ class BuiltinSkillCatalogTest {
             List<SkillInspection> puppet = registry.health("puppet-node");
 
             assertEquals(4, platform.size());
-            assertEquals(5, puppet.size());
+            assertEquals(6, puppet.size());
             assertTrue(platform.stream().allMatch(SkillInspection::valid),
                     () -> "invalid platform catalog: " + platform);
             assertTrue(puppet.stream().allMatch(SkillInspection::valid),
                     () -> "invalid puppet catalog: " + puppet);
             assertEquals(3, registry.listSkills("platform").size(),
                     "high-risk shell generator must be disabled by default");
-            assertEquals(3, registry.listSkills("puppet-node").size(),
+            assertEquals(4, registry.listSkills("puppet-node").size(),
                     "high-risk lateral movement and persistence must be disabled by default");
         } finally {
             ReflectionTestUtils.setField(LeoConfig.class, "VFS_PATH", previous);

@@ -28,10 +28,11 @@ public class AiToolExposurePolicy {
             "createPlan", "updatePlanStep", "completePlan",
             "workspaceList", "workspaceReadText", "workspaceSearch",
             "workspaceWriteText", "workspaceApplyPatch", "workspacePromote", "workspaceDelete",
-            "sandboxRun", "sandboxRunStatus", "sandboxCancel",
+            "workspaceExec", "workspaceExecStatus", "workspaceExecCancel",
             "webSearch", "webFetch", "webFetchToWorkspace",
             "getBasicInfo", "exec", "queryTask", "stopTask",
-            "startDownloadTask", "startUploadTask", "readTextFile", "searchFileContent",
+            "startDownloadTask", "startUploadTask", "stageRemoteFileToWorkspace",
+            "queryRemoteFileStage", "readTextFile", "searchFileContent",
             "readResources", "getClassBytecode",
             // Puppet 管理经常需要先读取 Disguise，保持只读发现能力常驻。
             "getDisguises", "getDisguiseById"
@@ -116,11 +117,10 @@ public class AiToolExposurePolicy {
         add(result, "basicInfo", "getBasicInfo");
         add(result, "command", "exec", "searchFileContent");
         add(result, "terminal", "queryTask", "stopTask");
-        add(result, "file", "startDownloadTask", "startUploadTask", "readTextFile");
+        add(result, "file", "startDownloadTask", "startUploadTask",
+                "stageRemoteFileToWorkspace", "queryRemoteFileStage", "readTextFile");
         add(result, "scan", "startScanPort", "queryScanPortResult", "pauseScanPort",
                 "resumeScanPort", "stopScanPort", "scanReachableHost");
-        add(result, "browserData", "scanBrowserProfiles", "extractBrowserBookmarks",
-                "extractBrowserHistory", "listBrowserSensitiveFiles");
         add(result, "credentialHarvest", "harvestAll");
         add(result, "webRuntimeManage", "inspectWebRuntime", "removeWebRuntimeComponent");
         add(result, "httpSender", "httpRequest", "sendRawRequest", "startFuzz",
