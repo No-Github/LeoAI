@@ -24,8 +24,9 @@ public class LeoStruct2ActionTpl {
             Method getMethod = clazz.getMethod("get", String.class);
             HttpServletRequest request = (HttpServletRequest) getMethod.invoke(context, "com.opensymphony.xwork2.dispatcher.HttpServletRequest");
             HttpServletResponse response = (HttpServletResponse) getMethod.invoke(context, "com.opensymphony.xwork2.dispatcher.HttpServletResponse");
-            response.setStatus(respCode);
-            if (request.getHeader(headerName) != null && request.getHeader(headerName).contains(headerValue)) {
+            String actualHeader = request.getHeader(headerName);
+            if (actualHeader != null && actualHeader.contains(headerValue)) {
+                response.setStatus(respCode);
                 ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
                 byte[] buffer = new byte[1024];
                 int bytesRead;

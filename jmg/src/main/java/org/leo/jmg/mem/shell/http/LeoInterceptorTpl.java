@@ -18,7 +18,9 @@ public class LeoInterceptorTpl implements AsyncHandlerInterceptor {
     private static int respCode;
 
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        if (request.getHeader(headerName) != null && request.getHeader(headerName).contains(headerValue)) {
+        String actualHeader = request.getHeader(headerName);
+        if (actualHeader != null && actualHeader.contains(headerValue)) {
+            response.setStatus(respCode);
             ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
             byte[] buffer = new byte[1024];
             int bytesRead;

