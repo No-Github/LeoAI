@@ -92,6 +92,7 @@ public final class PhpPuppetNode extends AbstractPuppetNode implements
     public void setHostId(String hostId) {
         String previous = this.hostId;
         this.hostId = hostId;
+        if (!Objects.equals(previous, hostId)) rpcClient.resetTransportAffinity();
         rpcClient.setHostId(hostId);
         if (!Objects.equals(previous, hostId)) hostIdChangeListener.accept(hostId);
     }

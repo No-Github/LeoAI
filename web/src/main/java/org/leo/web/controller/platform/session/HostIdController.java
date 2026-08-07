@@ -7,6 +7,7 @@ import org.leo.web.dto.platform.session.SessionDtos.CurrentHostIdResponse;
 import org.leo.web.dto.platform.session.SessionDtos.HostIdRequest;
 import org.leo.web.dto.platform.session.SessionDtos.SessionRequest;
 import org.leo.web.exception.ApiException;
+import org.leo.web.service.PuppetHostDiscoveryService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,6 +31,12 @@ import java.util.HashMap;
 @RequestMapping("/platform/session")
 public class HostIdController {
 
+    private final PuppetHostDiscoveryService hostDiscoveryService;
+
+    public HostIdController(PuppetHostDiscoveryService hostDiscoveryService) {
+        this.hostDiscoveryService = hostDiscoveryService;
+    }
+
     @PostMapping("/current-host-id")
     public HashMap<String, Object> getCurrentHostId(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
@@ -50,7 +57,7 @@ public class HostIdController {
     public HashMap<String, Object> getAllHostIds(@RequestBody SessionRequest request) {
         String sessionId = requireText(request.sessionId(), "sessionId");
         PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
-        var ids = new ArrayList<>(session.getAllHostIds());
+        var ids = new ArrayList<>(hostDiscoveryService.discover(session));
         return ApiResponse.success(new AllHostIdsResponse(sessionId, ids, ids.size()));
     }
 

@@ -76,7 +76,7 @@ public class DisguiseConfig {
         innerDisguise.setDisguiseId("inner_AESBin_1.0.0");
         innerDisguise.setDisguiseName("inner_AESBin");
         HashMap<String, String> headers = new HashMap<String, String>();
-        headers.put("ContentType","text/plain;charset=utf-8");
+        headers.put("Content-Type","text/plain;charset=utf-8");
 
         innerDisguise.setHeaders(headers);
         innerDisguise.setCreateTime(String.valueOf(System.currentTimeMillis()));
@@ -140,7 +140,7 @@ public class DisguiseConfig {
         innerDisguise.setDisguiseId("inner_define_Base64_1.0.0");
         innerDisguise.setDisguiseName("inner_define_Base64");
         HashMap<String, String> headers = new HashMap<String, String>();
-        headers.put("ContentType","text/plain;charset=utf-8");
+        headers.put("Content-Type","text/plain;charset=utf-8");
 
         innerDisguise.setHeaders(headers);
         innerDisguise.setCreateTime(String.valueOf(System.currentTimeMillis()));

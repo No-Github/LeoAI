@@ -55,6 +55,9 @@ class PhpRpcClientTest {
             assertEquals("RELAY", relay.get("operation"));
             Map<?, ?> relayParams = (Map<?, ?>) relay.get("params");
             assertEquals("/inner", relayParams.get("url"));
+            Map<?, ?> relayHeaders = (Map<?, ?>) relayParams.get("headers");
+            assertEquals("application/octet-stream", relayHeaders.get("Content-Type"));
+            assertEquals("identity", relayHeaders.get("Accept-Encoding"));
             Map<String, Object> inner = PortableJsonCodec.decode((byte[]) relayParams.get("body"));
             assertEquals("PING", inner.get("operation"));
             byte[] innerResponse = PortableJsonCodec.encode(Map.of(
@@ -165,7 +168,7 @@ class PhpRpcClientTest {
 
         assertEquals(409, result.get("code"));
         assertEquals("HOST_ID_REBOUND", result.get("errorCode"));
-        assertEquals(3, attempts.get());
+        assertEquals(8, attempts.get());
         assertEquals(1, requestIds.stream().distinct().count());
         assertEquals(1, recoveries.get());
     }

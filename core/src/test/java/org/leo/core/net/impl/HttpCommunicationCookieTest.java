@@ -87,6 +87,34 @@ class HttpCommunicationCookieTest {
         }
     }
 
+    @Test
+    void resettingAffinityDropsLearnedCookieButKeepsConfiguredCookie() throws Exception {
+        AtomicReference<String> nextCookie = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/login", exchange -> {
+            exchange.getResponseHeaders().add("Set-Cookie", "route=backend-a; Path=/");
+            write(exchange, "login");
+        });
+        server.createContext("/next", exchange -> {
+            nextCookie.set(exchange.getRequestHeaders().getFirst("Cookie"));
+            write(exchange, "next");
+        });
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            HttpCommunication communication = new HttpCommunication(baseUrl + "/login", "POST",
+                    Map.of("Cookie", "user=explicit"), Proxy.NO_PROXY);
+            communication.sendRequest(new byte[0]);
+            communication.resetSessionAffinity();
+            communication.setRequestUrl(baseUrl + "/next");
+            communication.sendRequest(new byte[0]);
+
+            assertEquals("user=explicit", nextCookie.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static void write(HttpExchange exchange, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(200, bytes.length);

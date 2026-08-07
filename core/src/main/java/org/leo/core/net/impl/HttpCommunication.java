@@ -38,7 +38,7 @@ import java.util.zip.InflaterInputStream;
  * @author LeoSpring
  * @version 2.0
  */
-public class HttpCommunication implements Communication {
+public class HttpCommunication implements Communication, java.io.Closeable {
 
     private static final Logger logger = LoggerFactory.getLogger(HttpCommunication.class);
 
@@ -397,6 +397,33 @@ public class HttpCommunication implements Communication {
 
     public TlsFingerprintStrategy getTlsFingerprintStrategy() {
         return tlsFingerprintStrategy;
+    }
+
+    /**
+     * 清除由连接复用和 Set-Cookie 建立的后端亲和，供 HostId 切换或错配重试重新抽取
+     * 负载均衡后端。显式配置的请求头和 Cookie 保持不变。
+     */
+    public void resetSessionAffinity() {
+        responseCookies.clear();
+        requestUrlOverride.remove();
+        requestNoiseHeaders.remove();
+        requestProfileHeaders.remove();
+        OkHttpClient client = httpClient;
+        if (client != null) client.connectionPool().evictAll();
+    }
+
+    @Override
+    public void close() {
+        responseCookies.clear();
+        requestUrlOverride.remove();
+        requestNoiseHeaders.remove();
+        requestProfileHeaders.remove();
+        OkHttpClient client = httpClient;
+        httpClient = null;
+        if (client == null) return;
+        client.dispatcher().cancelAll();
+        client.connectionPool().evictAll();
+        client.dispatcher().executorService().shutdown();
     }
 
     /**

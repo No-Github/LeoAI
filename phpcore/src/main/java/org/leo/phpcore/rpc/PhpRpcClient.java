@@ -1,7 +1,6 @@
 package org.leo.phpcore.rpc;
 
 import org.leo.core.component.runtime.ComponentArtifact;
-import org.leo.core.entity.Disguise;
 import org.leo.core.entity.Puppet;
 import org.leo.core.net.Communication;
 import org.leo.core.net.impl.HttpCommunication;
@@ -33,6 +32,7 @@ import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
 
 /** Platform-side client for the PHP core execution Envelope. */
 public final class PhpRpcClient implements AutoCloseable {
+    private static final int MIN_HOST_AFFINITY_ATTEMPTS = 8;
 
     private final Communication communication;
     private final List<RequestLayer> requestLayers;
@@ -143,7 +143,9 @@ public final class PhpRpcClient implements AutoCloseable {
     private Map<String, Object> call(PuppetRpcRequest request) throws Exception {
         Exception lastFailure = null;
         PuppetRpcResponse hostMismatchResponse = null;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        int affinityAttempts = request.hostId() == null
+                ? maxAttempts : Math.max(maxAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
+        for (int attempt = 1; attempt <= affinityAttempts; attempt++) {
             try {
                 applyTransportStrategies();
                 EncodedPayload encoded = encode(request);
@@ -152,8 +154,8 @@ public final class PhpRpcClient implements AutoCloseable {
                 PuppetRpcResponse response = PuppetRpcEnvelopeMapper.responseFromMap(decoded);
                 if (isHostIdMismatch(response)) {
                     hostMismatchResponse = response;
-                    if (attempt < maxAttempts) {
-                        sleepBeforeRetry(request.requestId(), attempt);
+                    if (attempt < affinityAttempts) {
+                        resetTransportAffinity();
                         continue;
                     }
                     return recoverHostAffinity(request.hostId(), response);
@@ -161,7 +163,8 @@ public final class PhpRpcClient implements AutoCloseable {
                 return PuppetRpcEnvelopeMapper.toResultMap(response);
             } catch (Exception e) {
                 lastFailure = e;
-                if (attempt < maxAttempts) sleepBeforeRetry(request.requestId(), attempt);
+                if (attempt >= maxAttempts) break;
+                sleepBeforeRetry(request.requestId(), attempt);
             }
         }
         if (hostMismatchResponse != null) {
@@ -169,6 +172,10 @@ public final class PhpRpcClient implements AutoCloseable {
         }
         throw new IllegalStateException("PHP Puppet 通信失败: "
                 + (lastFailure != null ? lastFailure.getMessage() : "unknown"), lastFailure);
+    }
+
+    public void resetTransportAffinity() {
+        if (communication instanceof HttpCommunication http) http.resetSessionAffinity();
     }
 
     private Map<String, Object> recoverHostAffinity(
@@ -202,7 +209,7 @@ public final class PhpRpcClient implements AutoCloseable {
             RequestLayer previous = requestLayers.get(i - 1);
             Map<String, Object> relayParams = new LinkedHashMap<>();
             relayParams.put("url", previous.getUrl());
-            relayParams.put("headers", previous.getHeaders() == null ? Map.of() : previous.getHeaders());
+            relayParams.put("headers", previous.getRelayHeaders());
             relayParams.put("body", current);
             PuppetRpcRequest relay = request(PuppetOperation.RELAY, null, null, relayParams);
             Map<String, Object> relayWire = PuppetRpcEnvelopeMapper.toMap(relay);
@@ -249,11 +256,7 @@ public final class PhpRpcClient implements AutoCloseable {
     private void applyTransportStrategies() {
         if (!(communication instanceof HttpCommunication http) || requestLayers.isEmpty()) return;
         RequestLayer outermost = requestLayers.get(requestLayers.size() - 1);
-        Map<String, String> headers = new LinkedHashMap<>();
-        Disguise disguise = outermost.getDisguise();
-        if (disguise != null && disguise.getHeaders() != null) headers.putAll(disguise.getHeaders());
-        if (outermost.getHeaders() != null) headers.putAll(outermost.getHeaders());
-        headers.forEach(http::addHeader);
+        outermost.getMergedHeaders().forEach(http::addHeader);
         http.setRequestProfileHeaders(HttpSessionProfile.headers(transportSeed(), http.getUrl()));
         if (urlGenerator != null) http.setRequestUrl(urlGenerator.nextUrl(http.getMethod()));
         if (headerNoiseGenerator != null) http.setRequestNoiseHeaders(headerNoiseGenerator.generate());

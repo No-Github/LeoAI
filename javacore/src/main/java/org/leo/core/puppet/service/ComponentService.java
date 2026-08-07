@@ -35,6 +35,8 @@ import static org.leo.core.rpc.PuppetRpcErrorCodes.isHostIdMismatch;
  */
 public class ComponentService {
 
+    private static final int MIN_HOST_AFFINITY_ATTEMPTS = 8;
+
     private static final Logger log = LoggerFactory.getLogger(ComponentService.class);
 
     private Communication communication;
@@ -348,7 +350,9 @@ public class ComponentService {
         }
 
         int attempt = 0;
-        int maxAttempts = maxReqCount;
+        int requestAttempts = maxReqCount;
+        int maxAttempts = envelope.hostId() == null
+                ? requestAttempts : Math.max(requestAttempts, MIN_HOST_AFFINITY_ATTEMPTS);
         Map<String, Object> result = new HashMap<>();
         PuppetRpcResponse hostMismatchResponse = null;
 
@@ -386,7 +390,7 @@ public class ComponentService {
                     if (isHostIdMismatch(response)) {
                         hostMismatchResponse = response;
                         if (attempt < maxAttempts) {
-                            sleepBeforeRetry(requestId, attempt);
+                            resetTransportAffinity();
                             continue;
                         }
                         return recoverHostAffinity(envelope.hostId(), response);
@@ -409,7 +413,7 @@ public class ComponentService {
                         operation, component, attempt, e);
             }
 
-            if (attempt >= maxAttempts) {
+            if (attempt >= requestAttempts) {
                 if (hostMismatchResponse != null) {
                     return recoverHostAffinity(envelope.hostId(), hostMismatchResponse);
                 }
@@ -450,6 +454,10 @@ public class ComponentService {
         }
     }
 
+    private void resetTransportAffinity() {
+        if (communication instanceof HttpCommunication http) http.resetSessionAffinity();
+    }
+
     // ================= encode =================
 
     private EncodedPayload encode(Map<String, Object> params, String requestId) throws Exception {
@@ -466,10 +474,7 @@ public class ComponentService {
         for (int i = 1; i < requestLayers.size(); i++) {
             RequestLayer layer = requestLayers.get(i);
             RequestLayer beforeLayer = requestLayers.get(i-1);
-            Map<String, String> header = beforeLayer.getHeaders();
-            if (header == null) {
-               header = new HashMap<String, String>();
-            }
+            Map<String, String> header = beforeLayer.getRelayHeaders();
             String relayRequestId = UUID.randomUUID().toString();
             Map<String, Object> relayParams = new HashMap<>();
             relayParams.put("url", beforeLayer.getUrl());
@@ -503,7 +508,12 @@ public class ComponentService {
                 map = responseLayers.get(i).getDisguise().decode(temp);
                 String expectedRequestId = requestIds.get(requestIds.size() - 1 - i);
                 if (!PuppetRpcEnvelopeMapper.isEnvelopeResponse(map, expectedRequestId)) {
-                    throw new IllegalStateException("响应 requestId 不匹配");
+                    Object actualRequestId = map == null ? null : map.get("requestId");
+                    throw new IllegalStateException("响应 requestId 不匹配"
+                            + "（layer=" + i
+                            + ", expected=" + expectedRequestId
+                            + ", actual=" + actualRequestId
+                            + ", code=" + (map == null ? null : map.get("code")) + "）");
                 }
 
                 if (i == responseLayers.size() - 1) {
@@ -565,39 +575,8 @@ public class ComponentService {
 
         RequestLayer outermost = requestLayers.get(requestLayers.size() - 1);
 
-        // 最终要写入 HTTP 的 headers
-        Map<String, String> headerMap = new LinkedHashMap<>();
-
-        // 用于大小写不敏感合并，key: 小写，value: 原始写法
-        Map<String, String> keyLowerMap = new HashMap<>();
-
-        // 先添加 Disguise 默认 headers
-        if (outermost.getDisguise() != null && outermost.getDisguise().getHeaders() != null) {
-            Map<? extends String, ? extends String> disguiseHeaders = outermost.getDisguise().getHeaders();
-
-            for (Map.Entry<? extends String, ? extends String> entry : disguiseHeaders.entrySet()) {
-                String origKey = entry.getKey();
-                String lowerKey = origKey.toLowerCase();
-                if (!keyLowerMap.containsKey(lowerKey)) {
-                    keyLowerMap.put(lowerKey, origKey);
-                    headerMap.put(origKey, entry.getValue());
-                }
-            }
-        }
-
-        //再添加 RequestLayer 自定义 headers（覆盖默认 headers）
-        if (outermost.getHeaders() != null) {
-            Map<? extends String, ? extends String> customHeaders = outermost.getHeaders();
-            for (Map.Entry<? extends String, ? extends String> entry : customHeaders.entrySet()) {
-                String lowerKey = entry.getKey().toLowerCase();
-                String origKey = keyLowerMap.getOrDefault(lowerKey, entry.getKey());
-                keyLowerMap.put(lowerKey, origKey);
-                headerMap.put(origKey, entry.getValue());
-            }
-        }
-
         // 写入 HttpCommunication
-        for (Map.Entry<String, String> entry : headerMap.entrySet()) {
+        for (Map.Entry<String, String> entry : outermost.getMergedHeaders().entrySet()) {
             http.addHeader(entry.getKey(), entry.getValue());
         }
     }

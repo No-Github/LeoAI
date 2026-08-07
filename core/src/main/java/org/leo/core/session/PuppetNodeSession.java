@@ -51,7 +51,7 @@ public class PuppetNodeSession {
     private String createByUser;
     private Map<String, Map<String, Object>> basicInfoMap;
     private volatile String currentHostId;
-    private Set<String> allHostIds;
+    private volatile Set<String> allHostIds = ConcurrentHashMap.newKeySet();
 
     // ── AI 对话线程管理 ───────────────────────────────────────────────────────
     /** 所有 AI 对话线程，key = threadId。 */
@@ -336,17 +336,29 @@ public class PuppetNodeSession {
     }
 
     public Set<String> getAllHostIds() {
-        if (allHostIds == null) allHostIds = new HashSet<>();
-        return allHostIds;
+        return hostIds();
     }
 
     public void setAllHostIds(Set<String> allHostIds) {
-        this.allHostIds = allHostIds == null ? new HashSet<>() : new HashSet<>(allHostIds);
+        Set<String> replacement = ConcurrentHashMap.newKeySet();
+        if (allHostIds != null) replacement.addAll(allHostIds);
+        this.allHostIds = replacement;
     }
 
     public boolean addHostId(String hostId) {
         if (hostId == null || hostId.isBlank()) return false;
-        return getAllHostIds().add(hostId);
+        return hostIds().add(hostId);
+    }
+
+    public Set<String> snapshotHostIds() { return new HashSet<>(hostIds()); }
+
+    private Set<String> hostIds() {
+        Set<String> ids = allHostIds;
+        if (ids != null) return ids;
+        synchronized (this) {
+            if (allHostIds == null) allHostIds = ConcurrentHashMap.newKeySet();
+            return allHostIds;
+        }
     }
 
     public void updateCurrentHostId(String hostId) { setCurrentHostId(hostId); }

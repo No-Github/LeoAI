@@ -140,6 +140,10 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     public void setHostId(String hostId) {
         String previous = this.hostId;
         this.hostId = hostId;
+        if (!Objects.equals(previous, hostId)
+                && communication instanceof org.leo.core.net.impl.HttpCommunication http) {
+            http.resetSessionAffinity();
+        }
         serviceRegistry.setHostId(hostId);
         if (!Objects.equals(previous, hostId)) hostIdChangeListener.accept(hostId);
     }

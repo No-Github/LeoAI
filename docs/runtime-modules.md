@@ -68,13 +68,13 @@ component 变体构建阶段会把 `msg` 与异常诊断文本拆分为 endpoint
 
 Linux 下的 Process 列表、端口到 PID 的归属、NetworkConnection socket 表和 Disk 挂载信息优先直接读取 `/proc`，结合 `disk_total_space`、`disk_free_space` 与 `posix_getpwuid` 完成解析；Unix 进程信号优先调用 `posix_kill`。Windows、macOS 以及受限 proc 挂载继续使用各自命令后端。
 
-PHP 平台侧 HTTP 客户端以 endpoint 地址和 hostId 派生会话级传输画像：User-Agent、Accept、语言、同源 Referer、可选 Header 集合及生成 URL 在会话内保持稳定，调用方显式配置继续拥有最高优先级。携带请求体的方法只使用文本/API 类型的动态扩展名；启用 Padding 后优先补齐至有界的 1/2/4/8 KiB 长度桶并使用请求 seed 派生字段名。多次请求沿用原 RPC requestId，失败重试采用有上限的指数退避和确定性抖动。
+PHP 平台侧 HTTP 客户端以 endpoint 地址和 hostId 派生会话级传输画像：User-Agent、Accept、语言、同源 Referer、可选 Header 集合及生成 URL 在会话内保持稳定，调用方显式配置继续拥有最高优先级。携带请求体的方法只使用文本/API 类型的动态扩展名；启用 Padding 后优先补齐至有界的 1/2/4/8 KiB 长度桶并使用请求 seed 派生字段名。多次请求沿用原 RPC requestId，失败重试采用有上限的指数退避和确定性抖动。多层寄生链路会把内层伪装默认 Header 与节点 Header 合并后交给 Relay，缺省补齐二进制 `Content-Type` 并固定 `Accept-Encoding: identity`，避免中转容器按表单消费请求体或返回平台无法识别的压缩内层响应。
 
 PHP 运行时另外注册两个 protocol-v2 内置流量画像：`inner_PHP_JSON_API_1.0.0` 使用 JSON API envelope，将协议负载放入 Base64URL 编码的 `data` 字段，并附带状态、版本和时间字段；`inner_PHP_FORM_SYNC_1.0.0` 使用 `application/x-www-form-urlencoded` 的同步表单结构，提供 `action`、`v`、`ts` 和 `data` 字段。两种画像均复用 `PortableJsonCodec` 的二进制类型标记，支持平台 Java 编解码与 PHP 5.6+ 目标端互逆，无需 JSON 之外的额外扩展。JSON API 适合双向或响应层，Form Sync 更适合作为请求层，也可在需要时双向使用。解码器严格校验画像版本、动作字段、重复表单字段、Base64URL 长度和 16 MiB 原始消息边界；回归测试覆盖 Java 编码 → PHP 解码 → PHP 编码 → Java 解码的完整互操作链路。
 
 PHP endpoint 的组件缓存按最近访问时间维护，最多保留 48 个制品，七天未访问的制品和五分钟未完成的原子写临时文件会被回收；平台侧 endpoint component 变体缓存采用 1024 项 LRU。终端状态通过临时文件加原子 rename 更新。Scan 最多保留 64 个任务，Proxy 最多保留 128 个连接目录，ReverseTunnel 最多保留 32 个 listener 和每 listener 256 个活动连接；代理和隧道队列单文件限制为 8 MiB。关闭的连接子树会按 TTL 回收，后台 worker 启动超时会写入停止标记。
 
-Java `ComponentService` 同样以 endpoint 地址和 hostId 派生会话级传输画像，并复用稳定 URL、Header 集合、User-Agent、语言与同源 Referer。携带请求体的方法限制动态路径扩展名，显式 Header 继续优先。启用 Padding 后使用有界长度桶和请求派生字段名；重试沿用原 RPC requestId，并采用有上限的指数退避和确定性抖动。
+Java `ComponentService` 同样以 endpoint 地址和 hostId 派生会话级传输画像，并复用稳定 URL、Header 集合、User-Agent、语言与同源 Referer。携带请求体的方法限制动态路径扩展名，显式 Header 继续优先。启用 Padding 后使用有界长度桶和请求派生字段名；重试沿用原 RPC requestId，并采用有上限的指数退避和确定性抖动。会话 HostId 列表刷新使用独立短连接执行多次 PING，以绕开负载均衡连接/Cookie 亲和并收集后端实例，同时保持当前 HostId 不变。
 
 ## Puppet 侧运行代码清单
 
@@ -92,7 +92,7 @@ Java 平台侧已加载 Component 状态采用 host LRU、单 host 数量上限�
 
 同一 `JavaPuppetNode` 创建的全部 `ComponentService` 共享节点级加载注册表。相同 host/component 的并发加载通过 single-flight 合并为一次 class 定义请求，随后各 service 直接复用共享状态，避免同名类在同一 ClassLoader 中重复定义。连续加载失败达到阈值后进入有界冷却期，降低重复传输大体积制品的固定节奏；关闭节点时递增注册表 generation，较早的在途加载结束后不会重新写回已清理缓存。
 
-`JavaPuppetServiceRegistry` 统一维护 31 个 Java 平台服务实例的 hostId、请求/响应层、传输画像、最大请求次数和已加载组件状态广播，并集中执行关闭清理。最大请求数表示一次操作允许发送的请求总数，包含首次请求；`1` 表示不重试，`3` 表示最多重试两次。HostId 亲和始终启用，不暴露人为开关；目标实例返回 `HOST_ID_MISMATCH` 后，平台在请求上限内继续携带原 HostId 重试。重试耗尽时平台通过 PING 重新绑定实例并清理实例级缓存，但不会自动重放原业务操作，以免重复执行有副作用的命令。`JavaPuppetNode` 继续直接实现 capability 委托，服务字段和调用路径保持扁平，避免为每类 capability 引入额外聚合层。
+`JavaPuppetServiceRegistry` 统一维护 31 个 Java 平台服务实例的 hostId、请求/响应层、传输画像、最大请求次数和已加载组件状态广播，并集中执行关闭清理。最大请求数表示普通失败场景下一次操作允许发送的请求总数，包含首次请求；`1` 表示普通失败不重试，`3` 表示最多重试两次。HostId 亲和始终启用，不暴露人为开关；目标实例返回 `HOST_ID_MISMATCH` 时尚未执行组件操作，平台会清理学习 Cookie、逐次淘汰复用连接，并在至少八次的亲和窗口内继续携带原 HostId 抽取后端。亲和尝试耗尽时平台通过 PING 重新绑定实例并清理实例级缓存，但不会自动重放已经进入目标组件的业务操作。`JavaPuppetNode` 继续直接实现 capability 委托，服务字段和调用路径保持扁平，避免为每类 capability 引入额外聚合层。
 
 ## Web Runtime V2 版本策略
 
