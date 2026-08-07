@@ -2,15 +2,17 @@ package org.leo.ai.runtime;
 
 import dev.langchain4j.model.chat.response.StreamingHandle;
 import dev.langchain4j.service.TokenStream;
-import org.leo.ai.agent.AiToolErrorHandler;
 import org.leo.ai.agent.AiToolCatalog;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.leo.ai.agent.AiToolErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -25,6 +27,7 @@ public class AiTurnExecutionEngine {
 
     private static final Logger logger = LoggerFactory.getLogger(AiTurnExecutionEngine.class);
     private static final String REQUEST_USER_INPUT = "request_user_input";
+    private static final int MAX_RECOVERY_ATTEMPTS = 1;
     private static final Pattern USER_INPUT_CARD_CLAIM = Pattern.compile(
             "(?:已|已经|刚刚)(?:向你)?(?:成功)?(?:发送|发出|展示|创建).{0,12}(?:提问|问题|确认|选择)卡片"
                     + "|(?:提问|问题|确认|选择)卡片.{0,8}(?:已|已经)(?:成功)?(?:发送|发出|展示|创建)");
@@ -53,6 +56,7 @@ public class AiTurnExecutionEngine {
                 toolErrorHandler.beginTurn(command.memoryId());
         AtomicReference<StreamingHandle> handleRef = new AtomicReference<>();
         AtomicBoolean userInputRequested = new AtomicBoolean(false);
+        AtomicInteger recoveryAttempts = new AtomicInteger();
         StringBuilder output = new StringBuilder();
         turn.registerCancellation(() -> cancelCaptured(handleRef));
         if (turn.isCancellationRequested()) {
@@ -62,9 +66,25 @@ public class AiTurnExecutionEngine {
             return;
         }
 
+        startStream(command, listener, turn, toolErrorScope, handleRef,
+                userInputRequested, recoveryAttempts, output, false);
+    }
+
+    private void startStream(AiTurnCommand command,
+                             AiTurnExecutionListener listener,
+                             AiTurnCoordinator.Execution turn,
+                             AiToolErrorHandler.TurnScope toolErrorScope,
+                             AtomicReference<StreamingHandle> handleRef,
+                             AtomicBoolean userInputRequested,
+                             AtomicInteger recoveryAttempts,
+                             StringBuilder output,
+                             boolean recovery) {
         try {
             TokenStream stream = Objects.requireNonNull(
-                    command.streamFactory().get(), "streamFactory 返回了 null");
+                    (recovery ? command.recoveryStreamFactory()
+                            : command.streamFactory()).get(),
+                    (recovery ? "recoveryStreamFactory" : "streamFactory")
+                            + " 返回了 null");
             stream
                     .onPartialThinkingWithContext((thinking, context) -> {
                         capture(handleRef, context.streamingHandle(), turn);
@@ -112,15 +132,83 @@ public class AiTurnExecutionEngine {
                         String finalOutput = userInputRequested.get() ? "" : modelOutput;
                         complete(turn, listener, new AiTurnResult(
                                         finalOutput, response, System.currentTimeMillis(),
-                                        userInputRequested.get()),
+                                        userInputRequested.get(),
+                                        recoveryAttempts.get() > 0),
                                 toolErrorScope);
                     })
-                    .onError(error -> fail(
-                            turn, listener, error, toolErrorScope))
+                    .onError(error -> {
+                        if (tryRecoverStream(
+                                command, listener, turn, toolErrorScope,
+                                handleRef, userInputRequested, recoveryAttempts,
+                                output, error)) {
+                            return;
+                        }
+                        fail(turn, listener, error, toolErrorScope);
+                    })
                     .start();
         } catch (Throwable error) {
+            if (tryRecoverStream(
+                    command, listener, turn, toolErrorScope,
+                    handleRef, userInputRequested, recoveryAttempts,
+                    output, error)) {
+                return;
+            }
             fail(turn, listener, error, toolErrorScope);
         }
+    }
+
+    private boolean tryRecoverStream(AiTurnCommand command,
+                                     AiTurnExecutionListener listener,
+                                     AiTurnCoordinator.Execution turn,
+                                     AiToolErrorHandler.TurnScope toolErrorScope,
+                                     AtomicReference<StreamingHandle> handleRef,
+                                     AtomicBoolean userInputRequested,
+                                     AtomicInteger recoveryAttempts,
+                                     StringBuilder output,
+                                     Throwable error) {
+        if (turn.isFinished() || turn.isCancellationRequested()
+                || !isRecoverableStreamError(error)
+                || !recoveryAttempts.compareAndSet(0, 1)) {
+            return false;
+        }
+        handleRef.set(null);
+        logger.warn("模型流返回不完整响应，自动从当前记忆续接, conversationId={}, attempt={}: {}",
+                command.conversationId(), MAX_RECOVERY_ATTEMPTS,
+                rootMessage(error));
+        startStream(command, listener, turn, toolErrorScope, handleRef,
+                userInputRequested, recoveryAttempts, output, true);
+        return true;
+    }
+
+    private static boolean isRecoverableStreamError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof NoSuchElementException) return true;
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.trim().toLowerCase(java.util.Locale.ROOT);
+                if ("no value present".equals(normalized)
+                        || normalized.contains("chatcompletion$choice.message() is null")
+                        || normalized.contains("chatcompletionmessage.role()")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable current = error;
+        String message = null;
+        while (current != null) {
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                message = current.getMessage();
+            }
+            current = current.getCause();
+        }
+        return message != null ? message : error != null
+                ? error.getClass().getSimpleName() : "unknown";
     }
 
     private void complete(AiTurnCoordinator.Execution turn,

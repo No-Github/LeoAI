@@ -36,7 +36,9 @@ public class AiErrorClassifier {
                 && (lower.contains("不支持") || lower.contains("unsupported")
                 || lower.contains("compatible") || lower.contains("兼容"))) {
             category = CATEGORY_UNSUPPORTED_PARAMETER;
-        } else if (lower.contains("chatcompletion$choice.message() is null")
+        } else if (lower.equals("no value present")
+                || lower.contains("nosuchelementexception")
+                || lower.contains("chatcompletion$choice.message() is null")
                 || lower.contains("chatcompletionmessage.role()")
                 || (lower.contains("chatcompletion") && lower.contains("message() is null"))) {
             category = CATEGORY_MALFORMED_RESPONSE;

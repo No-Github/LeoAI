@@ -119,7 +119,7 @@ public class ContextCompressionService {
             ConversationCheckpoint persisted = conversationStore.findContextCheckpoint(threadId);
             if (persisted == null || persisted.version() != CHECKPOINT_VERSION) return null;
 
-            ConversationMessage boundary = conversationStore.committedMessage(
+            ConversationMessage boundary = conversationStore.contextMessage(
                     threadId, persisted.boundarySequence());
             CompressionCheckpoint.DurableMessage durableBoundary = boundary != null
                     ? CompressionCheckpoint.durableMessage(boundary.role(), boundary.content())
@@ -132,7 +132,7 @@ public class ContextCompressionService {
             }
 
             List<ConversationMessage> recent = visibleMessages(
-                    conversationStore.committedMessages(threadId, 200));
+                    conversationStore.contextMessages(threadId, 200));
             List<CompressionCheckpoint.DurableMessage> current = durableMessages(currentMessages);
             if (current.size() != currentMessages.size() || current.size() > recent.size()) {
                 return null;
@@ -193,7 +193,7 @@ public class ContextCompressionService {
             if (current.isEmpty() || summarizedDurableCount == 0) return;
 
             List<ConversationMessage> recent = visibleMessages(
-                    conversationStore.committedMessages(threadId, 200));
+                    conversationStore.contextMessages(threadId, 200));
             int overlap = durableSuffixPrefixOverlap(recent, current);
             int durableBoundary = Math.min(summarizedDurableCount, overlap);
             if (durableBoundary <= 0) return;

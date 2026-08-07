@@ -3,6 +3,7 @@ package org.leo.ai.thread;
 import com.alibaba.fastjson.JSON;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.runtime.AiTurnTrace;
+import org.leo.ai.runtime.AiTurnRecoveryContext;
 import org.leo.core.entity.AiModelConfig;
 import org.leo.core.entity.AiEventRecord;
 import org.leo.core.entity.AiMessageRecord;
@@ -488,7 +489,7 @@ public class AiConversationStoreService {
             if (mapper.failOrphanedRun(run.getRunId(), finishedAt, message) != 1) {
                 continue;
             }
-            persistOrphanedPartialOutput(run);
+            persistOrphanedRecoveryContext(run);
             mapper.discardRunMessages(run.getRunId());
             mapper.discardOrphanedTurn(run.getTurnId(), finishedAt);
             mapper.failOrphanedThread(threadId, finishedAt);
@@ -518,19 +519,17 @@ public class AiConversationStoreService {
         return completedEvents;
     }
 
-    private void persistOrphanedPartialOutput(AiOrphanedRunRecord run) {
+    private void persistOrphanedRecoveryContext(AiOrphanedRunRecord run) {
         if (run == null || isBlank(run.getAssistantMessageId())) return;
-        StringBuilder output = new StringBuilder();
-        for (AiEventRecord row : mapper.listEventsByRun(run.getRunId())) {
-            if (!"delta".equals(row.getName()) || row.getDataJson() == null) continue;
-            Object delta = JSON.parse(row.getDataJson());
-            if (delta != null) output.append(delta);
-        }
-        if (output.isEmpty()) return;
+        List<AiSseEvent> events = mapper.listEventsByRun(run.getRunId()).stream()
+                .map(this::toSseEvent)
+                .toList();
+        String output = AiTurnRecoveryContext.build(events, null);
+        if (output.isBlank()) return;
         AiMessageRecord assistant = new AiMessageRecord();
         assistant.setMessageId(run.getAssistantMessageId());
         assistant.setStatus(MESSAGE_DISCARDED);
-        assistant.setContent(output.toString());
+        assistant.setContent(output);
         mapper.updateMessage(assistant);
     }
 
@@ -782,8 +781,9 @@ public class AiConversationStoreService {
     }
 
     /**
-     * 中断/失败时保存已经产生的 assistant Item，状态仍为 discarded，
-     * 因而不会进入后续模型的 committed memory。
+     * 中断/失败时保存已经产生的 assistant Item，状态仍为 discarded。
+     * 当内容包含实际执行进度时，后续上下文查询会连同原始 user Item
+     * 一起载入，供“继续”任务衔接。
      */
     @Transactional
     public void discardTurn(PersistedTurn turn,
@@ -862,8 +862,27 @@ public class AiConversationStoreService {
                 .toList();
     }
 
+    /**
+     * 返回可用于模型记忆的持久化消息。除了成功消息，也包含有实际执行进度的
+     * discarded Turn，使用户在异常中止后输入“继续”时可以从已有结果衔接。
+     */
+    public List<ConversationMessage> contextMessages(String threadId, int limit) {
+        return mapper.recentContextMessages(
+                        threadId, Math.max(1, Math.min(limit, 200))).stream()
+                .map(record -> new ConversationMessage(
+                        record.getMessageSeq(), record.getRole(), record.getContent()))
+                .toList();
+    }
+
     public ConversationMessage committedMessage(String threadId, long messageSequence) {
         AiMessageRecord record = mapper.findCommittedMessageBySequence(threadId, messageSequence);
+        return record == null ? null : new ConversationMessage(
+                record.getMessageSeq(), record.getRole(), record.getContent());
+    }
+
+    public ConversationMessage contextMessage(String threadId, long messageSequence) {
+        AiMessageRecord record = mapper.findContextMessageBySequence(
+                threadId, messageSequence);
         return record == null ? null : new ConversationMessage(
                 record.getMessageSeq(), record.getRole(), record.getContent());
     }
@@ -880,7 +899,7 @@ public class AiConversationStoreService {
      */
     public String findLatestPlanJson(String threadId) {
         if (threadId == null || threadId.isBlank()) return null;
-        List<AiMessageRecord> recent = mapper.recentMessages(threadId, 50);
+        List<AiMessageRecord> recent = mapper.recentContextMessages(threadId, 50);
         if (recent == null) return null;
         for (AiMessageRecord record : recent) {
             String planJson = record.getPlanJson();

@@ -135,6 +135,22 @@ class ModuleBoundaryTest {
     }
 
     @Test
+    void aiTurnServicesProvideAContinuationFactoryForRecoverableStreams()
+            throws Exception {
+        Path serviceSource = repositoryRoot().resolve("web/src/main/java/org/leo/web/service");
+        List<Path> services = List.of(
+                serviceSource.resolve("PlatformAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiTurnService.java"),
+                serviceSource.resolve("PuppetNodeAiDelegationService.java"));
+
+        for (Path service : services) {
+            String source = Files.readString(service);
+            assertTrue(source.contains("AiTurnCommand.RECOVERY_MESSAGE"),
+                    service + " 未提供基于当前记忆的流式续接工厂");
+        }
+    }
+
+    @Test
     void aiAgentFactoryKeepsToolErrorsInsideTheRecoveryProtocol()
             throws Exception {
         String source = Files.readString(repositoryRoot().resolve(

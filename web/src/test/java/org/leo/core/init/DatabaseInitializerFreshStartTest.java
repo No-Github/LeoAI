@@ -52,6 +52,9 @@ class DatabaseInitializerFreshStartTest {
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM pragma_table_info('ai_messages') WHERE name='status'"));
             assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' "
+                            + "AND name='idx_ai_messages_run'"));
+            assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM pragma_table_info('ai_threads') "
                             + "WHERE name='context_checkpoint_json'"));
             assertEquals(1, scalar(statement,

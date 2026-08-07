@@ -18,6 +18,7 @@ import org.leo.core.ai.AiTurnRuntime;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
@@ -121,6 +122,76 @@ class AiTurnExecutionEngineTest {
         assertEquals("start failed", listener.lastFailure.cause().getMessage());
         assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
         assertFalse(runtime.claimed);
+    }
+
+    @Test
+    void continuesOnceFromCurrentMemoryWhenProviderReturnsNoValue() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        AtomicInteger primaryCalls = new AtomicInteger();
+        AtomicInteger recoveryCalls = new AtomicInteger();
+        RecordingListener listener = new RecordingListener();
+        ScriptedTokenStream primary = new ScriptedTokenStream(tokenStream -> {
+            tokenStream.response.accept(
+                    new PartialResponse("已完成资料收集。"),
+                    new PartialResponseContext(new TestHandle()));
+            tokenStream.error.accept(new NoSuchElementException("No value present"));
+        });
+        ScriptedTokenStream recovery = new ScriptedTokenStream(tokenStream -> {
+            tokenStream.response.accept(
+                    new PartialResponse("继续并完成结论。"),
+                    new PartialResponseContext(new TestHandle()));
+            tokenStream.complete.accept(mock(ChatResponse.class));
+        });
+
+        engine.execute(new AiTurnCommand(
+                "thread-1", "memory-1", turn,
+                () -> {
+                    primaryCalls.incrementAndGet();
+                    return primary;
+                },
+                () -> {
+                    recoveryCalls.incrementAndGet();
+                    return recovery;
+                }), listener);
+
+        assertEquals(1, primaryCalls.get());
+        assertEquals(1, recoveryCalls.get());
+        assertEquals(1, listener.completed.get());
+        assertEquals(0, listener.failed.get());
+        assertEquals("已完成资料收集。继续并完成结论。", listener.lastResult.output());
+        assertTrue(listener.lastResult.streamRecovered());
+        assertEquals(AiTurnOutcome.COMPLETED, runtime.outcome);
+    }
+
+    @Test
+    void stopsAfterOneNoValueRecoveryAttempt() {
+        RecordingRuntime runtime = claimedRuntime();
+        AiTurnCoordinator.Execution turn = coordinator.attach(runtime);
+        AtomicInteger primaryCalls = new AtomicInteger();
+        AtomicInteger recoveryCalls = new AtomicInteger();
+        RecordingListener listener = new RecordingListener();
+        ScriptedTokenStream primary = new ScriptedTokenStream(tokenStream ->
+                tokenStream.error.accept(new NoSuchElementException("No value present")));
+        ScriptedTokenStream recovery = new ScriptedTokenStream(tokenStream ->
+                tokenStream.error.accept(new NoSuchElementException("No value present")));
+
+        engine.execute(new AiTurnCommand(
+                "thread-1", "memory-1", turn,
+                () -> {
+                    primaryCalls.incrementAndGet();
+                    return primary;
+                },
+                () -> {
+                    recoveryCalls.incrementAndGet();
+                    return recovery;
+                }), listener);
+
+        assertEquals(1, primaryCalls.get());
+        assertEquals(1, recoveryCalls.get());
+        assertEquals(0, listener.completed.get());
+        assertEquals(1, listener.failed.get());
+        assertEquals(AiTurnOutcome.FAILED, runtime.outcome);
     }
 
     @Test

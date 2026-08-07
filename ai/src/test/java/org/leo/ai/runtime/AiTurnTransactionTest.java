@@ -96,6 +96,18 @@ class AiTurnTransactionTest {
     }
 
     @Test
+    void rebuildsCanonicalMemoryAfterARecoveredStreamCommits() {
+        Fixture fixture = fixture();
+
+        AiTurnTransaction.CompletedTurn completed = fixture.session().commit(
+                new AiTurnResult("done", null, 1L, false, true),
+                List.of(), null, null);
+
+        verify(fixture.memory).rebuild(fixture.agent, "session:thread-1");
+        assertEquals(true, completed.review().get("streamRecovered"));
+    }
+
+    @Test
     void discardsCancellationWithoutPenalizingTheModel() {
         Fixture fixture = fixture();
 
@@ -132,7 +144,9 @@ class AiTurnTransactionTest {
         verify(fixture.store).discardTurn(
                 eq(fixture.persistedTurn), eq("cancelled"), eq("cancelled"),
                 eq("用户停止"), eq("用户停止"), eq(0),
-                eq("停止前内容"), any(), eq(null));
+                eq("停止前内容\n\n[执行在此处中断；以下是可用于继续任务的已完成进度]"
+                        + "\n后续收到“继续”时，从上述进度衔接，不重复已经完成的步骤。"),
+                any(), eq(null));
     }
 
     @Test

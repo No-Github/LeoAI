@@ -159,7 +159,9 @@ public class PlatformAiTurnService {
                             new AiTurnCommand(
                                     state.getStateId(), memoryId, turn,
                                     () -> agentRuntime.agent().chat(
-                                            memoryId, messageForAgent)),
+                                            memoryId, messageForAgent),
+                                    () -> agentRuntime.agent().chat(
+                                            memoryId, AiTurnCommand.RECOVERY_MESSAGE)),
                             new AiTurnTransaction.Context(
                                     persistedTurn, agentRuntime.effectiveConfigId(),
                                     agentRuntime.agent(), memoryId, audit, startMs,

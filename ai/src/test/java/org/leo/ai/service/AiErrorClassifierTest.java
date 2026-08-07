@@ -28,6 +28,14 @@ class AiErrorClassifierTest {
     }
 
     @Test
+    void classifiesEmptyOptionalAsMalformedModelResponse() {
+        AiErrorClassifier.Classification result = classifier.classify("No value present");
+
+        assertEquals(AiErrorClassifier.CATEGORY_MALFORMED_RESPONSE, result.category());
+        assertEquals("模型返回了不完整的响应，请重试，或调整当前模型/推理配置", result.message());
+    }
+
+    @Test
     void exposesStructuredMetadata() {
         AiErrorClassifier.Classification result = classifier.classify("HTTP 401 Unauthorized");
 

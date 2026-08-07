@@ -6,13 +6,19 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 public record AiTurnResult(String output,
                            ChatResponse response,
                            long completedAt,
-                           boolean userInputRequested) {
+                           boolean userInputRequested,
+                           boolean streamRecovered) {
 
     public AiTurnResult {
         output = output != null ? output : "";
     }
 
     public AiTurnResult(String output, ChatResponse response, long completedAt) {
-        this(output, response, completedAt, false);
+        this(output, response, completedAt, false, false);
+    }
+
+    public AiTurnResult(String output, ChatResponse response, long completedAt,
+                        boolean userInputRequested) {
+        this(output, response, completedAt, userInputRequested, false);
     }
 }

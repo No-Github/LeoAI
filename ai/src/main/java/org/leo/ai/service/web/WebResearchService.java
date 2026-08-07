@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import org.leo.ai.agent.AiToolException;
 import org.leo.ai.config.WebResearchProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
@@ -77,8 +78,7 @@ public class WebResearchService {
         requireEnabled();
         if (query == null || query.isBlank()) throw new IllegalArgumentException("query 不能为空");
         if (properties.getBraveApiKey() == null) {
-            throw new IllegalStateException(
-                    "联网搜索未配置；设置 LEO_AI_WEB_SEARCH_API_KEY 后可使用 webSearch，webFetch 仍可独立使用");
+            throw webSearchNotConfigured();
         }
         int count = Math.max(1, Math.min(maxResults <= 0 ? 8 : maxResults, 20));
         String effectiveQuery = appendDomains(query.trim(), domains);
@@ -100,7 +100,11 @@ public class WebResearchService {
                 bytes = readBounded(body, properties.getMaxFetchBytes());
             }
             if (response.code() / 100 != 2) {
-                throw new IllegalStateException("搜索服务返回 HTTP " + response.code());
+                throw modelToolError(
+                        "WEB_SEARCH_HTTP_ERROR",
+                        "搜索服务返回 HTTP " + response.code() + "。",
+                        "调整查询后最多重试一次；已有明确 URL 时使用 webFetch，"
+                                + "或基于已有资料完成任务。");
             }
             JSONObject root = JSON.parseObject(new String(bytes, StandardCharsets.UTF_8));
             JSONObject web = root != null ? root.getJSONObject("web") : null;
@@ -125,7 +129,19 @@ public class WebResearchService {
             result.put("returned", results.size());
             return result;
         } catch (IOException e) {
-            throw new IllegalStateException("联网搜索失败: " + e.getMessage(), e);
+            throw modelToolError(
+                    "WEB_SEARCH_REQUEST_FAILED",
+                    "联网搜索请求失败：" + safeReason(e) + "。",
+                    "本轮可调整查询后重试一次；已有 URL 时使用 webFetch，"
+                            + "或使用当前已有资料继续。");
+        } catch (AiToolException | IllegalArgumentException | SecurityException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw modelToolError(
+                    "WEB_SEARCH_INVALID_RESPONSE",
+                    "搜索服务返回的数据格式异常。",
+                    "本轮停止使用该搜索结果；已有 URL 时使用 webFetch，"
+                            + "或基于已有资料完成任务。");
         }
     }
 
@@ -153,16 +169,26 @@ public class WebResearchService {
                 if (REDIRECTS.contains(response.code())) {
                     String location = response.header("location");
                     if (location == null || location.isBlank()) {
-                        throw new IllegalStateException("重定向缺少 Location");
+                        throw modelToolError(
+                                "WEB_FETCH_INVALID_REDIRECT",
+                                "网页重定向缺少 Location。",
+                                "使用其他来源 URL，或返回 webSearch 结果选择其他页面。");
                     }
                     if (redirect == properties.getMaxRedirects()) {
-                        throw new IllegalStateException("网页重定向次数超过上限");
+                        throw modelToolError(
+                                "WEB_FETCH_TOO_MANY_REDIRECTS",
+                                "网页重定向次数超过上限。",
+                                "使用最终页面的直接 URL，或选择其他来源。");
                     }
                     current = validatePublicUri(current.resolve(location));
                     continue;
                 }
                 if (response.code() / 100 != 2) {
-                    throw new IllegalStateException("网页返回 HTTP " + response.code());
+                    throw modelToolError(
+                            "WEB_FETCH_HTTP_ERROR",
+                            "网页返回 HTTP " + response.code() + "。",
+                            "检查 URL，并从 webSearch 结果中选择其他页面；"
+                                    + "保留已收集资料继续任务。");
                 }
                 String contentType = response.header("content-type", "text/plain")
                         .toLowerCase(Locale.ROOT);
@@ -180,10 +206,17 @@ public class WebResearchService {
                 return new FetchResult(current.toString(), title, contentType,
                         content, truncated, bytes.length, Instant.now());
             } catch (IOException e) {
-                throw new IllegalStateException("网页抓取失败: " + e.getMessage(), e);
+                throw modelToolError(
+                        "WEB_FETCH_REQUEST_FAILED",
+                        "网页抓取请求失败：" + safeReason(e) + "。",
+                        "检查 URL 后最多重试一次；随后选择其他来源，"
+                                + "并保留已收集资料继续。");
             }
         }
-        throw new IllegalStateException("网页抓取失败");
+        throw modelToolError(
+                "WEB_FETCH_FAILED",
+                "网页抓取未得到有效结果。",
+                "选择其他来源，并基于已收集资料继续任务。");
     }
 
     public Map<String, Object> toMap(FetchResult page) {
@@ -199,7 +232,13 @@ public class WebResearchService {
     }
 
     private void requireEnabled() {
-        if (!properties.isEnabled()) throw new IllegalStateException("Agent 联网研究能力已禁用");
+        if (!properties.isEnabled()) {
+            throw modelToolError(
+                    "WEB_RESEARCH_DISABLED",
+                    "Agent 联网研究能力已关闭。",
+                    "本轮停止调用 webSearch/webFetch，基于已有资料继续，"
+                            + "并在结果中简要说明联网能力状态。");
+        }
     }
 
     private URI validatePublicUri(URI uri) {
@@ -220,8 +259,34 @@ public class WebResearchService {
 
     private ResponseBody requireBody(Response response) {
         ResponseBody body = response.body();
-        if (body == null) throw new IllegalStateException("网页响应没有正文");
+        if (body == null) {
+            throw modelToolError(
+                    "WEB_RESPONSE_EMPTY",
+                    "联网服务响应没有正文。",
+                    "选择其他搜索或网页来源，并保留已收集资料。");
+        }
         return body;
+    }
+
+    private static AiToolException webSearchNotConfigured() {
+        return modelToolError(
+                "WEB_SEARCH_NOT_CONFIGURED",
+                "联网搜索未配置；设置 LEO_AI_WEB_SEARCH_API_KEY 后可使用 webSearch，"
+                        + "webFetch 仍可独立使用。",
+                "本轮停止调用 webSearch。已有明确 URL 时使用 webFetch；"
+                        + "否则继续使用现有资料，并在最终结果中简要说明搜索能力状态。");
+    }
+
+    private static AiToolException modelToolError(
+            String code, String message, String hint) {
+        return AiToolException.modelCorrectable(code, message, hint);
+    }
+
+    private static String safeReason(IOException error) {
+        String message = error != null ? error.getMessage() : null;
+        if (message == null || message.isBlank()) return "网络连接异常";
+        String sanitized = message.replace('\n', ' ').replace('\r', ' ').trim();
+        return sanitized.length() > 160 ? sanitized.substring(0, 160) + "..." : sanitized;
     }
 
     private boolean isPublic(InetAddress address) {

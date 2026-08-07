@@ -22,7 +22,7 @@ import java.util.Objects;
  * 单轮 AI 执行的持久化事务收口。
  *
  * <p>每个 Turn 创建一个 {@link Session}，统一提交、丢弃、模型健康记录、审计和
- * committed memory 重建。Session 自身保证持久化终态最多写入一次。
+ * 上下文 memory 重建。Session 自身保证持久化终态最多写入一次。
  */
 @Component
 public class AiTurnTransaction {
@@ -73,6 +73,9 @@ public class AiTurnTransaction {
             int toolCallCount = artifacts.toolCallCount(eventLog);
             Map<String, Object> review = artifacts.review(
                     output, eventLog, elapsedMillis());
+            if (result != null && result.streamRecovered()) {
+                review.put("streamRecovered", true);
+            }
             Map<String, Object> usage =
                     artifacts.usage(result != null ? result.response() : null);
             List<Object> assistantNodes = artifacts.assistantNodes(
@@ -84,6 +87,12 @@ public class AiTurnTransaction {
             state = PersistenceState.COMMITTED;
             completedTurn = new CompletedTurn(
                     output, toolCallCount, review, usage, assistantNodes);
+            if (result != null && result.streamRecovered()) {
+                // 自动续接会在 ChatMemory 中加入内部恢复提示。
+                // 提交后以数据库中的原始用户消息 + 合并结果重建，
+                // 使后续 Turn 与重启后的上下文保持一致。
+                rebuildContextMemory();
+            }
             runAfterTerminal("记录模型成功", () ->
                     failoverService.recordSuccess(context.effectiveConfigId()));
             if (!usage.isEmpty()) {
@@ -159,7 +168,8 @@ public class AiTurnTransaction {
                     : classification.message();
             String status = cancelled ? AiRunStatus.CANCELLED : AiRunStatus.FAILED;
             List<Object> assistantNodes = artifacts.assistantNodes(eventLog);
-            String partialOutput = artifacts.partialOutput(eventLog);
+            String partialOutput = AiTurnRecoveryContext.build(
+                    eventLog, planSnapshot);
             int toolCallCount = artifacts.toolCallCount(eventLog);
             try {
                 String category = cancelled
@@ -192,7 +202,7 @@ public class AiTurnTransaction {
                 }
                 return failedTurn;
             } finally {
-                rebuildCommittedMemory();
+                rebuildContextMemory();
             }
         }
 
@@ -227,7 +237,7 @@ public class AiTurnTransaction {
                 }
                 return true;
             } finally {
-                rebuildCommittedMemory();
+                rebuildContextMemory();
             }
         }
 
@@ -271,12 +281,12 @@ public class AiTurnTransaction {
             return Math.max(0L, System.currentTimeMillis() - context.startedAt());
         }
 
-        private void rebuildCommittedMemory() {
+        private void rebuildContextMemory() {
             if (context.memoryAgent() == null || context.memoryId() == null) return;
             try {
                 managedMemory.rebuild(context.memoryAgent(), context.memoryId());
             } catch (RuntimeException error) {
-                logger.warn("重建 committed AI 记忆失败, memoryId={}: {}",
+                logger.warn("重建 AI 上下文记忆失败, memoryId={}: {}",
                         context.memoryId(), error.getMessage());
             }
         }

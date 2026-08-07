@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 以数据库中 committed 消息为事实来源管理 LangChain4j ChatMemory。
+ * 以数据库中 committed 消息和可恢复的中断进度为事实来源管理 ChatMemory。
  */
 @Component
 public class ManagedConversationMemory {
@@ -31,15 +31,16 @@ public class ManagedConversationMemory {
         if (memory == null) {
             return null;
         }
-        replaceMessages(memory, toChatMessages(conversationStore.committedMessages(
+        replaceMessages(memory, toChatMessages(conversationStore.contextMessages(
                 threadIdFromMemoryId(memory.id()), 200)));
         return memory;
     }
 
     /**
-     * 使用已提交消息重建指定 Agent 的短期记忆。
+     * 使用已提交消息和中断前可恢复进度重建指定 Agent 的短期记忆。
      *
-     * <p>取消或失败的 Turn 会被持久化为 discarded，因此不会重新进入模型上下文。
+     * <p>没有产生任何进度的 discarded Turn 仍会被排除；已经产生可见输出、工具结果
+     * 或计划快照的 Turn 会作为恢复上下文重新进入模型。
      */
     public boolean rebuild(ChatMemoryAccess agent, Object memoryId) {
         if (agent == null || memoryId == null) {
@@ -49,7 +50,7 @@ public class ManagedConversationMemory {
         if (memory == null) {
             return false;
         }
-        List<ChatMessage> rebuilt = toChatMessages(conversationStore.committedMessages(
+        List<ChatMessage> rebuilt = toChatMessages(conversationStore.contextMessages(
                 threadIdFromMemoryId(memoryId), 200));
         replaceMessages(memory, rebuilt);
         return true;

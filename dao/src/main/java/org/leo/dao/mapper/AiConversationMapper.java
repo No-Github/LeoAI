@@ -317,10 +317,34 @@ public interface AiConversationMapper {
             + "LIMIT #{limit}) ORDER BY message_seq ASC, message_id ASC")
     List<AiMessageRecord> recentMessages(@Param("threadId") String threadId, @Param("limit") int limit);
 
+    /**
+     * 模型上下文消息：成功 Turn，以及确实产生了可恢复 assistant 进度的中断 Turn。
+     * 后者仍保持 discarded 展示状态，但 user/assistant 两条消息会一起进入后续记忆。
+     */
+    @Select("SELECT * FROM (SELECT m.* FROM ai_messages m WHERE m.thread_id = #{threadId} "
+            + "AND (m.status = 'committed' OR (m.status = 'discarded' AND EXISTS ("
+            + "SELECT 1 FROM ai_messages progress WHERE progress.turn_id = m.turn_id "
+            + "AND progress.role = 'assistant' "
+            + "AND progress.status = 'discarded' "
+            + "AND TRIM(COALESCE(progress.content, '')) <> ''))) "
+            + "ORDER BY m.message_seq DESC, m.message_id DESC LIMIT #{limit}) "
+            + "ORDER BY message_seq ASC, message_id ASC")
+    List<AiMessageRecord> recentContextMessages(@Param("threadId") String threadId,
+                                                @Param("limit") int limit);
+
     @Select("SELECT * FROM ai_messages WHERE thread_id = #{threadId} "
             + "AND message_seq = #{messageSeq} AND status = 'committed' LIMIT 1")
     AiMessageRecord findCommittedMessageBySequence(@Param("threadId") String threadId,
                                                    @Param("messageSeq") long messageSeq);
+
+    @Select("SELECT m.* FROM ai_messages m WHERE m.thread_id = #{threadId} "
+            + "AND m.message_seq = #{messageSeq} AND (m.status = 'committed' "
+            + "OR (m.status = 'discarded' AND EXISTS (SELECT 1 FROM ai_messages progress "
+            + "WHERE progress.turn_id = m.turn_id AND progress.role = 'assistant' "
+            + "AND progress.status = 'discarded' "
+            + "AND TRIM(COALESCE(progress.content, '')) <> ''))) LIMIT 1")
+    AiMessageRecord findContextMessageBySequence(@Param("threadId") String threadId,
+                                                 @Param("messageSeq") long messageSeq);
 
     @Update("UPDATE ai_messages SET status = #{status} "
             + "WHERE thread_id = #{threadId} AND turn_id = #{turnId}")

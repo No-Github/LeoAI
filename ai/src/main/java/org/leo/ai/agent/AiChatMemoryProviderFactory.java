@@ -1,5 +1,6 @@
 package org.leo.ai.agent;
 
+import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.memory.chat.TokenWindowChatMemory;
@@ -62,21 +63,23 @@ public class AiChatMemoryProviderFactory {
                 modelContextWindowTokens, configuredMaxTokens, toolSchemaTokens);
         return memoryId -> {
             if (effectiveWindow <= 96_000) {
-                return managedMemory.initialize(TokenWindowChatMemory.builder()
+                ChatMemory delegate = managedMemory.initialize(TokenWindowChatMemory.builder()
                         .id(memoryId)
                         .maxTokens(effectiveWindow, tokenEstimator)
                         .build());
+                return new ActiveUserPreservingChatMemory(delegate);
             }
             int maxMessages = Math.max(50, effectiveWindow / 2_000);
             var delegate = managedMemory.initialize(MessageWindowChatMemory.builder()
                     .id(memoryId)
                     .maxMessages(maxMessages)
                     .build());
-            return new CompressingChatMemory(
-                    memoryId,
-                    delegate,
-                    compressionService,
-                    effectiveWindow);
+            return new ActiveUserPreservingChatMemory(
+                    new CompressingChatMemory(
+                            memoryId,
+                            delegate,
+                            compressionService,
+                            effectiveWindow));
         };
     }
 

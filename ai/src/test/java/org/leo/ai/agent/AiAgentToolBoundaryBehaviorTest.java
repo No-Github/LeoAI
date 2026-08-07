@@ -116,10 +116,39 @@ class AiAgentToolBoundaryBehaviorTest {
         model.assertExhausted();
     }
 
+    @Test
+    void longDynamicToolLoopKeepsTheActiveUserMessage() {
+        ScriptedChatModel model = new ScriptedChatModel()
+                .thenToolCall("write-1", "createBoundaryRecord", "{}")
+                .thenToolCall("write-2", "createBoundaryRecord", "{}")
+                .then(chatRequest -> {
+                    assertEquals("连续执行工具",
+                            dev.langchain4j.data.message.UserMessage
+                                    .findLast(chatRequest.messages())
+                                    .orElseThrow()
+                                    .singleText());
+                    return response(dev.langchain4j.data.message.AiMessage.from("已完成"));
+                });
+        BoundaryTools tools = new BoundaryTools();
+        BoundaryAgent agent = agent(model, tools, 5_000, 4_000, 3);
+
+        assertEquals("已完成", agent.chat(MEMORY_ID, "连续执行工具"));
+        assertEquals(2, tools.writeCalls.get());
+        model.assertExhausted();
+    }
+
     private BoundaryAgent agent(ScriptedChatModel model,
                                 BoundaryTools tools,
                                 long timeoutMs,
                                 int maxResultChars) {
+        return agent(model, tools, timeoutMs, maxResultChars, 30);
+    }
+
+    private BoundaryAgent agent(ScriptedChatModel model,
+                                BoundaryTools tools,
+                                long timeoutMs,
+                                int maxResultChars,
+                                int maxMessages) {
         User user = new User();
         user.setUserId("user-1");
         user.setUserName("user-1");
@@ -146,8 +175,9 @@ class AiAgentToolBoundaryBehaviorTest {
 
         return AiServices.builder(BoundaryAgent.class)
                 .chatModel(model)
-                .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
-                        .id(memoryId).maxMessages(30).build())
+                .chatMemoryProvider(memoryId -> new ActiveUserPreservingChatMemory(
+                        MessageWindowChatMemory.builder()
+                                .id(memoryId).maxMessages(maxMessages).build()))
                 .toolProvider(provider)
                 .toolArgumentsErrorHandler(errors::handleArguments)
                 .toolExecutionErrorHandler(errors::handleExecution)

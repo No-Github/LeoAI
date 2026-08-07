@@ -97,7 +97,7 @@ class CompressingChatMemoryTest {
     void persistsOnlySuccessfulSummaryAndClearsItWithMemory() {
         ChatModel model = successfulModel();
         AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.committedMessages("thread-1", 200))
+        when(store.contextMessages("thread-1", 200))
                 .thenReturn(conversationMessages(8, "persisted"));
         CompressingChatMemory memory = memory(model, store);
         addMessages(memory, 8, "persisted");
@@ -116,7 +116,7 @@ class CompressingChatMemoryTest {
     void persistenceFailureDoesNotDiscardSuccessfulCompression() {
         ChatModel model = successfulModel();
         AiConversationStoreService store = mock(AiConversationStoreService.class);
-        when(store.committedMessages("thread-1", 200))
+        when(store.contextMessages("thread-1", 200))
                 .thenReturn(conversationMessages(8, "persist-failure"));
         doThrow(new IllegalStateException("database unavailable"))
                 .when(store).updateContextCheckpoint(
@@ -140,8 +140,8 @@ class CompressingChatMemoryTest {
                 new ConversationCheckpoint(
                         "[历史摘要]\n持久化摘要", boundary.sequence(), hash,
                         ContextCompressionService.CHECKPOINT_VERSION));
-        when(store.committedMessage("thread-1", boundary.sequence())).thenReturn(boundary);
-        when(store.committedMessages("thread-1", 200)).thenReturn(committed);
+        when(store.contextMessage("thread-1", boundary.sequence())).thenReturn(boundary);
+        when(store.contextMessages("thread-1", 200)).thenReturn(committed);
 
         CompressingChatMemory memory = memoryWithHistory(
                 model, store, chatMessages(8, "restored"), 1_000, 100_000);
@@ -167,8 +167,8 @@ class CompressingChatMemoryTest {
                         CompressionCheckpoint.durableFingerprint(
                                 boundary.role(), boundary.content()),
                         ContextCompressionService.CHECKPOINT_VERSION));
-        when(store.committedMessage("thread-1", boundary.sequence())).thenReturn(boundary);
-        when(store.committedMessages("thread-1", 200)).thenReturn(committed);
+        when(store.contextMessage("thread-1", boundary.sequence())).thenReturn(boundary);
+        when(store.contextMessages("thread-1", 200)).thenReturn(committed);
 
         CompressingChatMemory memory = memoryWithHistory(
                 model, store, chatMessages(8, "older").subList(4, 8),
@@ -188,7 +188,7 @@ class CompressingChatMemoryTest {
                 new ConversationCheckpoint(
                         "[历史摘要]\n不可信摘要", boundary.sequence(), "invalid-hash",
                         ContextCompressionService.CHECKPOINT_VERSION));
-        when(store.committedMessage("thread-1", boundary.sequence())).thenReturn(boundary);
+        when(store.contextMessage("thread-1", boundary.sequence())).thenReturn(boundary);
 
         CompressingChatMemory memory = memoryWithHistory(
                 model, store, chatMessages(8, "invalid"), 1_000, 100_000);

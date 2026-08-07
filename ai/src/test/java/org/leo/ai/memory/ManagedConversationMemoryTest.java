@@ -29,7 +29,7 @@ class ManagedConversationMemoryTest {
                 .maxMessages(20)
                 .build();
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.committedMessages(memoryId, 200)).thenReturn(List.of());
+        when(conversationStore.contextMessages(memoryId, 200)).thenReturn(List.of());
 
         ChatMemory initialized =
                 new ManagedConversationMemory(conversationStore).initialize(memory);
@@ -57,7 +57,7 @@ class ManagedConversationMemoryTest {
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         when(agent.getChatMemory(memoryId)).thenReturn(memory);
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.committedMessages("thread-1", 200)).thenReturn(List.of(
+        when(conversationStore.contextMessages("thread-1", 200)).thenReturn(List.of(
                 new ConversationMessage("user", "已提交问题"),
                 new ConversationMessage("assistant", "已提交回答")));
 
@@ -93,7 +93,7 @@ class ManagedConversationMemoryTest {
         ChatMemoryAccess agent = mock(ChatMemoryAccess.class);
         when(agent.getChatMemory(memoryId)).thenReturn(memory);
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
-        when(conversationStore.committedMessages("fresh-thread", 200)).thenReturn(List.of());
+        when(conversationStore.contextMessages("fresh-thread", 200)).thenReturn(List.of());
 
         assertTrue(new ManagedConversationMemory(conversationStore)
                 .rebuild(agent, memoryId));

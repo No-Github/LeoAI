@@ -407,6 +407,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_messages_thread_status_seq
 CREATE INDEX IF NOT EXISTS idx_ai_messages_turn
     ON ai_messages(turn_id);
 
+CREATE INDEX IF NOT EXISTS idx_ai_messages_run
+    ON ai_messages(run_id);
+
 -- 19. AI 运行事件（SSE 事件持久化）
 CREATE TABLE IF NOT EXISTS ai_events (
     event_id VARCHAR(64) PRIMARY KEY,

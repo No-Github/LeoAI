@@ -84,6 +84,31 @@ class AiConversationStoreServiceTest {
     }
 
     @Test
+    void exposesRecoverableDiscardedMessagesAsModelContext() {
+        AiConversationMapper mapper = mock(AiConversationMapper.class);
+        AiMessageRecord user = new AiMessageRecord();
+        user.setMessageSeq(7L);
+        user.setRole("user");
+        user.setContent("收集系统信息");
+        AiMessageRecord recovery = new AiMessageRecord();
+        recovery.setMessageSeq(8L);
+        recovery.setRole("assistant");
+        recovery.setContent("[执行在此处中断；以下是可用于继续任务的已完成进度]");
+        when(mapper.recentContextMessages("thread-1", 20))
+                .thenReturn(List.of(user, recovery));
+        when(mapper.findContextMessageBySequence("thread-1", 8L))
+                .thenReturn(recovery);
+        AiConversationStoreService service = new AiConversationStoreService(mapper);
+
+        List<AiConversationStoreService.ConversationMessage> context =
+                service.contextMessages("thread-1", 20);
+
+        assertEquals(2, context.size());
+        assertEquals("收集系统信息", context.get(0).content());
+        assertEquals(8L, service.contextMessage("thread-1", 8L).sequence());
+    }
+
+    @Test
     void reservesTurnAndVisibleMessagesInOneStoreOperation() {
         AiConversationMapper mapper = mock(AiConversationMapper.class);
         when(mapper.insertProtocolTurn(any(AiTurnRecord.class))).thenReturn(1);
@@ -375,7 +400,14 @@ class AiConversationStoreServiceTest {
         delta.setRunId("run-1");
         delta.setName("delta");
         delta.setDataJson("\"partial\"");
-        when(mapper.listEventsByRun("run-1")).thenReturn(List.of(delta));
+        AiEventRecord tool = new AiEventRecord();
+        tool.setRunId("run-1");
+        tool.setName("patch");
+        tool.setDataJson("""
+                {"kind":"tool","toolName":"getBasicInfo","toolCallId":"call-1",
+                 "status":"completed","resultPreview":"os=linux"}
+                """);
+        when(mapper.listEventsByRun("run-1")).thenReturn(List.of(delta, tool));
         AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         List<AiSseEvent> events =
@@ -392,7 +424,10 @@ class AiConversationStoreServiceTest {
         ArgumentCaptor<AiMessageRecord> partial =
                 ArgumentCaptor.forClass(AiMessageRecord.class);
         verify(mapper).updateMessage(partial.capture());
-        assertEquals("partial", partial.getValue().getContent());
+        assertEquals(true, partial.getValue().getContent().startsWith("partial"));
+        assertEquals(true, partial.getValue().getContent().contains("可用于继续任务"));
+        assertEquals(true, partial.getValue().getContent().contains("getBasicInfo"));
+        assertEquals(true, partial.getValue().getContent().contains("os=linux"));
         verify(mapper).discardOrphanedTurn("turn-1", 1_000L);
         verify(mapper).failOrphanedThread("thread-1", 1_000L);
         verify(mapper).insertEvent(
