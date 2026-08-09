@@ -1,8 +1,6 @@
 package org.leo.jmg;
 
-import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestFactory;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerRegistry;
@@ -11,28 +9,21 @@ import org.leo.jmg.mem.packer.spel.SpELSpringGzipJDK17Packer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collection;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PackerSmokeTest {
 
-    @TestFactory
-    Collection<DynamicTest> everyRegisteredPackerProducesOutput() throws IOException {
+    @Test
+    void everyRegisteredPackerProducesOutput() throws Exception {
         ClassPackerConfig config = createConfig();
-        List<DynamicTest> tests = new ArrayList<DynamicTest>();
         for (String name : PackerRegistry.getAllNames()) {
-            tests.add(DynamicTest.dynamicTest(name, () -> {
-                Packer packer = PackerRegistry.getOrThrow(name);
-                String output = packer.pack(config);
-                assertFalse(output == null || output.trim().isEmpty(), name + " 返回了空结果");
-            }));
+            Packer packer = PackerRegistry.getOrThrow(name);
+            String output = packer.pack(config);
+            assertFalse(output == null || output.trim().isEmpty(), name + " 返回了空结果");
         }
-        return tests;
     }
 
     @Test

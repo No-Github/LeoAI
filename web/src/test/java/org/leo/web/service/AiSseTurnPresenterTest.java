@@ -1,5 +1,8 @@
 package org.leo.web.service;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnEvent;
@@ -15,6 +18,7 @@ import org.leo.core.entity.AiSseEvent;
 import org.leo.core.session.AiThread;
 import org.leo.web.util.AiSseEventPump;
 import org.leo.web.util.AiSseTransport;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -63,19 +67,35 @@ class AiSseTurnPresenterTest {
         Fixture fixture = fixture();
         AiTurnTransaction.CompletedTurn completed = completed("saved");
 
-        fixture.presentation.onTerminal(new AiTurnOrchestrator.Terminal(
-                AiTurnOutcome.COMPLETED,
-                new IllegalStateException("runtime refresh failed"),
-                false,
-                completed,
-                null,
-                null));
+        Logger presenterLogger = (Logger) LoggerFactory.getLogger(
+                AiSseTurnPresenter.class);
+        ListAppender<ILoggingEvent> capturedLogs = new ListAppender<>();
+        boolean previousAdditive = presenterLogger.isAdditive();
+        capturedLogs.start();
+        presenterLogger.addAppender(capturedLogs);
+        presenterLogger.setAdditive(false);
+        try {
+            fixture.presentation.onTerminal(new AiTurnOrchestrator.Terminal(
+                    AiTurnOutcome.COMPLETED,
+                    new IllegalStateException("runtime refresh failed"),
+                    false,
+                    completed,
+                    null,
+                    null));
+        } finally {
+            presenterLogger.setAdditive(previousAdditive);
+            presenterLogger.detachAppender(capturedLogs);
+            capturedLogs.stop();
+        }
 
         List<AiSseEvent> events = fixture.persistedEvents;
         assertEquals(List.of("trace", "status", "turn"),
                 events.stream().map(AiSseEvent::name).toList());
         assertEquals("saved",
                 ((Map<?, ?>) events.get(2).data()).get("content"));
+        assertTrue(capturedLogs.list.stream().anyMatch(event ->
+                event.getFormattedMessage().contains("Turn 终态展示补偿")
+                        && event.getThrowableProxy() != null));
         verify(fixture.emitter).complete();
     }
 
