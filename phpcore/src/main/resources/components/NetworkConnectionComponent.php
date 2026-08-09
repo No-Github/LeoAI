@@ -6,6 +6,16 @@ $available = static function ($name) {
     return function_exists($name) && !in_array($name,
         array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
 };
+$utf8 = static function ($value) {
+    $value = (string)$value;
+    if ($value === '' || @preg_match('//u', $value) === 1) return $value;
+    if (function_exists('iconv')) {
+        $clean = @iconv('UTF-8', 'UTF-8//IGNORE', $value);
+        if (is_string($clean) && @preg_match('//u', $clean) === 1) return $clean !== '' ? $clean : '?';
+    }
+    $clean = preg_replace('/[\x80-\xFF]/', '?', $value);
+    return is_string($clean) ? $clean : '?';
+};
 $run = static function ($command) use ($available) {
     if ($available('exec')) {
         $lines = []; $status = 0; @exec($command . ' 2>&1', $lines, $status);
@@ -38,11 +48,11 @@ $state = static function ($value) {
     $map = ['LISTENING' => 'LISTEN', 'ESTABLISHED' => 'ESTABLISHED', 'UNCONN' => '', 'CLOSE-WAIT' => 'CLOSE_WAIT'];
     return isset($map[$value]) ? $map[$value] : str_replace('-', '_', $value);
 };
-$windows = static function () use ($run, $endpoint, $state) {
+$windows = static function () use ($run, $endpoint, $state, $utf8) {
     $names = []; $tasks = $run('tasklist /FO CSV /NH');
     foreach (preg_split('/\r?\n/', $tasks['output']) as $line) {
         $columns = str_getcsv($line);
-        if (count($columns) >= 2 && is_numeric($columns[1])) $names[(string)(int)$columns[1]] = $columns[0];
+        if (count($columns) >= 2 && is_numeric($columns[1])) $names[(string)(int)$columns[1]] = $utf8($columns[0]);
     }
     $result = []; $netstat = $run('netstat -ano');
     foreach (preg_split('/\r?\n/', $netstat['output']) as $line) {
@@ -61,7 +71,7 @@ $windows = static function () use ($run, $endpoint, $state) {
     }
     return [$result, ['source=netstat -ano']];
 };
-$linuxCommand = static function () use ($run, $endpoint, $state) {
+$linuxCommand = static function () use ($run, $endpoint, $state, $utf8) {
     $result = []; $diagnostics = []; $raw = $run('ss -tunap');
     if (stripos($raw['output'], 'Netid') === false) {
         $raw = $run('netstat -tunap'); $diagnostics[] = 'source=netstat -tunap';
@@ -73,7 +83,7 @@ $linuxCommand = static function () use ($run, $endpoint, $state) {
             $stateIndex = $protocol === 'TCP' ? 5 : -1; $ownerIndex = $protocol === 'TCP' ? 6 : 5;
             $item = ['protocol' => $protocol, 'state' => $stateIndex >= 0 && isset($parts[$stateIndex]) ? $state($parts[$stateIndex]) : '',
                 'localAddr' => $localAddr, 'localPort' => $localPort, 'remoteAddr' => $remoteAddr, 'remotePort' => $remotePort];
-            if (isset($parts[$ownerIndex]) && preg_match('/^(\d+)\/(.+)$/', $parts[$ownerIndex], $match)) { $item['pid'] = $match[1]; $item['process'] = $match[2]; }
+            if (isset($parts[$ownerIndex]) && preg_match('/^(\d+)\/(.+)$/', $parts[$ownerIndex], $match)) { $item['pid'] = $match[1]; $item['process'] = $utf8($match[2]); }
             $result[] = $item;
         }
         return [$result, $diagnostics];
@@ -91,7 +101,7 @@ $linuxCommand = static function () use ($run, $endpoint, $state) {
             'remoteAddr' => $remoteAddr, 'remotePort' => $remotePort];
         $owner = isset($parts[6]) ? $parts[6] : '';
         if (preg_match('/pid=(\d+)/', $owner, $match)) $item['pid'] = $match[1];
-        if (preg_match('/\(\("([^"]+)"/', $owner, $match)) $item['process'] = $match[1];
+        if (preg_match('/\(\("([^"]+)"/', $owner, $match)) $item['process'] = $utf8($match[1]);
         $result[] = $item;
     }
     return [$result, $diagnostics];
@@ -110,7 +120,7 @@ $procAddress = static function ($value) {
     }
     return $value;
 };
-$procOwners = static function ($wanted) {
+$procOwners = static function ($wanted) use ($utf8) {
     if (!$wanted) return []; $owners = []; $checked = 0;
     foreach ((array)glob('/proc/[0-9]*', GLOB_ONLYDIR) as $directory) {
         $pid = (int)basename($directory); if ($pid <= 0) continue;
@@ -119,7 +129,7 @@ $procOwners = static function ($wanted) {
             if (++$checked > 200000) break 2;
             $target = @readlink($fd);
             if (!is_string($target) || !preg_match('/^socket:\[(\d+)\]$/', $target, $match) || !isset($wanted[$match[1]])) continue;
-            if ($name === null) $name = trim((string)@file_get_contents($directory . '/comm'));
+            if ($name === null) $name = $utf8(trim((string)@file_get_contents($directory . '/comm')));
             $owners[$match[1]] = ['pid' => (string)$pid, 'process' => $name];
         }
     }
@@ -161,20 +171,20 @@ $linuxProc = static function () use ($procAddress, $procOwners) {
 $linux = static function () use ($linuxProc, $linuxCommand) {
     $native = $linuxProc(); return is_array($native) ? $native : $linuxCommand();
 };
-$mac = static function () use ($run, $endpoint, $state) {
+$mac = static function () use ($run, $endpoint, $state, $utf8) {
     $result = []; $raw = $run('lsof -nP -iTCP -iUDP');
     foreach (preg_split('/\r?\n/', $raw['output']) as $line) {
         if (stripos($line, 'COMMAND') === 0 || trim($line) === '') continue;
         $parts = preg_split('/\s+/', trim($line), 9);
         if (count($parts) < 9) continue;
-        $name = $parts[8]; $connectionState = '';
+        $name = $utf8($parts[8]); $connectionState = '';
         if (preg_match('/\s+\(([^)]+)\)$/', $name, $match)) { $connectionState = $state($match[1]); $name = preg_replace('/\s+\([^)]+\)$/', '', $name); }
         $sides = preg_split('/->/', $name, 2); list($localAddr, $localPort) = $endpoint($sides[0]);
         list($remoteAddr, $remotePort) = isset($sides[1]) ? $endpoint($sides[1]) : ['*', '*'];
         $result[] = ['protocol' => stripos($parts[7], 'UDP') !== false ? 'UDP' : 'TCP',
             'state' => $connectionState, 'localAddr' => $localAddr, 'localPort' => $localPort,
             'remoteAddr' => $remoteAddr, 'remotePort' => $remotePort,
-            'pid' => $parts[1], 'process' => $parts[0], 'user' => $parts[2]];
+            'pid' => $parts[1], 'process' => $utf8($parts[0]), 'user' => $utf8($parts[2])];
     }
     return [$result, ['source=lsof']];
 };

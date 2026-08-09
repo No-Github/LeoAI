@@ -6,6 +6,16 @@ $available = static function ($name) {
     return function_exists($name) && !in_array($name,
         array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
 };
+$utf8 = static function ($value) {
+    $value = (string)$value;
+    if ($value === '' || @preg_match('//u', $value) === 1) return $value;
+    if (function_exists('iconv')) {
+        $clean = @iconv('UTF-8', 'UTF-8//IGNORE', $value);
+        if (is_string($clean) && @preg_match('//u', $clean) === 1) return $clean !== '' ? $clean : '?';
+    }
+    $clean = preg_replace('/[\x80-\xFF]/', '?', $value);
+    return is_string($clean) ? $clean : '?';
+};
 $run = static function ($command) use ($available) {
     if ($available('exec')) {
         $lines = []; $status = 0;
@@ -26,37 +36,39 @@ $osFamily = static function () {
     if (strpos($name, 'LIN') === 0) return 'Linux';
     return PHP_OS;
 };
-$processName = static function ($command) {
+$processName = static function ($command) use ($utf8) {
     $command = trim((string)$command);
     if ($command === '') return '';
     $parts = preg_split('/\s+/', $command);
-    return basename($parts[0]);
+    return $utf8(basename($parts[0]));
 };
-$listUnix = static function () use ($run, $processName) {
+$listUnix = static function () use ($run, $processName, $utf8) {
     $result = $run('ps -eo pid=,ppid=,user=,rss=,comm=,args='); $processes = [];
     foreach (preg_split('/\r?\n/', trim($result['output'])) as $line) {
         $parts = preg_split('/\s+/', trim($line), 6);
         if (count($parts) < 5 || !preg_match('/^[0-9]+$/', $parts[0])) continue;
-        $cmd = isset($parts[5]) ? $parts[5] : $parts[4];
-        $processes[] = ['pid' => (int)$parts[0], 'ppid' => (int)$parts[1], 'user' => $parts[2],
+        $cmd = $utf8(isset($parts[5]) ? $parts[5] : $parts[4]);
+        $name = $utf8(basename($parts[4]));
+        if ($name === '' || $name === '?') $name = $processName($cmd);
+        $processes[] = ['pid' => (int)$parts[0], 'ppid' => (int)$parts[1], 'user' => $utf8($parts[2]),
             'memKb' => is_numeric($parts[3]) ? (int)$parts[3] : 0,
-            'name' => $parts[4] !== '' ? basename($parts[4]) : $processName($cmd), 'cmd' => $cmd];
+            'name' => $name !== '' ? $name : $processName($cmd), 'cmd' => $cmd];
         if (count($processes) >= 2000) break;
     }
     return $processes;
 };
-$listLinuxProc = static function () use ($processName) {
+$listLinuxProc = static function () use ($processName, $utf8) {
     $processes = []; $directories = (array)glob('/proc/[0-9]*', GLOB_ONLYDIR);
     foreach ($directories as $directory) {
         $pid = (int)basename($directory); if ($pid <= 0) continue;
         $stat = @file_get_contents($directory . '/stat');
         if (!is_string($stat)) continue;
         $open = strpos($stat, '('); $close = strrpos($stat, ')'); if ($open === false || $close === false || $close <= $open) continue;
-        $name = trim(substr($stat, $open + 1, $close - $open - 1));
+        $name = $utf8(trim(substr($stat, $open + 1, $close - $open - 1)));
         $fields = preg_split('/\s+/', trim(substr($stat, $close + 1)));
         $ppid = isset($fields[1]) && is_numeric($fields[1]) ? (int)$fields[1] : 0;
         $cmdline = @file_get_contents($directory . '/cmdline');
-        $cmd = is_string($cmdline) ? trim(str_replace("\0", ' ', $cmdline)) : '';
+        $cmd = is_string($cmdline) ? $utf8(trim(str_replace("\0", ' ', $cmdline))) : '';
         if ($cmd === '') $cmd = $name;
         $uid = null; $memKb = 0; $status = @file($directory . '/status', FILE_IGNORE_NEW_LINES);
         foreach ((array)$status as $line) {
@@ -65,7 +77,7 @@ $listLinuxProc = static function () use ($processName) {
         }
         $user = $uid === null ? '' : (string)$uid;
         if ($uid !== null && function_exists('posix_getpwuid')) {
-            $record = @posix_getpwuid($uid); if (is_array($record) && isset($record['name'])) $user = (string)$record['name'];
+            $record = @posix_getpwuid($uid); if (is_array($record) && isset($record['name'])) $user = $utf8($record['name']);
         }
         $processes[] = ['pid' => $pid, 'ppid' => $ppid, 'user' => $user, 'memKb' => $memKb,
             'name' => $name !== '' ? $name : $processName($cmd), 'cmd' => $cmd];
@@ -73,14 +85,14 @@ $listLinuxProc = static function () use ($processName) {
     }
     return $processes;
 };
-$listWindows = static function () use ($run, $processName) {
+$listWindows = static function () use ($run, $processName, $utf8) {
     $result = $run('wmic process get ProcessId,ParentProcessId,Name,CommandLine,WorkingSetSize /format:csv');
     $processes = [];
     foreach (preg_split('/\r?\n/', trim($result['output'])) as $line) {
         if (trim($line) === '') continue;
         $columns = str_getcsv($line);
         if (count($columns) < 6 || !is_numeric($columns[count($columns) - 2])) continue;
-        $cmd = (string)$columns[1]; $name = (string)$columns[2];
+        $cmd = $utf8($columns[1]); $name = $utf8($columns[2]);
         $processes[] = ['pid' => (int)$columns[count($columns) - 2],
             'ppid' => is_numeric($columns[count($columns) - 3]) ? (int)$columns[count($columns) - 3] : 0,
             'memKb' => is_numeric($columns[count($columns) - 1]) ? (int)round($columns[count($columns) - 1] / 1024) : 0,
@@ -93,7 +105,8 @@ $listWindows = static function () use ($run, $processName) {
         $columns = str_getcsv($line);
         if (count($columns) < 5 || !is_numeric($columns[1])) continue;
         $memory = (int)preg_replace('/[^0-9]/', '', $columns[4]);
-        $processes[] = ['pid' => (int)$columns[1], 'name' => $columns[0], 'cmd' => $columns[0], 'memKb' => $memory];
+        $name = $utf8($columns[0]);
+        $processes[] = ['pid' => (int)$columns[1], 'name' => $name, 'cmd' => $name, 'memKb' => $memory];
     }
     return array_slice($processes, 0, 2000);
 };
