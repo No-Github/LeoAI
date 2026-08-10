@@ -39,6 +39,7 @@ data.db-wal
 data.db-wal-*
 .leo/
 /root/users/
+/root/skills/
 
 ### Internal dev docs (not for public repo) ###
 CODE_QUALITY_AUDIT.md

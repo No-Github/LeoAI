@@ -23,7 +23,7 @@ public enum ServletNamespace {
         return value;
     }
 
-    /** AUTO 保持历史行为，当前解析为 javax。 */
+    /** AUTO 解析为 javax。 */
     public ServletNamespace resolve() {
         return this == AUTO ? JAVAX : this;
     }

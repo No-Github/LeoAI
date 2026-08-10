@@ -17,7 +17,7 @@ public class ComponentClassNameStrategy {
     private Mode mode = Mode.APPLICATION;
 
     public enum Mode {
-        /** 使用原有的应用类命名画像。 */
+        /** 使用应用类命名画像。 */
         APPLICATION,
         /** 生成 Outer$Inner 形态。 */
         INNER_CLASS,

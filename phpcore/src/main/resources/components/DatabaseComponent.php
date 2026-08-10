@@ -40,7 +40,7 @@ $dbCell = static function ($value, $column) {
 };
 
 return [
-    'id' => 'DatabaseComponent', 'version' => '2.0.0',
+    'id' => 'DatabaseComponent', 'version' => '2.2.0',
     'handle' => static function ($action, $params) use ($dbGet, $dbEmpty, $dbColumn, $dbCell) {
         if ($action === 'capabilities') {
             $pdoAvailable = class_exists('PDO');
@@ -98,15 +98,32 @@ return [
             }
             $statement = $pdo->prepare($sql);
             if ($statement === false) throw new RuntimeException('failed to prepare SQL statement');
-            $statement->execute();
+            $parameters = $dbGet($params, 'parameters', []);
+            if (!is_array($parameters)) {
+                return $dbEmpty(400, 'parameters must be an array', 'INVALID_ARGUMENT', null, false);
+            }
+            $statement->execute(array_values($parameters));
             $columnCount = (int)$statement->columnCount(); $columns = []; $rows = [];
+            $maxRows = max(1, min(100000, (int)$dbGet($params, 'maxRows', 1000)));
+            $maxResultBytes = max(1024, min(16777216,
+                (int)$dbGet($params, 'maxResultBytes', 4194304)));
+            $resultBytes = 0; $truncated = false; $truncationReason = null;
             if ($columnCount > 0) {
                 for ($index = 0; $index < $columnCount; $index++) $columns[] = $dbColumn($statement, $index);
                 while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+                    if (count($rows) >= $maxRows) {
+                        $truncated = true; $truncationReason = 'MAX_ROWS'; break;
+                    }
                     foreach ($columns as $column) {
                         $name = $column['label'];
                         if (array_key_exists($name, $row)) $row[$name] = $dbCell($row[$name], $column);
                     }
+                    $encodedRow = json_encode($row);
+                    $rowBytes = $encodedRow === false ? 0 : strlen($encodedRow);
+                    if ($resultBytes + $rowBytes > $maxResultBytes) {
+                        $truncated = true; $truncationReason = 'MAX_RESULT_BYTES'; break;
+                    }
+                    $resultBytes += $rowBytes;
                     $rows[] = $row;
                 }
                 $affectedRows = 0;
@@ -121,6 +138,8 @@ return [
             }
             $result = ['code' => 200, 'msg' => '执行成功', 'columns' => $columns, 'rows' => $rows,
                 'rowCount' => count($rows), 'affectedRows' => $affectedRows, 'generatedKey' => $generatedKey,
+                'truncated' => $truncated, 'truncationReason' => $truncationReason,
+                'resultBytes' => $resultBytes,
                 'serverVersion' => $serverVersion,
                 'runtimeMetadata' => ['provider' => 'pdo', 'driver' => $pdoDriver]];
             $statement->closeCursor(); $pdo = null;

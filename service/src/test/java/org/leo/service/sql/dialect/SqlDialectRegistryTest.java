@@ -37,8 +37,20 @@ class SqlDialectRegistryTest {
                 .filter(item -> "mysql".equals(item.get("type")))
                 .findFirst()
                 .orElseThrow();
+        Map<String, Object> postgresql = catalog.stream()
+                .filter(item -> "postgresql".equals(item.get("type")))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> sqlServer = catalog.stream()
+                .filter(item -> "sqlserver".equals(item.get("type")))
+                .findFirst()
+                .orElseThrow();
 
         assertEquals(List.of("custom"), generic.get("connectionModes"));
+        assertEquals(List.of(), generic.get("namespaceLevels"));
+        assertEquals(List.of("catalog"), mysql.get("namespaceLevels"));
+        assertEquals(List.of("schema"), postgresql.get("namespaceLevels"));
+        assertEquals(List.of("catalog", "schema"), sqlServer.get("namespaceLevels"));
         assertTrue(((List<?>) mysql.get("aliases")).contains("mariadb"));
         assertEquals(List.of("standard", "custom"), mysql.get("connectionModes"));
         assertTrue(((List<?>) mysql.get("dataTypes")).stream()

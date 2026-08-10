@@ -473,7 +473,7 @@ public class DynamicModelProvider {
 
     /**
      * 计算 Responses API 有效 baseUrl。LangChain4j Responses 模型内部会拼接 "/responses"，
-     * 因此这里统一返回 API root，不再使用历史 completionsPath。
+     * 因此这里统一返回 API root。
      */
     public static String resolveResponsesBaseUrl(AiModelConfig config) {
         String baseUrl = config.getBaseUrl();

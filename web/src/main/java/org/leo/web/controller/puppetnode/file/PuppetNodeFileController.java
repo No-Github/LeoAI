@@ -45,8 +45,7 @@ public class PuppetNodeFileController {
     private static final Set<Integer> CHUNK_SUCCESS_CODES = Set.of(100, 200);
 
     /**
-     * 获取目标节点文件系统能力。前端以此决定路径分隔符、根目录和大小写语义，
-     * 不再从路径文本推断 Windows/Linux。
+     * 获取目标节点文件系统能力。前端以此决定路径分隔符、根目录和大小写语义。
      */
     @RequestMapping(value = "/profile", method = RequestMethod.POST)
     public HashMap<String, Object> fileSystemProfile(@RequestBody HashMap<String, Object> params) {

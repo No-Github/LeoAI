@@ -15,6 +15,7 @@ import org.leo.ai.service.SkillRegistryService;
 import org.leo.ai.service.SkillValidationIssue;
 import org.leo.core.util.ApiResponse;
 import org.leo.web.security.AdminOnlyEndpoint;
+import org.leo.web.util.DownloadHeaders;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -864,7 +865,7 @@ public class SkillController {
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.parseMediaType("application/zip"));
-            headers.setContentDisposition(buildAttachmentDisposition(name.trim() + ".skill"));
+            headers.setContentDisposition(DownloadHeaders.attachment(name.trim() + ".skill"));
             return ResponseEntity.ok().headers(headers).body(bytes);
         } catch (IOException e) {
             return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
@@ -915,7 +916,7 @@ public class SkillController {
             String filename = "skills_" + scope.trim() + "_" + LocalDate.now() + ".zip";
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.parseMediaType("application/zip"));
-            headers.setContentDisposition(buildAttachmentDisposition(filename));
+            headers.setContentDisposition(DownloadHeaders.attachment(filename));
             return ResponseEntity.ok().headers(headers).body(bytes);
         } catch (IOException e) {
             return ResponseEntity.internalServerError().body(("导出失败：" + e.getMessage()).getBytes(StandardCharsets.UTF_8));
@@ -969,13 +970,6 @@ public class SkillController {
         } catch (IOException e) {
             return ApiResponse.error("导入失败：" + e.getMessage());
         }
-    }
-
-    /** 构造 RFC 5987 兼容的 attachment Content-Disposition，处理中文/特殊字符。 */
-    private static org.springframework.http.ContentDisposition buildAttachmentDisposition(String filename) {
-        return org.springframework.http.ContentDisposition.attachment()
-                .filename(filename, StandardCharsets.UTF_8)
-                .build();
     }
 
     /**

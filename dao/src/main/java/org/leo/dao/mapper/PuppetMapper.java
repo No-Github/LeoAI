@@ -66,6 +66,9 @@ public interface PuppetMapper {
     @Delete("DELETE FROM puppets WHERE puppet_id = #{puppetId}")
     boolean deletePuppetById(@Param("puppetId") String puppetId);
 
+    @Delete("DELETE FROM project_puppets WHERE puppet_id = #{puppetId}")
+    boolean deleteProjectRelationsByPuppetId(@Param("puppetId") String puppetId);
+
     @Update("UPDATE puppets SET puppet_name=#{puppetName}, parent_puppet_id=#{parentPuppetId}, create_by_user_id=#{createByUserId}, team_id=#{teamId}, conn_link=#{connLink}, protocol=#{protocol}, headers=#{headers}, req_disguise_id=#{reqDisguiseId}, resp_disguise_id=#{respDisguiseId}, proxy_enabled=#{proxyEnabled}, proxy_type=#{proxyType}, proxy_host=#{proxyHost}, proxy_port=#{proxyPort}, max_req_count=#{maxReqCount}, permission=#{permission}, last_heartbeat=#{lastHeartbeat}, heartbeat_interval=#{heartbeatInterval}, update_time=#{updateTime}, remark=#{remark}, url_strategy=#{urlStrategy}, padding_strategy=#{paddingStrategy}, header_noise_strategy=#{headerNoiseStrategy}, tls_fingerprint_strategy=#{tlsFingerprintStrategy}, component_class_name_strategy=#{componentClassNameStrategy}, type=#{type} WHERE puppet_id=#{puppetId}")
     boolean updatePuppetById(@Param("puppetId") String puppetId,
                             @Param("puppetName") String puppetName,

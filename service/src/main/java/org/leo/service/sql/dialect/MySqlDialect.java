@@ -1,5 +1,6 @@
 package org.leo.service.sql.dialect;
 
+import org.leo.service.sql.SqlObjectRef;
 
 import java.util.Arrays;
 import java.util.List;
@@ -22,22 +23,27 @@ public class MySqlDialect extends AbstractSqlDialect {
     }
     public String buildTestSql() { return "SELECT VERSION() AS version"; }
     public String buildDatabasesSql() { return "SHOW DATABASES"; }
-    public String buildTablesSql(String database) {
+    public String buildTablesSql(SqlObjectRef namespace) {
+        String database = namespace == null ? null : namespace.namespace();
         if (isBlank(database)) {
-            return "SELECT TABLE_NAME AS name, TABLE_SCHEMA AS schema_name, TABLE_COMMENT AS comment FROM information_schema.TABLES " +
-                    "WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME";
+            return "SELECT TABLE_NAME AS name, TABLE_SCHEMA AS schema_name, TABLE_COMMENT AS remarks FROM information_schema.TABLES " +
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME";
         }
-        return "SELECT TABLE_NAME AS name, TABLE_SCHEMA AS schema_name, TABLE_COMMENT AS comment FROM information_schema.TABLES " +
-                "WHERE TABLE_SCHEMA = " + formatLiteral(database) + " ORDER BY TABLE_NAME";
+        return "SELECT TABLE_NAME AS name, TABLE_SCHEMA AS schema_name, TABLE_COMMENT AS remarks FROM information_schema.TABLES " +
+                "WHERE TABLE_SCHEMA = " + formatLiteral(database) + " AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME";
     }
-    public String buildTableColumnsSql(String database, String table) {
+    public String buildTableColumnsSql(SqlObjectRef tableRef) {
+        String database = tableRef == null ? null : tableRef.namespace();
+        String table = tableRef == null ? null : tableRef.name();
         String schemaExpr = isBlank(database) ? "DATABASE()" : formatLiteral(database);
         return "SELECT c.COLUMN_NAME AS name, c.COLUMN_TYPE AS type, c.IS_NULLABLE AS nullable, c.COLUMN_DEFAULT AS default_value, " +
-                "c.COLUMN_COMMENT AS comment, c.CHARACTER_MAXIMUM_LENGTH AS length, c.NUMERIC_PRECISION AS numeric_precision, c.NUMERIC_SCALE AS numeric_scale, " +
+                "c.COLUMN_COMMENT AS remarks, c.CHARACTER_MAXIMUM_LENGTH AS length, c.NUMERIC_PRECISION AS numeric_precision, c.NUMERIC_SCALE AS numeric_scale, " +
                 "CASE WHEN c.COLUMN_KEY = 'PRI' THEN 1 ELSE 0 END AS primary_key FROM information_schema.COLUMNS c " +
                 "WHERE c.TABLE_SCHEMA = " + schemaExpr + " AND c.TABLE_NAME = " + formatLiteral(table) + " ORDER BY c.ORDINAL_POSITION";
     }
-    protected String buildQualifiedTable(String database, String table) {
+    protected String buildQualifiedTable(SqlObjectRef tableRef) {
+        String database = tableRef == null ? null : tableRef.namespace();
+        String table = tableRef == null ? null : tableRef.name();
         if (isBlank(database)) {
             return escapeIdentifier(table);
         }

@@ -30,7 +30,7 @@ public class ComponentController {
             List<String> loadedList = loaded == null ? new ArrayList<>() : new ArrayList<>(loaded);
             Collections.sort(loadedList);
 
-            // Runtime 可提供自己的动态制品列表；Java 旧节点继续扫描 .payload。
+            // Runtime 优先提供动态制品列表；未提供时扫描 classpath 中的 .payload。
             Set<String> runtimeAvailable = componentNode.getAvailableComponents();
             List<String> availableList = runtimeAvailable == null || runtimeAvailable.isEmpty()
                     ? scanAvailableComponents() : new ArrayList<>(runtimeAvailable);

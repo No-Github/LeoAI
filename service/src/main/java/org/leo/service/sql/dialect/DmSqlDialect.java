@@ -1,15 +1,16 @@
 package org.leo.service.sql.dialect;
 
+import org.leo.service.sql.SqlObjectRef;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/** Dameng DM dialect. The connection database field represents an owner/schema. */
 public class DmSqlDialect extends AbstractSqlDialect {
 
     public String getType() { return "dm"; }
     public String getName() { return "达梦 DM"; }
     public Integer getDefaultPort() { return 5236; }
+    public List<String> getNamespaceLevels() { return List.of("schema"); }
     public List<Map<String, Object>> getVariants() {
         return Arrays.<Map<String, Object>>asList(
                 variant("default", "达梦 DM", "host", "port", "database", "username", "password", "options"));
@@ -26,31 +27,38 @@ public class DmSqlDialect extends AbstractSqlDialect {
     public SqlDialectCapabilities getCapabilities() { return SqlDialectCapabilities.managed(false); }
     public Map<String, Boolean> getRuntimeSupport() { return Map.of("java", true, "php", false); }
     public String buildTestSql() { return "SELECT BANNER AS version FROM V$VERSION WHERE ROWNUM = 1"; }
-    public String buildDatabasesSql() { return "SELECT USERNAME AS name FROM ALL_USERS ORDER BY USERNAME"; }
+    public String buildDatabasesSql() {
+        return "SELECT USER AS name FROM DUAL UNION SELECT DISTINCT OWNER AS name FROM ALL_TABLES ORDER BY name";
+    }
     public String buildCreateDatabaseSql(String database) {
         throw new IllegalArgumentException("dm 暂不支持通过该接口创建数据库实例");
     }
-    public String buildTablesSql(String database) {
-        String ownerExpr = isBlank(database) ? "USER" : formatLiteral(database.toUpperCase());
-        return "SELECT t.TABLE_NAME AS name, t.OWNER AS schema_name, COALESCE(c.COMMENTS, '') AS comment " +
+    public String buildTablesSql(SqlObjectRef namespace) {
+        String database = namespace == null ? null : namespace.namespace();
+        String ownerExpr = isBlank(database) ? "USER" : formatLiteral(database);
+        return "SELECT t.TABLE_NAME AS name, t.OWNER AS schema_name, c.COMMENTS AS remarks " +
                 "FROM ALL_TABLES t LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME " +
                 "WHERE t.OWNER = " + ownerExpr + " ORDER BY t.TABLE_NAME";
     }
-    public String buildTableColumnsSql(String database, String table) {
-        String ownerExpr = isBlank(database) ? "USER" : formatLiteral(database.toUpperCase());
+    public String buildTableColumnsSql(SqlObjectRef tableRef) {
+        String database = tableRef == null ? null : tableRef.namespace();
+        String table = tableRef == null ? null : tableRef.name();
+        String ownerExpr = isBlank(database) ? "USER" : formatLiteral(database);
         return "SELECT c.COLUMN_NAME AS name, c.DATA_TYPE AS type, CASE WHEN c.NULLABLE = 'Y' THEN 'YES' ELSE 'NO' END AS nullable, " +
-                "c.DATA_DEFAULT AS default_value, COALESCE(cc.COMMENTS, '') AS comment, c.CHAR_LENGTH AS length, " +
+                "c.DATA_DEFAULT AS default_value, (SELECT cc.COMMENTS FROM ALL_COL_COMMENTS cc " +
+                "WHERE cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME) AS remarks, c.CHAR_LENGTH AS length, " +
                 "c.DATA_PRECISION AS numeric_precision, c.DATA_SCALE AS numeric_scale, " +
-                "CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS primary_key FROM ALL_TAB_COLUMNS c " +
-                "LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME " +
-                "LEFT JOIN (SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME FROM ALL_CONSTRAINTS ac JOIN ALL_CONS_COLUMNS acc " +
-                "ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME WHERE ac.CONSTRAINT_TYPE = 'P') pk " +
-                "ON pk.OWNER = c.OWNER AND pk.TABLE_NAME = c.TABLE_NAME AND pk.COLUMN_NAME = c.COLUMN_NAME " +
-                "WHERE c.OWNER = " + ownerExpr + " AND c.TABLE_NAME = " + formatLiteral(table.toUpperCase()) + " ORDER BY c.COLUMN_ID";
+                "CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS ac JOIN ALL_CONS_COLUMNS acc " +
+                "ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME " +
+                "WHERE ac.CONSTRAINT_TYPE = 'P' AND acc.OWNER = c.OWNER AND acc.TABLE_NAME = c.TABLE_NAME " +
+                "AND acc.COLUMN_NAME = c.COLUMN_NAME) THEN 1 ELSE 0 END AS primary_key FROM ALL_TAB_COLUMNS c " +
+                "WHERE c.OWNER = " + ownerExpr + " AND c.TABLE_NAME = " + formatLiteral(table) + " ORDER BY c.COLUMN_ID";
     }
-    protected String buildQualifiedTable(String database, String table) {
-        if (isBlank(database)) return escapeIdentifier(table.toUpperCase());
-        return escapeIdentifier(database.toUpperCase()) + "." + escapeIdentifier(table.toUpperCase());
+    protected String buildQualifiedTable(SqlObjectRef tableRef) {
+        String database = tableRef == null ? null : tableRef.namespace();
+        String table = tableRef == null ? null : tableRef.name();
+        if (isBlank(database)) return escapeIdentifier(table);
+        return escapeIdentifier(database) + "." + escapeIdentifier(table);
     }
     protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
         return "SELECT * FROM (SELECT inner_query.*, ROWNUM rn FROM (" + baseSql + ") inner_query WHERE ROWNUM <= "

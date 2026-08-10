@@ -28,7 +28,13 @@ public final class PhpDatabaseConnectionAdapter {
         result.put("username", connection.getUsername());
         result.put("password", connection.getPassword());
         result.put("timeoutSeconds", connection.getTimeoutSeconds());
+        copyIfPresent(override, result, "maxRows");
+        copyIfPresent(override, result, "maxResultBytes");
         return result;
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key) && source.get(key) != null) target.put(key, source.get(key));
     }
 
     public String defaultDriver(String type) {

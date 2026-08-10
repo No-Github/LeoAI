@@ -10,9 +10,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Windows 注册表管理服务（服务器端解析版）。
- * 直接通过 execFast / execWithTimeout 执行 reg 命令，在服务端解析输出，
- * 不再依赖 RegistryComponent.payload。
+ * Windows 注册表管理服务。
+ * 通过 execFast / execWithTimeout 执行 reg 命令，并在平台侧解析输出。
  */
 public class RegistryService extends ComponentService {
 

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -53,13 +54,17 @@ public class SessionManageController {
      * 获取当前用户的所有会话连接。
      */
     @GetMapping("/sessions")
-    public HashMap<String, Object> getAllSessions(HttpServletRequest request) {
+    public HashMap<String, Object> getAllSessions(
+            HttpServletRequest request,
+            @RequestParam(value = "projectId", required = false) String projectId) {
         User user = ControllerUtil.getCurrentUser(request);
         Map<String, PuppetNodeSession> sessionMap = PuppetNodeSessionContainer.getAllSession();
 
         Set<SessionInfo> sessions = sessionMap.entrySet().stream()
                 .filter(e -> isValidSession(e.getValue()))
                 .filter(e -> ControllerUtil.canAccessSession(e.getValue(), user))
+                .filter(e -> projectId == null || projectId.isBlank()
+                        || projectId.trim().equals(e.getValue().getProjectId()))
                 .map(e -> toSessionInfo(e.getKey(), e.getValue()))
                 .collect(Collectors.toSet());
 
@@ -113,6 +118,7 @@ public class SessionManageController {
         Puppet puppet = session.getPuppetNode().getPuppet();
         return new SessionInfo(
                 sessionId,
+                session.getProjectId(),
                 puppet.getPuppetId(),
                 puppet.getPuppetName(),
                 puppet.getConnLink(),

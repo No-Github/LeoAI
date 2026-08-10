@@ -1,8 +1,14 @@
 package org.leo.service.sql.dialect;
 
+import org.leo.core.puppet.database.SqlCommand;
+import org.leo.service.sql.SqlObjectRef;
+
 import java.util.*;
 
 public abstract class AbstractSqlDialect {
+
+    private static final int MAX_FILTERS = 256;
+    private static final int MAX_ORDER_BY = 16;
 
     public abstract String getType();
 
@@ -18,9 +24,32 @@ public abstract class AbstractSqlDialect {
 
     public abstract String buildDatabasesSql();
 
-    public abstract String buildTablesSql(String database);
+    public abstract String buildTablesSql(SqlObjectRef namespace);
 
-    public abstract String buildTableColumnsSql(String database, String table);
+    public abstract String buildTableColumnsSql(SqlObjectRef table);
+
+    /** Ordered namespace levels exposed by this dialect in the object explorer. */
+    public List<String> getNamespaceLevels() {
+        return List.of("catalog");
+    }
+
+    public SqlObjectRef namespaceRef(String name) {
+        if (getNamespaceLevels().contains("schema") && !getNamespaceLevels().contains("catalog")) {
+            return SqlObjectRef.schema(name);
+        }
+        return SqlObjectRef.catalog(name);
+    }
+
+    public SqlObjectRef tableRef(String namespace, String schema, String table) {
+        List<String> levels = getNamespaceLevels();
+        if (levels.contains("catalog") && levels.contains("schema")) {
+            return SqlObjectRef.table(namespace, schema, table);
+        }
+        if (levels.contains("schema")) {
+            return SqlObjectRef.table(null, schema == null || schema.isBlank() ? namespace : schema, table);
+        }
+        return SqlObjectRef.table(namespace, null, table);
+    }
 
     public SqlDialectCapabilities getCapabilities() {
         return SqlDialectCapabilities.managed(true);
@@ -30,61 +59,38 @@ public abstract class AbstractSqlDialect {
         return Map.of("java", true, "php", true);
     }
 
-    protected abstract String buildQualifiedTable(String database, String table);
+    protected abstract String buildQualifiedTable(SqlObjectRef table);
 
     protected abstract String buildPaginationSql(String baseSql, int offset, int pageSize);
 
     protected abstract String escapeIdentifier(String identifier);
 
-    public String buildCountSql(String database, String table, List<Map<String, Object>> filters) {
-        return "SELECT COUNT(*) AS total FROM " + buildQualifiedTable(database, table) + buildWhereClause(filters);
+    public SqlCommand buildCountCommand(SqlObjectRef table, List<Map<String, Object>> filters) {
+        BoundClause where = buildBoundWhereClause(filters);
+        return SqlCommand.parameterized(
+                "SELECT COUNT(*) AS total FROM " + buildQualifiedTable(table) + where.sql(),
+                where.parameters());
     }
 
-    public String buildQueryTableSql(String database,
-                                     String table,
-                                     int page,
-                                     int pageSize,
-                                     List<String> columns,
-                                     List<Map<String, Object>> orderBy,
-                                     List<Map<String, Object>> filters) {
-        String selectColumns = buildSelectColumns(columns);
-        String baseSql = "SELECT " + selectColumns + " FROM " + buildQualifiedTable(database, table)
-                + buildWhereClause(filters) + buildOrderByClause(orderBy);
-        return buildPaginationSql(baseSql, Math.max(0, (page - 1) * pageSize), pageSize);
+    public SqlCommand buildQueryTableCommand(SqlObjectRef table,
+                                             int page,
+                                             int pageSize,
+                                             List<String> columns,
+                                             List<Map<String, Object>> orderBy,
+                                             List<Map<String, Object>> filters) {
+        BoundClause where = buildBoundWhereClause(filters);
+        String baseSql = "SELECT " + buildSelectColumns(columns) + " FROM " + buildQualifiedTable(table)
+                + where.sql() + buildOrderByClause(orderBy);
+        return SqlCommand.parameterized(
+                buildPaginationSql(baseSql, Math.max(0, (page - 1) * pageSize), pageSize),
+                where.parameters());
     }
 
-    public String buildCreateTableSql(String database, String table, List<Map<String, Object>> columns) {
+    public String buildCreateTableSql(SqlObjectRef table, List<Map<String, Object>> columns) {
         List<String> definitions = new ArrayList<String>();
         List<String> primaryKeys = new ArrayList<String>();
-        for (Map<String, Object> column : columns) {
-            String name = stringValue(column.get("name"));
-            String type = stringValue(column.get("type"));
-            if (isBlank(name) || isBlank(type)) {
-                continue;
-            }
-            boolean nullable = toBoolean(column.get("nullable"), true);
-            boolean primaryKey = toBoolean(column.get("primaryKey"), false);
-            Object defaultValue = column.get("defaultValue");
-            StringBuilder definition = new StringBuilder();
-            definition.append(escapeIdentifier(name)).append(" ").append(type.trim());
-            if (!nullable || primaryKey) {
-                definition.append(" NOT NULL");
-            }
-            if (defaultValue != null) {
-                definition.append(" DEFAULT ").append(formatDefaultValue(defaultValue));
-            }
-            definitions.add(definition.toString());
-            if (primaryKey) {
-                primaryKeys.add(escapeIdentifier(name));
-            }
-        }
-        if (definitions.isEmpty()) {
-            throw new IllegalArgumentException("columns 不能为空");
-        }
-        if (!primaryKeys.isEmpty()) {
-            definitions.add("PRIMARY KEY (" + String.join(", ", primaryKeys) + ")");
-        }
-        return "CREATE TABLE " + buildQualifiedTable(database, table) + " (\n  " + String.join(",\n  ", definitions) + "\n)";
+        appendColumnDefinitions(columns, definitions, primaryKeys);
+        return "CREATE TABLE " + buildQualifiedTable(table) + " (\n  " + String.join(",\n  ", definitions) + "\n)";
     }
 
     public String buildCreateDatabaseSql(String database) {
@@ -94,52 +100,50 @@ public abstract class AbstractSqlDialect {
         return "CREATE DATABASE " + escapeIdentifier(database);
     }
 
-    public String buildInsertSql(String database, String table, Map<String, Object> row) {
-        if (row == null || row.isEmpty()) {
-            throw new IllegalArgumentException("row 不能为空");
-        }
+    public SqlCommand buildInsertCommand(SqlObjectRef table, Map<String, Object> row) {
+        if (row == null || row.isEmpty()) throw new IllegalArgumentException("row 不能为空");
         List<String> fields = new ArrayList<String>();
-        List<String> values = new ArrayList<String>();
+        List<String> placeholders = new ArrayList<String>();
+        List<Object> parameters = new ArrayList<Object>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
-            if (isBlank(entry.getKey())) {
-                continue;
-            }
+            if (isBlank(entry.getKey())) continue;
             fields.add(escapeIdentifier(entry.getKey()));
-            values.add(formatLiteral(entry.getValue()));
+            placeholders.add("?");
+            parameters.add(entry.getValue());
         }
-        if (fields.isEmpty()) {
-            throw new IllegalArgumentException("row 不能为空");
-        }
-        return "INSERT INTO " + buildQualifiedTable(database, table) + " (" + String.join(", ", fields) + ") VALUES (" + String.join(", ", values) + ")";
+        if (fields.isEmpty()) throw new IllegalArgumentException("row 不能为空");
+        return SqlCommand.parameterized(
+                "INSERT INTO " + buildQualifiedTable(table) + " (" + String.join(", ", fields)
+                        + ") VALUES (" + String.join(", ", placeholders) + ")",
+                parameters);
     }
 
-    public String buildUpdateSql(String database, String table, Map<String, Object> where, Map<String, Object> update) {
-        if (update == null || update.isEmpty()) {
-            throw new IllegalArgumentException("update 不能为空");
-        }
+    public SqlCommand buildUpdateCommand(SqlObjectRef table,
+                                         Map<String, Object> where,
+                                         Map<String, Object> update) {
+        if (update == null || update.isEmpty()) throw new IllegalArgumentException("update 不能为空");
         List<String> sets = new ArrayList<String>();
+        List<Object> parameters = new ArrayList<Object>();
         for (Map.Entry<String, Object> entry : update.entrySet()) {
-            if (isBlank(entry.getKey())) {
-                continue;
-            }
-            sets.add(escapeIdentifier(entry.getKey()) + " = " + formatLiteral(entry.getValue()));
+            if (isBlank(entry.getKey())) continue;
+            sets.add(escapeIdentifier(entry.getKey()) + " = ?");
+            parameters.add(entry.getValue());
         }
-        if (sets.isEmpty()) {
-            throw new IllegalArgumentException("update 不能为空");
-        }
-        String whereClause = buildStructuredWhereClause(where);
-        if (isBlank(whereClause)) {
-            throw new IllegalArgumentException("where 不能为空");
-        }
-        return "UPDATE " + buildQualifiedTable(database, table) + " SET " + String.join(", ", sets) + whereClause;
+        if (sets.isEmpty()) throw new IllegalArgumentException("update 不能为空");
+        BoundClause whereClause = buildBoundStructuredWhereClause(where);
+        if (isBlank(whereClause.sql())) throw new IllegalArgumentException("where 不能为空");
+        parameters.addAll(whereClause.parameters());
+        return SqlCommand.parameterized(
+                "UPDATE " + buildQualifiedTable(table) + " SET " + String.join(", ", sets) + whereClause.sql(),
+                parameters);
     }
 
-    public String buildDeleteSql(String database, String table, Map<String, Object> where) {
-        String whereClause = buildStructuredWhereClause(where);
-        if (isBlank(whereClause)) {
-            throw new IllegalArgumentException("where 不能为空");
-        }
-        return "DELETE FROM " + buildQualifiedTable(database, table) + whereClause;
+    public SqlCommand buildDeleteCommand(SqlObjectRef table, Map<String, Object> where) {
+        BoundClause whereClause = buildBoundStructuredWhereClause(where);
+        if (isBlank(whereClause.sql())) throw new IllegalArgumentException("where 不能为空");
+        return SqlCommand.parameterized(
+                "DELETE FROM " + buildQualifiedTable(table) + whereClause.sql(),
+                whereClause.parameters());
     }
 
     public Map<String, Object> toInfo() {
@@ -149,10 +153,34 @@ public abstract class AbstractSqlDialect {
         item.put("defaultPort", getDefaultPort());
         item.put("variants", immutableMetadataList(getVariants()));
         item.put("dataTypes", immutableMetadataList(getDataTypes()));
+        item.put("namespaceLevels", List.copyOf(getNamespaceLevels()));
         item.put("runtimeSupport", Collections.unmodifiableMap(
                 new LinkedHashMap<String, Boolean>(getRuntimeSupport())));
         item.put("capabilities", getCapabilities().toMap());
         return item;
+    }
+
+    private void appendColumnDefinitions(List<Map<String, Object>> columns,
+                                         List<String> definitions,
+                                         List<String> primaryKeys) {
+        if (columns != null) {
+            for (Map<String, Object> column : columns) {
+                String name = stringValue(column.get("name"));
+                String type = stringValue(column.get("type"));
+                if (isBlank(name) || isBlank(type)) continue;
+                boolean nullable = toBoolean(column.get("nullable"), true);
+                boolean primaryKey = toBoolean(column.get("primaryKey"), false);
+                Object defaultValue = column.get("defaultValue");
+                StringBuilder definition = new StringBuilder();
+                definition.append(escapeIdentifier(name)).append(" ").append(type.trim());
+                if (!nullable || primaryKey) definition.append(" NOT NULL");
+                if (defaultValue != null) definition.append(" DEFAULT ").append(formatDefaultValue(defaultValue));
+                definitions.add(definition.toString());
+                if (primaryKey) primaryKeys.add(escapeIdentifier(name));
+            }
+        }
+        if (definitions.isEmpty()) throw new IllegalArgumentException("columns 不能为空");
+        if (!primaryKeys.isEmpty()) definitions.add("PRIMARY KEY (" + String.join(", ", primaryKeys) + ")");
     }
 
     protected String buildSelectColumns(List<String> columns) {
@@ -172,6 +200,9 @@ public abstract class AbstractSqlDialect {
         if (orderBy == null || orderBy.isEmpty()) {
             return "";
         }
+        if (orderBy.size() > MAX_ORDER_BY) {
+            throw new IllegalArgumentException("排序字段数量超过上限 " + MAX_ORDER_BY);
+        }
         List<String> parts = new ArrayList<String>();
         for (Map<String, Object> item : orderBy) {
             String field = stringValue(item.get("field"));
@@ -184,18 +215,17 @@ public abstract class AbstractSqlDialect {
         return parts.isEmpty() ? "" : " ORDER BY " + String.join(", ", parts);
     }
 
-    protected String buildWhereClause(List<Map<String, Object>> filters) {
-        if (filters == null || filters.isEmpty()) {
-            return "";
-        }
+    protected BoundClause buildBoundWhereClause(List<Map<String, Object>> filters) {
+        if (filters == null || filters.isEmpty()) return BoundClause.empty();
+        requireFilterLimit(filters);
         List<String> conditions = new ArrayList<String>();
+        List<Object> parameters = new ArrayList<Object>();
         for (Map<String, Object> filter : filters) {
             String field = stringValue(filter.get("field"));
             String operator = stringValue(filter.get("operator"));
             Object value = filter.get("value");
-            if (isBlank(field) || isBlank(operator)) {
-                continue;
-            }
+            if (isBlank(field) || isBlank(operator)) continue;
+
             String escapedField = escapeIdentifier(field);
             String normalized = operator.trim().toLowerCase(Locale.ROOT);
             if ("is_null".equals(normalized)) {
@@ -205,88 +235,103 @@ public abstract class AbstractSqlDialect {
             } else if ("in".equals(normalized) || "not_in".equals(normalized)) {
                 List<Object> values = toList(value);
                 if (values.isEmpty()) {
+                    conditions.add("in".equals(normalized) ? "1 = 0" : "1 = 1");
                     continue;
                 }
-                List<String> items = new ArrayList<String>();
-                for (Object item : values) {
-                    items.add(formatLiteral(item));
-                }
-                conditions.add(escapedField + ("not_in".equals(normalized) ? " NOT IN (" : " IN (") + String.join(", ", items) + ")");
-            } else if ("like".equals(normalized)) {
-                conditions.add(escapedField + " LIKE " + formatLiteral(value));
+                conditions.add(escapedField + ("not_in".equals(normalized) ? " NOT IN (" : " IN (")
+                        + String.join(", ", Collections.nCopies(values.size(), "?")) + ")");
+                parameters.addAll(values);
+            } else if (("eq".equals(normalized) || "=".equals(normalized)) && value == null) {
+                conditions.add(escapedField + " IS NULL");
+            } else if (("ne".equals(normalized) || "<>".equals(normalized) || "!=".equals(normalized))
+                    && value == null) {
+                conditions.add(escapedField + " IS NOT NULL");
             } else {
-                conditions.add(escapedField + " " + normalizeOperator(normalized) + " " + formatLiteral(value));
+                conditions.add(escapedField + ("like".equals(normalized)
+                        ? " LIKE ?" : " " + normalizeOperator(normalized) + " ?"));
+                parameters.add(value);
             }
         }
-        return conditions.isEmpty() ? "" : " WHERE " + String.join(" AND ", conditions);
+        return conditions.isEmpty()
+                ? BoundClause.empty()
+                : new BoundClause(" WHERE " + String.join(" AND ", conditions), parameters);
     }
 
     @SuppressWarnings("unchecked")
-    protected String buildStructuredWhereClause(Map<String, Object> where) {
-        if (where == null || where.isEmpty()) {
-            return "";
-        }
+    protected BoundClause buildBoundStructuredWhereClause(Map<String, Object> where) {
+        if (where == null || where.isEmpty()) return BoundClause.empty();
         String type = stringValue(where.get("type"));
         if ("pk".equalsIgnoreCase(type)) {
             Object values = where.get("values");
             if (values instanceof Map<?, ?>) {
-                return " WHERE " + joinEqualsConditions((Map<String, Object>) values, " AND ");
+                BoundClause clause = buildBoundEqualsConditions((Map<String, Object>) values, " AND ");
+                return clause.sql().isEmpty() ? clause : clause.withPrefix(" WHERE ");
             }
         }
         if ("pk_list".equalsIgnoreCase(type)) {
             Object items = where.get("items");
             if (items instanceof List<?>) {
-                List<?> list = (List<?>) items;
                 List<String> groups = new ArrayList<String>();
-                for (Object item : list) {
-                    if (item instanceof Map<?, ?>) {
-                        String condition = joinEqualsConditions((Map<String, Object>) item, " AND ");
-                        if (!isBlank(condition)) {
-                            groups.add("(" + condition + ")");
-                        }
+                List<Object> parameters = new ArrayList<Object>();
+                for (Object item : (List<?>) items) {
+                    if (!(item instanceof Map<?, ?>)) continue;
+                    BoundClause clause = buildBoundEqualsConditions((Map<String, Object>) item, " AND ");
+                    if (!clause.sql().isEmpty()) {
+                        groups.add("(" + clause.sql() + ")");
+                        parameters.addAll(clause.parameters());
                     }
                 }
-                return groups.isEmpty() ? "" : " WHERE " + String.join(" OR ", groups);
+                return groups.isEmpty() ? BoundClause.empty()
+                        : new BoundClause(" WHERE " + String.join(" OR ", groups), parameters);
             }
         }
         Object filters = where.get("filters");
         if (filters instanceof List<?>) {
-            return buildWhereClause((List<Map<String, Object>>) filters);
+            return buildBoundWhereClause((List<Map<String, Object>>) filters);
         }
-        return "";
+        return BoundClause.empty();
     }
 
-    protected String joinEqualsConditions(Map<String, Object> values, String joiner) {
+    protected BoundClause buildBoundEqualsConditions(Map<String, Object> values, String joiner) {
         List<String> conditions = new ArrayList<String>();
+        List<Object> parameters = new ArrayList<Object>();
         for (Map.Entry<String, Object> entry : values.entrySet()) {
-            if (isBlank(entry.getKey())) {
-                continue;
+            if (isBlank(entry.getKey())) continue;
+            if (entry.getValue() == null) {
+                conditions.add(escapeIdentifier(entry.getKey()) + " IS NULL");
+            } else {
+                conditions.add(escapeIdentifier(entry.getKey()) + " = ?");
+                parameters.add(entry.getValue());
             }
-            conditions.add(escapeIdentifier(entry.getKey()) + " = " + formatLiteral(entry.getValue()));
         }
-        return conditions.isEmpty() ? "" : String.join(joiner, conditions);
+        return new BoundClause(String.join(joiner, conditions), parameters);
+    }
+
+    protected record BoundClause(String sql, List<Object> parameters) {
+        protected BoundClause {
+            sql = sql == null ? "" : sql;
+            parameters = parameters == null
+                    ? List.of()
+                    : Collections.unmodifiableList(new ArrayList<Object>(parameters));
+        }
+
+        protected static BoundClause empty() {
+            return new BoundClause("", List.of());
+        }
+
+        protected BoundClause withPrefix(String prefix) {
+            return new BoundClause(prefix + sql, parameters);
+        }
     }
 
     protected String normalizeOperator(String operator) {
-        if ("eq".equals(operator)) {
-            return "=";
-        }
-        if ("ne".equals(operator)) {
-            return "<>";
-        }
-        if ("gt".equals(operator)) {
-            return ">";
-        }
-        if ("gte".equals(operator)) {
-            return ">=";
-        }
-        if ("lt".equals(operator)) {
-            return "<";
-        }
-        if ("lte".equals(operator)) {
-            return "<=";
-        }
-        return "=";
+        if ("eq".equals(operator) || "=".equals(operator)) return "=";
+        if ("ne".equals(operator) || "!=".equals(operator) || "<>".equals(operator)) return "<>";
+        if ("gt".equals(operator) || ">".equals(operator)) return ">";
+        if ("gte".equals(operator) || ">=".equals(operator)) return ">=";
+        if ("lt".equals(operator) || "<".equals(operator)) return "<";
+        if ("lte".equals(operator) || "<=".equals(operator)) return "<=";
+        throw new IllegalArgumentException("不支持的筛选操作符: " + operator);
     }
 
     protected String formatDefaultValue(Object value) {
@@ -387,5 +432,11 @@ public abstract class AbstractSqlDialect {
             return new ArrayList<Object>((List<?>) value);
         }
         return Collections.<Object>singletonList(value);
+    }
+
+    private void requireFilterLimit(List<Map<String, Object>> filters) {
+        if (filters.size() > MAX_FILTERS) {
+            throw new IllegalArgumentException("筛选条件数量超过上限 " + MAX_FILTERS);
+        }
     }
 }

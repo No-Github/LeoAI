@@ -8,6 +8,7 @@ import org.leo.service.fingerprint.FingerprintManageService.ConflictPolicy;
 import org.leo.service.fingerprint.FingerprintManageService.ImportResult;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
+import org.leo.web.util.DownloadHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -113,7 +114,7 @@ public class FingerprintManageController {
             String filename = fingerprintId.trim() + ".json";
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
                     .body(data);
         } catch (FingerprintManageService.FingerprintNotFoundException e) {
             return ResponseEntity.notFound().build();
@@ -151,7 +152,7 @@ public class FingerprintManageController {
             String filename = "fingerprints_" + LocalDate.now() + ".zip";
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
                     .body(zip);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
@@ -207,15 +208,4 @@ public class FingerprintManageController {
         return ApiResponse.badRequest(message);
     }
 
-    /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头，支持中文文件名。 */
-    private static String buildAttachment(String filename) {
-        String encoded;
-        try {
-            encoded = java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8)
-                    .replace("+", "%20");
-        } catch (Exception e) {
-            encoded = filename;
-        }
-        return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
-    }
 }

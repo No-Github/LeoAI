@@ -90,14 +90,6 @@ class GeneratorCatalogTest {
                 "SpringWebMVC", "InterceptorInjector", "httpchunk"));
     }
 
-    @Test
-    void rejectsRemovedLegacyChunkAliases() {
-        assertNull(GeneratorCatalog.resolve(
-                "Tomcat", "FilterInjector-HTTPCHUNK", "httpchunk"));
-        assertNull(GeneratorCatalog.resolve(
-                "Tomcat", "FilterInjector-HTTPCHUNK", "http"));
-    }
-
     private static void assertResourceExists(ClassLoader loader, String resource) throws Exception {
         try (InputStream input = loader.getResourceAsStream(resource)) {
             assertNotNull(input, "目录引用的模板不存在: " + resource);

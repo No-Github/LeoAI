@@ -1,7 +1,7 @@
 # Java Component 类名高级配置
 
 `Puppet.componentClassNameStrategy` 使用 JSON 保存，每个 Java Puppet 独立生效。
-配置为空时沿用原有应用类名画像。
+配置为空时使用应用类名画像。
 
 ## 配置格式
 

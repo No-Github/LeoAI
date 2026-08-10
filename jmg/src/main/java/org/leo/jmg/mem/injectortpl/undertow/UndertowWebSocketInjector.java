@@ -13,8 +13,8 @@ import java.util.zip.GZIPInputStream;
 /**
  * Undertow WebSocket 内存马注入器。
  * <p>
- * Context 发现逻辑复用 {@link UndertowFilterInjector}，注入逻辑改为
- * 通过 ServletContext 获取 ServerContainer 并 addEndpoint。
+ * Context 发现逻辑复用 {@link UndertowFilterInjector}，通过 ServletContext
+ * 获取 ServerContainer 并 addEndpoint。
  * <p>
  * 适用于 Undertow 独立运行和 Spring Boot 内嵌 Undertow。
  * JBoss EAP 7+ / WildFly 使用 Undertow 作为 Web 容器，同样适用。

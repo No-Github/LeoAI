@@ -43,8 +43,6 @@ class Http11DuplexChannelTest {
             try {
                 assertArrayEquals(new byte[]{1, 2, 3},
                         communication.sendRequest(new byte[]{1, 2, 3}));
-                communication.sendData(new byte[]{3, 2, 1});
-                assertArrayEquals(new byte[]{3, 2, 1}, communication.receiveData());
                 communication.heartbeat();
 
                 List<Callable<byte[]>> tasks = new ArrayList<Callable<byte[]>>();

@@ -3,7 +3,6 @@ package org.leo.jmg.mem.injectortpl.bes;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -190,21 +189,6 @@ public class BesListenerInjector {
             return method.invoke(obj instanceof Class ? null : obj, param);
         } catch (Exception e) {
             throw new RuntimeException("Error invoking method: " + methodName, e);
-        }
-    }
-
-    
-    private String getErrorMessage(Throwable throwable) {
-        PrintStream printStream = null;
-        try {
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            printStream = new PrintStream(outputStream);
-            throwable.printStackTrace(printStream);
-            return outputStream.toString();
-        } finally {
-            if (printStream != null) {
-                printStream.close();
-            }
         }
     }
 }

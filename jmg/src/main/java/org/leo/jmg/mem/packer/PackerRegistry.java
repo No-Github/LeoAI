@@ -165,7 +165,7 @@ public final class PackerRegistry {
 
     /**
      * 校验 Packer 与显式目标 JDK、模块绕过选项是否兼容。
-     * AUTO 保持原有行为，只在用户明确目标版本后进行阻断。
+     * AUTO 不按目标版本阻断。
      */
     public static PackerCompatibilityResult validateCompatibility(String name,
                                                                   TargetJavaVersion targetJavaVersion,

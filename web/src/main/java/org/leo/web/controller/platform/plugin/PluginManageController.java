@@ -11,6 +11,7 @@ import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.aes.AesUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
+import org.leo.web.util.DownloadHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -327,7 +328,7 @@ public class PluginManageController {
             byte[] data = Files.readAllBytes(pluginFile.toPath());
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(safeFileName))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(safeFileName))
                     .body(data);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
@@ -379,7 +380,7 @@ public class PluginManageController {
             String filename = "plugins_" + LocalDate.now() + ".zip";
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
                     .body(baos.toByteArray());
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
@@ -515,17 +516,6 @@ public class PluginManageController {
         }
     }
 
-    /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头。 */
-    private static String buildAttachment(String filename) {
-        String encoded;
-        try {
-            encoded = java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
-        } catch (Exception e) {
-            encoded = filename;
-        }
-        return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
-    }
-    
     /**
      * 更新插件字段
      */

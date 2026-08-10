@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.Socket;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +73,8 @@ public class ReverseTunnelServer {
                                 String bindAddr,
                                 String forwardHost,
                                 int forwardPort) {
-        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort, DEFAULT_POLL_INTERVAL_MS, DEFAULT_MAX_CONNS);
+        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
+                DEFAULT_POLL_INTERVAL_MS, DEFAULT_MAX_CONNS);
     }
 
     public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
@@ -83,7 +83,8 @@ public class ReverseTunnelServer {
                                 String forwardHost,
                                 int forwardPort,
                                 long pollIntervalMs) {
-        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort, pollIntervalMs, DEFAULT_MAX_CONNS);
+        this(puppetNode, remoteListenPort, bindAddr, forwardHost, forwardPort,
+                pollIntervalMs, DEFAULT_MAX_CONNS);
     }
 
     public ReverseTunnelServer(ComponentInvokeCapable puppetNode,
@@ -105,14 +106,37 @@ public class ReverseTunnelServer {
         this.statistics = new Socks5ProxyStatistics(remoteListenPort);
     }
 
-    public String getListenId()        { return listenId; }
-    public int getRemoteListenPort()   { return remoteListenPort; }
-    public String getBindAddr()        { return bindAddr; }
-    public String getForwardHost()     { return forwardHost; }
-    public int getForwardPort()        { return forwardPort; }
-    public boolean isRunning()         { return running; }
-    public long getStartTime()         { return startTime; }
-    public Socks5ProxyStatistics getStatistics() { return statistics; }
+    public String getListenId() {
+        return listenId;
+    }
+
+    public int getRemoteListenPort() {
+        return remoteListenPort;
+    }
+
+    public String getBindAddr() {
+        return bindAddr;
+    }
+
+    public String getForwardHost() {
+        return forwardHost;
+    }
+
+    public int getForwardPort() {
+        return forwardPort;
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
+
+    public long getStartTime() {
+        return startTime;
+    }
+
+    public Socks5ProxyStatistics getStatistics() {
+        return statistics;
+    }
 
     /**
      * 注册"隧道死亡"回调。
@@ -128,16 +152,15 @@ public class ReverseTunnelServer {
      * 若后续初始化失败，主动 STOP_LISTEN 回滚，避免 puppet 端孤儿 ServerSocket。
      */
     public synchronized void start() throws Exception {
-        if (running) return;
+        if (running) {
+            return;
+        }
 
-        Map<String, Object> params = new HashMap<String, Object>();
-        params.put("op", Integer.valueOf(OP_START_LISTEN));
-        params.put("listenId", listenId);
+        Map<String, Object> params = listenerParams(OP_START_LISTEN);
         params.put("listenPort", Integer.valueOf(remoteListenPort));
         params.put("bindAddr", bindAddr);
         Map<String, Object> res = puppetNode.invokeComponent("ReverseTunnelComponent", params);
-        Object code = res != null ? res.get("code") : null;
-        if (!Integer.valueOf(200).equals(code)) {
+        if (!hasResponseCode(res, 200)) {
             String msg = res != null ? String.valueOf(res.get("msg")) : "unknown";
             throw new RuntimeException("puppet START_LISTEN failed: " + msg);
         }
@@ -154,8 +177,12 @@ public class ReverseTunnelServer {
                     new ArrayBlockingQueue<Runnable>(maxConns),
                     new ThreadFactory() {
                 private final AtomicInteger idx = new AtomicInteger();
+
+                @Override
                 public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r, "ReverseTunnel-Dialer-" + remoteListenPort + "-" + idx.incrementAndGet());
+                    String threadName = "ReverseTunnel-Dialer-" + remoteListenPort
+                            + "-" + idx.incrementAndGet();
+                    Thread t = new Thread(r, threadName);
                     t.setDaemon(true);
                     return t;
                 }
@@ -170,10 +197,7 @@ public class ReverseTunnelServer {
             running = false;
             cleanupLocalResources();
             try {
-                Map<String, Object> stopParams = new HashMap<String, Object>();
-                stopParams.put("op", Integer.valueOf(OP_STOP_LISTEN));
-                stopParams.put("listenId", listenId);
-                puppetNode.invokeComponent("ReverseTunnelComponent", stopParams);
+                stopRemoteListener();
             } catch (Exception rollbackEx) {
                 logger.warn("start 回滚时 STOP_LISTEN 失败: {}", rollbackEx.getMessage());
             }
@@ -193,15 +217,12 @@ public class ReverseTunnelServer {
         Thread polling = pollThread;
         pollThread = null;
         if (polling != null && polling != Thread.currentThread()) {
-            try { polling.interrupt(); } catch (Exception ignored) {}
+            polling.interrupt();
         }
 
         if (wasRunning) {
             try {
-                Map<String, Object> params = new HashMap<String, Object>();
-                params.put("op", Integer.valueOf(OP_STOP_LISTEN));
-                params.put("listenId", listenId);
-                puppetNode.invokeComponent("ReverseTunnelComponent", params);
+                stopRemoteListener();
             } catch (Exception e) {
                 logger.debug("STOP_LISTEN 调用异常: {}", e.getMessage());
             }
@@ -223,8 +244,8 @@ public class ReverseTunnelServer {
     }
 
     private void cleanupLocalResources() {
-        for (Map.Entry<String, Socket> e : localConns.entrySet()) {
-            try { e.getValue().close(); } catch (Exception ignored) {}
+        for (Socket socket : localConns.values()) {
+            closeSocket(socket);
         }
         localConns.clear();
         pendingConns.clear();
@@ -232,13 +253,20 @@ public class ReverseTunnelServer {
         ThreadPoolExecutor executor = dialerExecutor;
         dialerExecutor = null;
         if (executor != null) {
-            try { executor.shutdownNow(); } catch (Exception ignored) {}
+            executor.shutdownNow();
         }
-        if (statistics != null) statistics.reset();
+        if (statistics != null) {
+            statistics.reset();
+        }
     }
 
-    ComponentInvokeCapable getPuppetNode() { return puppetNode; }
-    ConcurrentHashMap<String, Socket> getLocalConns() { return localConns; }
+    ComponentInvokeCapable getPuppetNode() {
+        return puppetNode;
+    }
+
+    ConcurrentHashMap<String, Socket> getLocalConns() {
+        return localConns;
+    }
 
     synchronized boolean registerLocalConnection(String connId, Socket socket) {
         if (!running) {
@@ -251,19 +279,27 @@ public class ReverseTunnelServer {
 
     void completeLocalConnection(String connId, Socket socket) {
         pendingConns.remove(connId);
-        if (socket != null) localConns.remove(connId, socket);
-        else localConns.remove(connId);
-        if (statistics != null) statistics.removeConnection(connId);
         if (socket != null) {
-            try { socket.close(); } catch (Exception ignored) {}
+            localConns.remove(connId, socket);
+        } else {
+            localConns.remove(connId);
         }
+        if (statistics != null) {
+            statistics.removeConnection(connId);
+        }
+        closeSocket(socket);
     }
 
     private void scheduleDialer(String connId, String clientAddr) {
-        if (!pendingConns.add(connId)) return;
+        if (!pendingConns.add(connId)) {
+            return;
+        }
         if (!running || localConns.size() + pendingConns.size() > maxConns) {
             pendingConns.remove(connId);
             closeRemoteConnection(connId);
+            if (running) {
+                logger.warn("反向隧道连接数已达上限 {}, 拒绝新连接 connId={}", maxConns, connId);
+            }
             return;
         }
         ThreadPoolExecutor executor = dialerExecutor;
@@ -290,54 +326,45 @@ public class ReverseTunnelServer {
         } catch (Exception ignored) {}
     }
 
+    private Map<String, Object> listenerParams(int operation) {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("op", Integer.valueOf(operation));
+        params.put("listenId", listenId);
+        return params;
+    }
+
+    private void stopRemoteListener() throws Exception {
+        puppetNode.invokeComponent("ReverseTunnelComponent", listenerParams(OP_STOP_LISTEN));
+    }
+
+    private static boolean hasResponseCode(Map<String, Object> response, int expectedCode) {
+        if (response == null) {
+            return false;
+        }
+        Object code = response.get("code");
+        return code instanceof Number && ((Number) code).intValue() == expectedCode;
+    }
+
+    private static void closeSocket(Socket socket) {
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (Exception ignored) {
+            // 资源清理阶段无需覆盖原始错误。
+        }
+    }
+
     /**
      * accept 轮询线程。
      */
     private class AcceptPollLoop implements Runnable {
+        @Override
         public void run() {
             while (running) {
                 try {
-                    Map<String, Object> params = new HashMap<String, Object>();
-                    params.put("op", Integer.valueOf(OP_ACCEPT));
-                    params.put("listenId", listenId);
-                    Map<String, Object> res = puppetNode.invokeComponent("ReverseTunnelComponent", params);
-                    Object code = res != null ? res.get("code") : null;
-                    if (Integer.valueOf(200).equals(code)) {
-                        Object newConnsObj = res.get("newConns");
-                        if (newConnsObj instanceof List) {
-                            List<?> newConns = (List<?>) newConnsObj;
-                            if (!newConns.isEmpty()) {
-                                List<Map<String, Object>> snapshot = new ArrayList<Map<String, Object>>();
-                                for (Object o : newConns) {
-                                    if (o instanceof Map) {
-                                        snapshot.add((Map<String, Object>) o);
-                                    }
-                                }
-                                for (Map<String, Object> info : snapshot) {
-                                    final String connId = (String) info.get("connId");
-                                    final String clientAddr = (String) info.get("clientAddr");
-                                    if (connId == null) continue;
-                                    if (localConns.size() + pendingConns.size() >= maxConns) {
-                                        // 超出连接数上限，通知 puppet 关闭该连接
-                                        logger.warn("反向隧道连接数已达上限 {}, 拒绝新连接 connId={}", maxConns, connId);
-                                        try {
-                                            Map<String, Object> closeParams = new HashMap<String, Object>();
-                                            closeParams.put("op", Integer.valueOf(OP_CLOSE));
-                                            closeParams.put("connId", connId);
-                                            puppetNode.invokeComponent("ReverseTunnelComponent", closeParams);
-                                        } catch (Exception ignored) {}
-                                        continue;
-                                    }
-                                    scheduleDialer(connId, clientAddr);
-                                }
-                            }
-                        }
-                    } else if (Integer.valueOf(404).equals(code)) {
-                        logger.warn("反向隧道 listenId 在 puppet 端不存在，停止轮询: listenId={}", listenId);
-                        handleRemoteListenerGone();
-                        if (onDead != null) {
-                            try { onDead.run(); } catch (Exception ignored) {}
-                        }
+                    if (!pollOnce()) {
                         break;
                     }
                 } catch (Exception e) {
@@ -345,12 +372,68 @@ public class ReverseTunnelServer {
                         logger.debug("accept 轮询异常: {}", e.getMessage());
                     }
                 }
-                try {
-                    Thread.sleep(pollIntervalMs);
-                } catch (InterruptedException e) {
-                    if (!running) break;
+                if (!waitForNextPoll()) {
+                    break;
                 }
             }
+        }
+    }
+
+    private boolean pollOnce() throws Exception {
+        Map<String, Object> response = puppetNode.invokeComponent(
+                "ReverseTunnelComponent", listenerParams(OP_ACCEPT));
+        if (hasResponseCode(response, 200)) {
+            scheduleAcceptedConnections(response.get("newConns"));
+            return true;
+        }
+        if (!hasResponseCode(response, 404)) {
+            return true;
+        }
+
+        logger.warn("反向隧道 listenId 在 puppet 端不存在，停止轮询: listenId={}", listenId);
+        handleRemoteListenerGone();
+        notifyDeadListener();
+        return false;
+    }
+
+    private void scheduleAcceptedConnections(Object value) {
+        if (!(value instanceof List<?>)) {
+            return;
+        }
+        for (Object item : (List<?>) value) {
+            if (!(item instanceof Map<?, ?>)) {
+                continue;
+            }
+            Map<?, ?> connection = (Map<?, ?>) item;
+            Object connIdValue = connection.get("connId");
+            if (connIdValue == null) {
+                continue;
+            }
+            Object clientAddrValue = connection.get("clientAddr");
+            String connId = String.valueOf(connIdValue);
+            String clientAddr = clientAddrValue == null ? null : String.valueOf(clientAddrValue);
+            scheduleDialer(connId, clientAddr);
+        }
+    }
+
+    private boolean waitForNextPoll() {
+        try {
+            Thread.sleep(pollIntervalMs);
+            return true;
+        } catch (InterruptedException ignored) {
+            return running;
+        }
+    }
+
+    private void notifyDeadListener() {
+        Runnable callback = onDead;
+        if (callback == null) {
+            return;
+        }
+        try {
+            callback.run();
+        } catch (Exception ignored) {
+            // 回调异常不影响隧道资源清理。
         }
     }
 }

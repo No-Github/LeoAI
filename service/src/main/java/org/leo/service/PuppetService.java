@@ -173,6 +173,7 @@ public class PuppetService {
         List<Puppet> deletionOrder = new ArrayList<>(subtree);
         Collections.reverse(deletionOrder);
         for (Puppet puppet : deletionOrder) {
+            puppetMapper.deleteProjectRelationsByPuppetId(puppet.getPuppetId());
             if (!puppetMapper.deletePuppetById(puppet.getPuppetId())) {
                 throw new IllegalStateException("删除Puppet失败: " + puppet.getPuppetId());
             }

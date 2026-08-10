@@ -13,8 +13,8 @@ import java.util.zip.GZIPInputStream;
  * <p>
  * tested v8, v9, v10 (ee8-ee10)
  * <p>
- * Context 发现逻辑复用 {@link JettyFilterInjector}，注入逻辑改为
- * 通过 ServletContext 获取 ServerContainer 并 addEndpoint。
+ * Context 发现逻辑复用 {@link JettyFilterInjector}，通过 ServletContext
+ * 获取 ServerContainer 并 addEndpoint。
  */
 public class JettyWebSocketInjector {
 

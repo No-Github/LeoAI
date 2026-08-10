@@ -3,9 +3,9 @@ package org.leo.core.net.layer;
 /**
  * 请求体 Padding 策略配置（per puppet session）。
  * <p>
- * 新版设计：Padding 作为伪装链的内部能力，填充数据由外层伪装统一加密保护。
+ * Padding 是伪装链的内部能力，填充数据由外层伪装统一加密保护。
  * <ul>
- *   <li>不再需要独立的加密信封 — 外层 Disguise 会加密一切</li>
+ *   <li>外层 Disguise 负责统一加密</li>
  *   <li>协议格式极简：[4字节数据长度][真实数据][随机填充]</li>
  *   <li>支持预设模板，一行代码切换</li>
  *   <li>填充长度支持多种随机分布</li>

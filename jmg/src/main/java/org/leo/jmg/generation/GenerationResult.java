@@ -7,8 +7,7 @@ import org.leo.jmg.TransportProtocol;
 /**
  * 一次生成执行的不可变结果。
  *
- * <p>结果对象拥有最终文本、派生类名和各阶段字节码。调用方不再通过修改或读取
- * {@code ShellGeneratorConfig} 获取执行状态。</p>
+ * <p>结果对象拥有最终文本、派生类名和各阶段字节码。</p>
  */
 public final class GenerationResult {
 

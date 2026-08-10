@@ -2,9 +2,11 @@ package org.leo.web.controller.platform.puppet;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.service.PuppetService;
 import org.leo.service.UrlProbeService;
+import org.leo.service.project.ProjectService;
 import org.leo.service.user.UserService;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.json.JsonUtil;
@@ -15,7 +17,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -59,12 +63,15 @@ public class PuppetManageController {
     private final PuppetService puppetService;
     private final UserService userService;
     private final UrlProbeService urlProbeService;
+    private final ProjectService projectService;
 
     public PuppetManageController(PuppetService puppetService, UserService userService,
-                                  UrlProbeService urlProbeService){
+                                  UrlProbeService urlProbeService,
+                                  ProjectService projectService){
         this.puppetService = puppetService;
         this.userService = userService;
         this.urlProbeService = urlProbeService;
+        this.projectService = projectService;
     }
     
     @RequestMapping(value = "/children", method = RequestMethod.POST)
@@ -101,13 +108,29 @@ public class PuppetManageController {
     }
     
     @RequestMapping(value = "/puppets", method = RequestMethod.POST)
-    public HashMap<String, Object> addPuppet(HttpServletRequest request, @RequestBody Puppet puppet) {
+    @Transactional
+    public HashMap<String, Object> addPuppet(
+            HttpServletRequest request,
+            @RequestBody Puppet puppet,
+            @RequestParam(value = "projectId", required = false) String projectId) {
         if (puppet == null) {
             return ApiResponse.badRequest("puppet参数不能为空");
         }
         User user = getUserFromSession(request);
         if (user == null || user.getUserId() == null) {
             return ApiResponse.unauthorized("用户未登录");
+        }
+        Project project = null;
+        if (projectId != null && !projectId.isBlank()) {
+            project = projectService.findById(projectId.trim());
+            if (project == null) return ApiResponse.notFound("项目不存在");
+            if (!projectService.canView(project, user)) return ApiResponse.forbidden("无权限访问此项目");
+            if (!projectService.canEditContent(project, user)) {
+                return ApiResponse.forbidden("无权限维护此项目的主机归属");
+            }
+            if (Project.STATUS_ARCHIVED.equals(project.getStatus())) {
+                return ApiResponse.badRequest("已归档项目不能添加主机");
+            }
         }
         try {
             validateComponentClassNameStrategy(puppet.getComponentClassNameStrategy());
@@ -125,6 +148,10 @@ public class PuppetManageController {
         puppet.setPuppetId(id);
         boolean result = puppetService.insertPuppet(puppet);
         if (result) {
+            if (project != null) {
+                projectService.attachPuppets(project.getProjectId(), List.of(id),
+                        null, null, null, user.getUserId());
+            }
             return ApiResponse.success(Collections.singletonMap("puppetId", id));
         } else {
             return ApiResponse.error("添加Puppet失败");

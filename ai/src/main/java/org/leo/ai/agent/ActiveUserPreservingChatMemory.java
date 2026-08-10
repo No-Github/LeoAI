@@ -14,7 +14,7 @@ import java.util.List;
  * <p>LangChain4j 的动态工具提供器会在每轮工具执行后重新读取最近的
  * {@link UserMessage}。长工具链可能先触发滑动窗口淘汰用户消息，随后在
  * {@code UserMessage.findLast(...)} 处产生空 Optional。该包装器只修复模型视图，
- * 底层窗口仍按原有 token/消息上限淘汰历史和成对工具消息。
+ * 底层窗口按 token/消息上限淘汰历史和成对工具消息。
  */
 final class ActiveUserPreservingChatMemory implements ChatMemory {
 

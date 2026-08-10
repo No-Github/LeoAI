@@ -41,6 +41,19 @@ public class PuppetConnService {
             return fail("Puppet 不存在，puppetId: " + puppetId, null);
         }
 
+        return testConnection(puppet, true);
+    }
+
+    /**
+     * 使用尚未保存的表单配置测试连接，适用于新增和编辑页面的配置预检。
+     * 此流程不创建 Session，也不写入主机心跳。
+     */
+    public Map<String, Object> testConnection(Puppet puppet) {
+        if (puppet == null) return fail("Puppet 配置为空", null);
+        return testConnection(puppet, false);
+    }
+
+    private Map<String, Object> testConnection(Puppet puppet, boolean updateHeartbeat) {
         try {
             AbstractPuppetNode node = puppetNodeFactory.createLiveNode(puppet, null);
 
@@ -63,7 +76,9 @@ public class PuppetConnService {
             data.put("latencyMs",  latency);
 
             // 测试连接成功，记录心跳时间
-            puppetService.updateLastHeartbeat(puppetId);
+            if (updateHeartbeat && puppet.getPuppetId() != null) {
+                puppetService.updateLastHeartbeat(puppet.getPuppetId());
+            }
 
             return data;
 

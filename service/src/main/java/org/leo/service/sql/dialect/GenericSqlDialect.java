@@ -1,5 +1,6 @@
 package org.leo.service.sql.dialect;
 
+import org.leo.service.sql.SqlObjectRef;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +15,7 @@ public final class GenericSqlDialect extends AbstractSqlDialect {
     public String getType() { return "generic"; }
     public String getName() { return "Generic SQL"; }
     public Integer getDefaultPort() { return null; }
+    public List<String> getNamespaceLevels() { return List.of(); }
     public List<Map<String, Object>> getVariants() {
         return Arrays.<Map<String, Object>>asList(
                 variant("custom", "自定义运行时连接", "username", "password", "runtimeOptions"));
@@ -32,39 +34,14 @@ public final class GenericSqlDialect extends AbstractSqlDialect {
     public SqlDialectCapabilities getCapabilities() { return SqlDialectCapabilities.rawOnly(); }
     public String buildTestSql() { return "SELECT 1 AS version"; }
     public String buildDatabasesSql() { throw unsupported("获取数据库列表"); }
-    public String buildTablesSql(String database) { throw unsupported("获取数据表列表"); }
-    public String buildTableColumnsSql(String database, String table) { throw unsupported("获取字段列表"); }
-    public String buildCountSql(String database, String table, List<Map<String, Object>> filters) {
-        throw unsupported("结构化表查询");
-    }
-    public String buildQueryTableSql(String database,
-                                     String table,
-                                     int page,
-                                     int pageSize,
-                                     List<String> columns,
-                                     List<Map<String, Object>> orderBy,
-                                     List<Map<String, Object>> filters) {
-        throw unsupported("结构化表查询");
-    }
-    public String buildCreateTableSql(String database, String table, List<Map<String, Object>> columns) {
-        throw unsupported("创建数据表");
-    }
+    public String buildTablesSql(SqlObjectRef namespace) { throw unsupported("获取数据表列表"); }
+    public String buildTableColumnsSql(SqlObjectRef table) { throw unsupported("获取字段列表"); }
     public String buildCreateDatabaseSql(String database) { throw unsupported("创建数据库"); }
-    public String buildInsertSql(String database, String table, Map<String, Object> row) {
-        throw unsupported("结构化数据写入");
-    }
-    public String buildUpdateSql(String database,
-                                 String table,
-                                 Map<String, Object> where,
-                                 Map<String, Object> update) {
-        throw unsupported("结构化数据更新");
-    }
-    public String buildDeleteSql(String database, String table, Map<String, Object> where) {
-        throw unsupported("结构化数据删除");
-    }
-    protected String buildQualifiedTable(String database, String table) {
-        if (isBlank(database)) return escapeIdentifier(table);
-        return escapeIdentifier(database) + "." + escapeIdentifier(table);
+    protected String buildQualifiedTable(SqlObjectRef table) {
+        String namespace = table == null ? null : table.namespace();
+        String name = table == null ? null : table.name();
+        if (isBlank(namespace)) return escapeIdentifier(name);
+        return escapeIdentifier(namespace) + "." + escapeIdentifier(name);
     }
     protected String buildPaginationSql(String baseSql, int offset, int pageSize) {
         return baseSql + " OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY";

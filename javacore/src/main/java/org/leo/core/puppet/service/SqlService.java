@@ -5,6 +5,7 @@ import org.leo.core.net.layer.RequestLayer;
 import org.leo.core.net.layer.ResponseLayer;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
 import org.leo.core.puppet.database.JavaDatabaseConnectionAdapter;
+import org.leo.core.puppet.database.SqlCommand;
 
 import java.util.HashMap;
 import java.util.List;
@@ -19,8 +20,13 @@ public class SqlService extends ComponentService {
     }
 
     public Map<String, Object> executeSql(DatabaseConnectionSpec connection, String sqlScript) throws Exception {
+        return executeSql(connection, SqlCommand.raw(sqlScript));
+    }
+
+    public Map<String, Object> executeSql(DatabaseConnectionSpec connection, SqlCommand command) throws Exception {
         HashMap<String, Object> payload = new HashMap<String, Object>(connectionAdapter.adapt(connection));
-        payload.put("sql", sqlScript);
+        payload.put("sql", command.sql());
+        if (command.hasParameters()) payload.put("parameters", command.parameters());
         return invokeComponent("DatabaseComponent", payload);
     }
 

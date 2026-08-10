@@ -48,8 +48,7 @@ public class SqlExportService {
                                                 String userId,
                                                 String sessionId,
                                                 Map<String, Object> connection,
-                                                String database,
-                                                String table,
+                                                SqlObjectRef tableRef,
                                                 String format) throws Exception {
         if (isBlank(userId)) {
             throw new IllegalArgumentException("用户信息无效");
@@ -57,8 +56,8 @@ public class SqlExportService {
         if (isBlank(sessionId)) {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
-        if (isBlank(table)) {
-            throw new IllegalArgumentException("table 不能为空");
+        if (tableRef == null || isBlank(tableRef.name())) {
+            throw new IllegalArgumentException("objectRef 必须包含表名");
         }
         String exportFormat = safeLower(format);
         if (!"csv".equals(exportFormat)) {
@@ -66,10 +65,13 @@ public class SqlExportService {
         }
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeFileName((isBlank(database) ? "default" : database) + "_" + table + "_" + timestamp() + ".csv");
+        String namespace = tableRef.namespace();
+        String fileName = sanitizeFileName(exportObjectName(tableRef) + "_" + timestamp() + ".csv");
         Path finalPath = resolveUniqueExportPath(userId, fileName);
 
-        Map<String, Object> task = createTask(taskId, userId, sessionId, "TABLE_EXPORT", fileName, finalPath, database, table);
+        Map<String, Object> task = createTask(taskId, userId, sessionId, "TABLE_EXPORT",
+                fileName, finalPath, namespace, tableRef.name());
+        task.put("objectRef", tableRef.toMap());
         task.put("format", exportFormat);
         task.put("status", "PENDING");
         persistTask(task);
@@ -83,8 +85,8 @@ public class SqlExportService {
                                                    String userId,
                                                    String sessionId,
                                                    Map<String, Object> connection,
-                                                   String database,
-                                                   List<String> tables,
+                                                   SqlObjectRef namespaceRef,
+                                                   List<SqlObjectRef> tableRefs,
                                                    Boolean includeStructure,
                                                    Boolean includeData,
                                                    String format) throws Exception {
@@ -94,8 +96,8 @@ public class SqlExportService {
         if (isBlank(sessionId)) {
             throw new IllegalArgumentException("sessionId 不能为空");
         }
-        if (isBlank(database)) {
-            throw new IllegalArgumentException("database 不能为空");
+        if (namespaceRef == null || isBlank(namespaceRef.namespace())) {
+            throw new IllegalArgumentException("objectRef 必须包含 catalog 或 schema");
         }
         String exportFormat = safeLower(format);
         if (!"zip".equals(exportFormat)) {
@@ -108,15 +110,18 @@ public class SqlExportService {
         }
 
         String taskId = "sql_export_" + UUID.randomUUID().toString().replace("-", "");
-        String fileName = sanitizeFileName(database + "_" + timestamp() + ".zip");
+        String namespace = namespaceRef.namespace();
+        String fileName = sanitizeFileName(exportObjectName(namespaceRef) + "_" + timestamp() + ".zip");
         Path finalPath = resolveUniqueExportPath(userId, fileName);
 
-        Map<String, Object> task = createTask(taskId, userId, sessionId, "DATABASE_EXPORT", fileName, finalPath, database, null);
+        Map<String, Object> task = createTask(taskId, userId, sessionId, "DATABASE_EXPORT",
+                fileName, finalPath, namespace, null);
         task.put("format", exportFormat);
         task.put("status", "PENDING");
         task.put("includeStructure", exportStructure);
         task.put("includeData", exportData);
-        task.put("selectedTables", tables == null ? Collections.emptyList() : new ArrayList<String>(tables));
+        task.put("objectRef", namespaceRef.toMap());
+        task.put("tableRefs", toRefMaps(tableRefs));
         persistTask(task);
         liveTasks.put(taskId, task);
         scheduleTask(task, puppetNode, connection);
@@ -268,16 +273,13 @@ public class SqlExportService {
                     try {
                         if ("TABLE_EXPORT".equals(type)) {
                             runTableExport(taskId, puppetNode, connection,
-                                    safeString(task.get("database")),
-                                    safeString(task.get("currentTable")),
+                                    refValue(task.get("objectRef")),
                                     finalPath,
                                     newControl);
                         } else if ("DATABASE_EXPORT".equals(type)) {
-                            @SuppressWarnings("unchecked")
-                            List<String> tables = task.get("selectedTables") instanceof List<?> ? new ArrayList<String>((List<String>) task.get("selectedTables")) : Collections.<String>emptyList();
                             runDatabaseExport(taskId, puppetNode, connection,
-                                    safeString(task.get("database")),
-                                    tables,
+                                    refValue(task.get("objectRef")),
+                                    refListValue(task.get("tableRefs")),
                                     toBoolean(task.get("includeStructure"), true),
                                     toBoolean(task.get("includeData"), true),
                                     finalPath,
@@ -332,8 +334,7 @@ public class SqlExportService {
     private void runTableExport(String taskId,
                                 SqlCapable puppetNode,
                                 Map<String, Object> connection,
-                                String database,
-                                String table,
+                                SqlObjectRef tableRef,
                                 Path finalPath,
                                 TaskControl control) {
         Map<String, Object> task = liveTasks.get(taskId);
@@ -342,7 +343,8 @@ public class SqlExportService {
         }
         try {
             updateTask(task, "RUNNING", 1, null);
-            Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(puppetNode, connection, database, table);
+            Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(
+                    puppetNode, connection, tableRef);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
 
@@ -353,7 +355,8 @@ public class SqlExportService {
                     writer.write(csvLine(header));
                     writer.newLine();
                 }
-                long total = exportTableDataAsCsv(writer, puppetNode, connection, database, table, header, task, 10, 95, control);
+                long total = exportTableDataAsCsv(writer, puppetNode, connection,
+                        tableRef, header, task, 10, 95, control);
                 task.put("rowCount", total);
             }
             if (control.cancelRequested.get() || "CANCELLED".equals(safeString(task.get("status")))) {
@@ -378,8 +381,8 @@ public class SqlExportService {
     private void runDatabaseExport(String taskId,
                                    SqlCapable puppetNode,
                                    Map<String, Object> connection,
-                                   String database,
-                                   List<String> selectedTables,
+                                   SqlObjectRef namespaceRef,
+                                   List<SqlObjectRef> selectedTableRefs,
                                    boolean includeStructure,
                                    boolean includeData,
                                    Path finalPath,
@@ -392,7 +395,8 @@ public class SqlExportService {
         try {
             updateTask(task, "RUNNING", 1, null);
             Files.createDirectories(workDir);
-            List<String> tables = resolveExportTables(puppetNode, connection, database, selectedTables);
+            List<SqlObjectRef> tables = resolveExportTableRefs(
+                    puppetNode, connection, namespaceRef, selectedTableRefs);
             task.put("tableCount", Integer.valueOf(tables.size()));
 
             if (includeStructure) {
@@ -407,29 +411,35 @@ public class SqlExportService {
                 if (checkPausedOrCancelled(task, control)) {
                     return;
                 }
-                String table = tables.get(i);
+                SqlObjectRef tableRef = tables.get(i);
+                String table = tableRef.name();
+                String entryName = exportObjectName(tableRef);
                 task.put("currentTable", table);
+                task.put("currentObjectRef", tableRef.toMap());
                 task.put("processedTables", Integer.valueOf(i));
                 int progressBase = tables.isEmpty() ? 90 : (int) Math.min(90, 5 + ((double) i / (double) tables.size()) * 85);
                 updateTask(task, "RUNNING", progressBase, null);
 
+                Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(
+                        puppetNode, connection, tableRef);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> columns =
+                        (List<Map<String, Object>>) columnResult.get("columns");
                 if (includeStructure) {
-                    Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(puppetNode, connection, database, table);
-                    writeJson(workDir.resolve("structure").resolve(sanitizeFileName(table) + ".columns.json"), columnResult);
+                    writeJson(workDir.resolve("structure").resolve(
+                            sanitizeFileName(entryName) + ".columns.json"), columnResult);
                 }
                 if (includeData) {
-                    Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(table) + ".csv");
+                    Path csvPath = workDir.resolve("data").resolve(sanitizeFileName(entryName) + ".csv");
                     try (BufferedWriter writer = Files.newBufferedWriter(csvPath, StandardCharsets.UTF_8,
                             StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                        Map<String, Object> columnResult = puppetNodeSqlService.getTableColumns(puppetNode, connection, database, table);
-                        @SuppressWarnings("unchecked")
-                        List<Map<String, Object>> columns = (List<Map<String, Object>>) columnResult.get("columns");
                         List<String> header = extractColumnNames(columns);
                         if (!header.isEmpty()) {
                             writer.write(csvLine(header));
                             writer.newLine();
                         }
-                        exportTableDataAsCsv(writer, puppetNode, connection, database, table, header, task, progressBase, 95, control);
+                        exportTableDataAsCsv(writer, puppetNode, connection, tableRef,
+                                header, task, progressBase, 95, control);
                     }
                 }
                 if (checkPausedOrCancelled(task, control)) {
@@ -440,12 +450,12 @@ public class SqlExportService {
             }
 
             Map<String, Object> manifest = new LinkedHashMap<String, Object>();
-            manifest.put("database", database);
+            manifest.put("objectRef", namespaceRef.toMap());
             manifest.put("tableCount", Integer.valueOf(tables.size()));
             manifest.put("includeStructure", Boolean.valueOf(includeStructure));
             manifest.put("includeData", Boolean.valueOf(includeData));
             manifest.put("exportTime", Instant.now().toString());
-            manifest.put("tables", tables);
+            manifest.put("tables", tables.stream().map(SqlObjectRef::toMap).toList());
             writeJson(workDir.resolve("manifest.json"), manifest);
 
             Files.createDirectories(finalPath.getParent());
@@ -470,27 +480,31 @@ public class SqlExportService {
     private long exportTableDataAsCsv(BufferedWriter writer,
                                       SqlCapable puppetNode,
                                       Map<String, Object> connection,
-                                      String database,
-                                      String table,
+                                      SqlObjectRef tableRef,
                                       List<String> header,
                                       Map<String, Object> task,
                                       int startProgress,
                                       int endProgress,
                                       TaskControl control) throws Exception {
         long totalRows = 0L;
+        long expectedTotal = 0L;
         int page = 1;
         while (true) {
             if (checkPausedOrCancelled(task, control)) {
                 return totalRows;
             }
             Map<String, Object> pageResult = puppetNodeSqlService.queryTable(
-                    puppetNode, connection, database, table, Integer.valueOf(page), Integer.valueOf(PAGE_SIZE),
-                    header, Collections.<Map<String, Object>>emptyList(), Collections.<Map<String, Object>>emptyList());
+                    puppetNode, connection, tableRef,
+                    Integer.valueOf(page), Integer.valueOf(PAGE_SIZE),
+                    header, Collections.<Map<String, Object>>emptyList(),
+                    Collections.<Map<String, Object>>emptyList(), Boolean.valueOf(page == 1), null);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> rows = (List<Map<String, Object>>) pageResult.get("rows");
             @SuppressWarnings("unchecked")
             Map<String, Object> pagination = (Map<String, Object>) pageResult.get("pagination");
-            long total = pagination == null ? 0L : toLong(pagination.get("total"));
+            if (pagination != null && pagination.get("total") != null) {
+                expectedTotal = toLong(pagination.get("total"));
+            }
             if (header.isEmpty()) {
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> columns = (List<Map<String, Object>>) pageResult.get("columns");
@@ -508,8 +522,9 @@ public class SqlExportService {
                 writer.newLine();
                 totalRows++;
             }
-            if (total > 0L) {
-                int progress = startProgress + (int) Math.min(endProgress - startProgress, (totalRows * (endProgress - startProgress)) / Math.max(1L, total));
+            if (expectedTotal > 0L) {
+                int progress = startProgress + (int) Math.min(endProgress - startProgress,
+                        (totalRows * (endProgress - startProgress)) / Math.max(1L, expectedTotal));
                 updateTask(task, "RUNNING", progress, null);
             }
             if (rows.size() < PAGE_SIZE) {
@@ -536,27 +551,29 @@ public class SqlExportService {
         return false;
     }
 
-    private List<String> resolveExportTables(SqlCapable puppetNode,
-                                             Map<String, Object> connection,
-                                             String database,
-                                             List<String> selectedTables) throws Exception {
-        if (selectedTables != null && !selectedTables.isEmpty()) {
-            return new ArrayList<String>(selectedTables);
+    private List<SqlObjectRef> resolveExportTableRefs(SqlCapable puppetNode,
+                                                      Map<String, Object> connection,
+                                                      SqlObjectRef namespaceRef,
+                                                      List<SqlObjectRef> selectedTableRefs) throws Exception {
+        if (selectedTableRefs != null && !selectedTableRefs.isEmpty()) {
+            return selectedTableRefs.stream()
+                    .filter(ref -> ref != null && !isBlank(ref.name()))
+                    .distinct()
+                    .sorted(Comparator.comparing(this::refSortKey)).toList();
         }
-        Map<String, Object> result = puppetNodeSqlService.getTables(puppetNode, connection, database);
+        Map<String, Object> result = puppetNodeSqlService.getTables(
+                puppetNode, connection, namespaceRef);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> tables = (List<Map<String, Object>>) result.get("tables");
-        List<String> names = new ArrayList<String>();
+        List<SqlObjectRef> refs = new ArrayList<SqlObjectRef>();
         if (tables != null) {
             for (Map<String, Object> item : tables) {
-                Object name = item.get("name");
-                if (name != null) {
-                    names.add(String.valueOf(name));
-                }
+                SqlObjectRef ref = refValue(item.get("ref"));
+                if (ref != null) refs.add(ref);
             }
         }
-        Collections.sort(names);
-        return names;
+        refs.sort(Comparator.comparing(this::refSortKey));
+        return refs;
     }
 
     private Map<String, Object> createTask(String taskId,
@@ -586,6 +603,45 @@ public class SqlExportService {
         task.put("finalPath", finalPath.toAbsolutePath().toString());
         task.put("processedTables", Integer.valueOf(0));
         return task;
+    }
+
+    static List<Map<String, Object>> toRefMaps(List<SqlObjectRef> refs) {
+        if (refs == null || refs.isEmpty()) return Collections.emptyList();
+        return refs.stream().filter(Objects::nonNull).map(SqlObjectRef::toMap).toList();
+    }
+
+    static SqlObjectRef refValue(Object value) {
+        if (!(value instanceof Map<?, ?> map)) return null;
+        return SqlObjectRef.fromMap(map);
+    }
+
+    static List<SqlObjectRef> refListValue(Object value) {
+        if (!(value instanceof List<?> list)) return Collections.emptyList();
+        List<SqlObjectRef> refs = new ArrayList<SqlObjectRef>();
+        for (Object item : list) {
+            SqlObjectRef ref = refValue(item);
+            if (ref != null) refs.add(ref);
+        }
+        return refs;
+    }
+
+    static String exportObjectName(SqlObjectRef ref) {
+        if (ref == null) return "default";
+        List<String> parts = new ArrayList<String>();
+        if (!isEmpty(ref.catalog())) parts.add(ref.catalog());
+        if (!isEmpty(ref.schema())) parts.add(ref.schema());
+        if (!isEmpty(ref.name())) parts.add(ref.name());
+        return parts.isEmpty() ? "default" : String.join("_", parts);
+    }
+
+    private String refSortKey(SqlObjectRef ref) {
+        if (ref == null) return "";
+        return safeString(ref.catalog()) + "\u0000" + safeString(ref.schema())
+                + "\u0000" + safeString(ref.name());
+    }
+
+    private static boolean isEmpty(String value) {
+        return value == null || value.isBlank();
     }
 
     private void updateTask(Map<String, Object> task, String status, int progress, String error) {
@@ -640,7 +696,9 @@ public class SqlExportService {
         data.put("format", task.get("format"));
         data.put("includeStructure", task.get("includeStructure"));
         data.put("includeData", task.get("includeData"));
-        data.put("selectedTables", task.get("selectedTables"));
+        data.put("objectRef", task.get("objectRef"));
+        data.put("currentObjectRef", task.get("currentObjectRef"));
+        data.put("tableRefs", task.get("tableRefs"));
         return data;
     }
 

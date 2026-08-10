@@ -8,11 +8,64 @@ import org.leo.service.sql.dialect.SqlDialectRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PuppetNodeSqlServiceResultBoundaryTest {
+
+    @Test
+    void tableMetadataReturnsStructuredRefsWithoutPerTableCountQueries() throws Exception {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        AtomicInteger executions = new AtomicInteger();
+        SqlCapable puppet = (connection, sqlScript) -> {
+            executions.incrementAndGet();
+            return Map.of(
+                    "code", 200,
+                    "rows", List.of(
+                            Map.of("name", "orders", "schema_name", "sales"),
+                            Map.of("name", "customers", "schema_name", "sales")));
+        };
+
+        Map<String, Object> result = service.getTables(puppet,
+                Map.of("dialect", "postgresql", "connectionMode", "standard",
+                        "host", "localhost", "database", "app"),
+                SqlObjectRef.schema("sales"));
+
+        assertEquals(1, executions.get());
+        List<?> tables = (List<?>) result.get("tables");
+        assertEquals(2, tables.size());
+        Map<?, ?> first = (Map<?, ?>) tables.get(0);
+        assertEquals("sales", ((Map<?, ?>) first.get("ref")).get("schema"));
+        assertEquals("orders", ((Map<?, ?>) first.get("ref")).get("name"));
+    }
+
+    @Test
+    void skipsCountQueryWhenCallerAlreadyHasPaginationTotal() throws Exception {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        AtomicInteger executions = new AtomicInteger();
+        SqlCapable puppet = (connection, sqlScript) -> {
+            executions.incrementAndGet();
+            return Map.of("code", 200, "rows", List.of(Map.of("id", 1)));
+        };
+
+        Map<String, Object> result = service.queryTable(
+                puppet,
+                Map.of("dialect", "postgresql", "connectionMode", "standard",
+                        "host", "localhost", "database", "app"),
+                SqlObjectRef.table(null, "sales", "orders"),
+                2,
+                20,
+                List.of("id"),
+                List.of(),
+                List.of(),
+                false,
+                null);
+
+        assertEquals(1, executions.get());
+        assertEquals(false, ((Map<?, ?>) result.get("pagination")).containsKey("total"));
+    }
 
     @Test
     void exposesRuntimeResultBoundariesToApiCallers() throws Exception {
@@ -169,5 +222,51 @@ class PuppetNodeSqlServiceResultBoundaryTest {
                 "msg", "connection timed out");
         Map<String, Object> networkResult = service.testConnection(networkFailure, connection);
         assertEquals("network", networkResult.get("failureStage"));
+    }
+
+    @Test
+    void preservesStructuredRuntimeErrorsForTheApiBoundary() {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        SqlCapable puppet = (spec, sql) -> Map.of(
+                "code", 504,
+                "msg", "statement timed out",
+                "errorCategory", "QUERY_TIMEOUT",
+                "sqlState", "HYT00",
+                "retryable", true,
+                "vendorCode", 17);
+
+        SqlExecutionException error = assertThrows(SqlExecutionException.class,
+                () -> service.executeSql(puppet,
+                        Map.of("dialect", "sqlite", "connectionMode", "standard", "file", ":memory:"),
+                        "SELECT 1"));
+
+        assertEquals(504, error.getStatusCode());
+        assertEquals("QUERY_TIMEOUT", error.details().get("errorCategory"));
+        assertEquals("HYT00", error.details().get("sqlState"));
+        assertEquals(true, error.details().get("retryable"));
+        assertEquals(17, error.details().get("vendorCode"));
+    }
+
+    @Test
+    void appliesValidatedRequestLevelQueryTimeoutsWithoutMutatingTheConnection() throws Exception {
+        PuppetNodeSqlService service = new PuppetNodeSqlService(new SqlDialectRegistry());
+        DatabaseConnectionSpec[] captured = new DatabaseConnectionSpec[1];
+        SqlCapable puppet = (spec, sql) -> {
+            captured[0] = spec;
+            return Map.of("code", 200, "rows", List.of(Map.of("value", 1)));
+        };
+        Map<String, Object> connection = Map.of(
+                "dialect", "sqlite",
+                "connectionMode", "standard",
+                "file", ":memory:",
+                "timeoutSeconds", 30);
+
+        service.executeSql(puppet, connection, "SELECT 1", 45);
+
+        assertEquals(45, captured[0].getTimeoutSeconds());
+        assertEquals(45, captured[0].runtimeOptions("java").get("queryTimeoutSeconds"));
+        assertEquals(30, connection.get("timeoutSeconds"));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.executeSql(puppet, connection, "SELECT 1", 301));
     }
 }

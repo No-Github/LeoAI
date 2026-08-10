@@ -1539,11 +1539,6 @@ public class EventLogService extends ComponentService {
         return s.substring(0, len);
     }
 
-    private boolean isWindows(String osOutput) {
-        return osOutput == null || osOutput.trim().isEmpty()
-                || osOutput.toLowerCase().contains("windows");
-    }
-
     private String escapeCmd(String s) {
         if (s == null) return "";
         return s.replace("\"", "\\\"");

@@ -2,6 +2,7 @@ package org.leo.web.controller.puppetnode;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Puppet;
+import org.leo.core.entity.Project;
 import org.leo.core.entity.User;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.BasicInfoCapable;
@@ -13,6 +14,8 @@ import org.leo.web.dto.puppetnode.CacheCheckResponse;
 import org.leo.web.dto.puppetnode.PuppetIdRequest;
 import org.leo.web.dto.puppetnode.SessionIdRequest;
 import org.leo.service.PuppetConnService;
+import org.leo.service.project.ProjectService;
+import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.service.PuppetNodeLifecycleService;
 import org.leo.web.util.ControllerUtil;
@@ -33,13 +36,16 @@ public class PuppetNodeController {
     private final PuppetConnService puppetConnService;
     private final PermissionService permissionService;
     private final PuppetNodeLifecycleService puppetNodeLifecycleService;
+    private final ProjectService projectService;
 
     public PuppetNodeController(PuppetConnService puppetConnService,
                                 PermissionService permissionService,
-                                PuppetNodeLifecycleService puppetNodeLifecycleService) {
+                                PuppetNodeLifecycleService puppetNodeLifecycleService,
+                                ProjectService projectService) {
         this.puppetConnService = puppetConnService;
         this.permissionService = permissionService;
         this.puppetNodeLifecycleService = puppetNodeLifecycleService;
+        this.projectService = projectService;
     }
 
     /**
@@ -47,10 +53,12 @@ public class PuppetNodeController {
      */
     @RequestMapping(value = "/init", method = RequestMethod.GET)
     public HashMap<String, Object> initPuppet(HttpServletRequest request,
-                                              @RequestParam("puppetId") String puppetId) throws Exception {
+                                              @RequestParam("puppetId") String puppetId,
+                                              @RequestParam(value = "projectId", required = false) String projectId) throws Exception {
         User user = permissionService.requireLogin(request);
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
-        return ApiResponse.success(puppetNodeLifecycleService.initLiveSession(puppet, user));
+        String projectContext = requireProjectContext(projectId, puppet.getPuppetId(), user);
+        return ApiResponse.success(puppetNodeLifecycleService.initLiveSession(puppet, user, projectContext));
     }
 
     /**
@@ -77,10 +85,12 @@ public class PuppetNodeController {
      */
     @RequestMapping(value = "/init-cache", method = RequestMethod.GET)
     public Map<String, Object> initCache(HttpServletRequest request,
-                                         @RequestParam("puppetId") String puppetId) {
+                                         @RequestParam("puppetId") String puppetId,
+                                         @RequestParam(value = "projectId", required = false) String projectId) {
         User user = permissionService.requireLogin(request);
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
-        return ApiResponse.success(puppetNodeLifecycleService.initCacheSession(puppet, user));
+        String projectContext = requireProjectContext(projectId, puppet.getPuppetId(), user);
+        return ApiResponse.success(puppetNodeLifecycleService.initCacheSession(puppet, user, projectContext));
     }
 
     /**
@@ -93,6 +103,19 @@ public class PuppetNodeController {
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
         Map<String, Object> result = puppetConnService.testConnection(puppet.getPuppetId());
         return ApiResponse.success(result);
+    }
+
+    /**
+     * 使用新增或编辑表单中的即时配置执行连接预检，不保存配置、不创建会话。
+     */
+    @RequestMapping(value = "/test-config", method = RequestMethod.POST)
+    public Map<String, Object> testConfig(HttpServletRequest request, @RequestBody Puppet puppet) {
+        permissionService.requireLogin(request);
+        if (puppet == null) throw ApiException.badRequest("主机配置不能为空");
+        if (puppet.getConnLink() == null || puppet.getConnLink().isBlank()) {
+            throw ApiException.badRequest("连接地址不能为空");
+        }
+        return ApiResponse.success(puppetConnService.testConnection(puppet));
     }
 
     /**
@@ -139,6 +162,20 @@ public class PuppetNodeController {
             if (key instanceof String stringKey) copy.put(stringKey, value);
         });
         return copy;
+    }
+
+    private String requireProjectContext(String projectId, String puppetId, User user) {
+        if (projectId == null || projectId.isBlank()) return null;
+        Project project = projectService.findById(projectId.trim());
+        if (project == null) throw ApiException.notFound("项目不存在");
+        if (!projectService.canView(project, user)) throw ApiException.forbidden("无权限访问此项目");
+        if (Project.STATUS_ARCHIVED.equals(project.getStatus())) {
+            throw ApiException.badRequest("已归档项目不能创建新会话");
+        }
+        if (!projectService.containsPuppet(project.getProjectId(), puppetId)) {
+            throw ApiException.badRequest("主机尚未加入当前项目");
+        }
+        return project.getProjectId();
     }
 
     /**

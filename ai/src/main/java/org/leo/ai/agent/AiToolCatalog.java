@@ -10,8 +10,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 工具元数据目录。目录由实际注册的工具对象构建，未知工具采用保守写操作语义，
- * 不再通过方法名称前缀猜测权限和幂等行为。
+ * 工具元数据目录。目录由实际注册的工具对象构建，未知工具采用保守写操作语义。
  */
 @Component
 public class AiToolCatalog {

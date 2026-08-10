@@ -49,6 +49,8 @@ public class PuppetNodeSession {
     private String sessionId;
     private Long updateTime;
     private String createByUser;
+    /** 创建会话时选择的业务项目；null 表示从未归档主机入口创建。 */
+    private String projectId;
     private Map<String, Map<String, Object>> basicInfoMap;
     private volatile String currentHostId;
     private volatile Set<String> allHostIds = ConcurrentHashMap.newKeySet();
@@ -267,6 +269,9 @@ public class PuppetNodeSession {
 
     public String getCreateByUser()                    { return createByUser; }
     public void   setCreateByUser(String createByUser) { this.createByUser = createByUser; }
+
+    public String getProjectId()                 { return projectId; }
+    public void   setProjectId(String projectId) { this.projectId = projectId; }
 
     public String getSessionId()                 { return sessionId; }
     public void   setSessionId(String sessionId) { this.sessionId = sessionId; }

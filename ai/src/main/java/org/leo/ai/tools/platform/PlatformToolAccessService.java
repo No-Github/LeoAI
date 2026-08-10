@@ -57,16 +57,11 @@ public class PlatformToolAccessService {
     }
 
     public boolean canView(Puppet puppet, User user) {
-        if (AccessPolicy.canAccessPuppet(puppet, user)) return true;
-        return hasLegacyTeamOwnership(puppet, user);
+        return AccessPolicy.canAccessPuppet(puppet, user);
     }
 
     public boolean canModify(Puppet puppet, User user) {
-        if (AccessPolicy.canModifyPuppet(puppet, user)) return true;
-        return AccessPolicy.isLeader(user)
-                && AccessPolicy.isTeamVisiblePermission(
-                        puppet != null ? puppet.getPermission() : null)
-                && hasLegacyTeamOwnership(puppet, user);
+        return AccessPolicy.canModifyPuppet(puppet, user);
     }
 
     public String normalizePermission(String permission) {
@@ -77,16 +72,5 @@ public class PlatformToolAccessService {
             return AccessPolicy.PERMISSION_TEAM;
         }
         return AccessPolicy.PERMISSION_PRIVATE;
-    }
-
-    private boolean hasLegacyTeamOwnership(Puppet puppet, User user) {
-        if (puppet == null || user == null
-                || user.getTeamId() == null || user.getTeamId().isBlank()
-                || !AccessPolicy.isTeamVisiblePermission(puppet.getPermission())
-                || (puppet.getTeamId() != null && !puppet.getTeamId().isBlank())) {
-            return false;
-        }
-        User owner = userService.getUserById(puppet.getCreateByUserId());
-        return owner != null && user.getTeamId().equals(owner.getTeamId());
     }
 }

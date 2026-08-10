@@ -128,7 +128,6 @@ public class CommandTools {
     /**
      * 同步执行命令：fork 子进程 → 等待退出 → 收集输出。
      * <p>无论 timeoutSeconds 是 0（用组件默认 30s）还是 &gt;0（自定义），都走同一条 fork-exec-wait 路径。
-     * 不再使用交互式 PTY shell + 哨兵，避免 PTY 输入回显与第二次 sentinel 误匹配的歧义。
      * <p>结果统一规整为 {@code {cmd, output, status, exitCode, timedOut}} 形状，与异步路径一致。
      */
     private Map<String, Object> execSync(String sessionId, String cmd, int timeoutSeconds) throws Exception {

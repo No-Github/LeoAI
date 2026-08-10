@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * 带 checkpoint 压缩能力的 ChatMemory 包装器。
  *
- * <p>底层记忆继续保存原始消息，Agent 读取时看到“历史摘要 + checkpoint 后消息”。
+ * <p>底层记忆保存原始消息，Agent 读取时看到“历史摘要 + checkpoint 后消息”。
  * 相同消息边界直接复用摘要；仅当摘要视图再次接近窗口上限时才继续压缩。
  */
 class CompressingChatMemory implements ChatMemory {

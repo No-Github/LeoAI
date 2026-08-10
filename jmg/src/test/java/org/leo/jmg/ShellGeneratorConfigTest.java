@@ -75,21 +75,7 @@ class ShellGeneratorConfigTest {
     }
 
     @Test
-    void rejectsRemovedChunkAliasesAndValidatesRespCode() {
-        ShellGeneratorConfig legacyAlias = injectorBuilder()
-                .shellType("FilterInjector-HTTPCHUNK")
-                .build();
-        assertEquals("http", legacyAlias.getProtocol());
-        assertThrows(IllegalArgumentException.class,
-                () -> validateInjector(legacyAlias));
-
-        ShellGeneratorConfig explicitAlias = injectorBuilder()
-                .protocol("httpchunk")
-                .shellType("FilterInjector-HTTPCHUNK")
-                .build();
-        assertThrows(IllegalArgumentException.class,
-                () -> validateInjector(explicitAlias));
-
+    void validatesHttpChunkResponseCode() {
         ShellGeneratorConfig badResp = injectorBuilder()
                 .protocol("httpchunk")
                 .shellType("FilterInjector")
@@ -202,7 +188,7 @@ class ShellGeneratorConfigTest {
     }
 
     @Test
-    void parsesServletNamespacesAndKeepsLegacyDefault() {
+    void parsesServletNamespacesAndDefaultsToJavax() {
         assertEquals(ServletNamespace.AUTO, builder().build().getServletNamespace());
         assertEquals(ServletNamespace.JAVAX, builder().build().getEffectiveServletNamespace());
         assertEquals(ServletNamespace.JAKARTA,

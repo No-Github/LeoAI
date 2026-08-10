@@ -35,8 +35,9 @@ public class GlobalExceptionHandler {
         } else {
             logger.warn("API业务异常: {}", e.getMessage());
         }
-        return ResponseEntity.status(e.getHttpStatus())
-                .body(ApiResponse.error(e.getCode(), e.getMessage()));
+        HashMap<String, Object> body = ApiResponse.error(e.getCode(), e.getMessage());
+        body.putAll(e.getDetails());
+        return ResponseEntity.status(e.getHttpStatus()).body(body);
     }
 
     /**

@@ -1,5 +1,5 @@
 -- =====================================================
--- LeoAI 数据库设计 - 重新设计版本
+-- LeoAI 数据库结构
 -- =====================================================
 
 -- 1. 用户表
@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_puppets_team_id ON puppets(team_id);
 
 
 
--- 8. 系统配置表
+-- 4. 系统配置表
 CREATE TABLE IF NOT EXISTS system_configs (
     config_key VARCHAR(100) PRIMARY KEY,
     config_value TEXT,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS system_configs (
     update_time DATETIME NOT NULL
 );
 
--- 9. 会话管理表
+-- 5. 会话管理表
 CREATE TABLE IF NOT EXISTS sessions (
     session_id VARCHAR(100) PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL,
@@ -107,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time);
 -- 数据库连接信息表
 -- =====================================================
 
--- 11. Puppet 数据库连接配置表（运行时中立）
+-- 6. Puppet 数据库连接配置表（运行时中立）
 CREATE TABLE IF NOT EXISTS puppet_database_connections (
     connection_id VARCHAR(50) PRIMARY KEY,
     connection_name VARCHAR(100) NOT NULL,
@@ -133,7 +133,61 @@ CREATE INDEX IF NOT EXISTS idx_database_connections_create_user_id
     ON puppet_database_connections(create_user_id);
 CREATE INDEX IF NOT EXISTS idx_database_connections_puppet_id
     ON puppet_database_connections(puppet_id);
--- 12. 审计日志表
+
+-- =====================================================
+-- 项目工作区与主机关联
+-- =====================================================
+CREATE TABLE IF NOT EXISTS projects (
+    project_id VARCHAR(50) PRIMARY KEY,
+    project_name VARCHAR(100) NOT NULL,
+    project_code VARCHAR(50),
+    description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+    owner_user_id VARCHAR(50) NOT NULL,
+    team_id VARCHAR(50),
+    permission VARCHAR(20) NOT NULL DEFAULT 'private' CHECK (permission IN ('private', 'team', 'public')),
+    create_time DATETIME NOT NULL,
+    update_time DATETIME NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+CREATE TABLE IF NOT EXISTS project_puppets (
+    project_id VARCHAR(50) NOT NULL,
+    puppet_id VARCHAR(50) NOT NULL,
+    alias VARCHAR(100),
+    environment VARCHAR(30),
+    tags TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    added_by_user_id VARCHAR(50) NOT NULL,
+    create_time DATETIME NOT NULL,
+    PRIMARY KEY (project_id, puppet_id),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+    FOREIGN KEY (puppet_id) REFERENCES puppets(puppet_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_puppets_puppet ON project_puppets(puppet_id);
+
+-- 实时对象仍由 PuppetNodeSessionContainer 管理；此表预留项目化会话索引和历史。
+CREATE TABLE IF NOT EXISTS puppet_sessions (
+    session_id VARCHAR(100) PRIMARY KEY,
+    project_id VARCHAR(50),
+    puppet_id VARCHAR(50) NOT NULL,
+    user_id VARCHAR(50) NOT NULL,
+    session_mode VARCHAR(20) NOT NULL DEFAULT 'live' CHECK (session_mode IN ('live', 'cache')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'expired')),
+    create_time DATETIME NOT NULL,
+    last_active_time DATETIME NOT NULL,
+    close_time DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_puppet_sessions_project_status
+    ON puppet_sessions(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_puppet_sessions_puppet
+    ON puppet_sessions(puppet_id);
+-- 7. 审计日志表
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id VARCHAR(50) PRIMARY KEY,
     user_id VARCHAR(50), -- 操作用户ID
@@ -162,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation
 CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON audit_logs(status);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_client_ip ON audit_logs(client_ip);
 
--- 13. AI 供应商与模型配置
+-- 8. AI 供应商与模型配置
 CREATE TABLE IF NOT EXISTS ai_providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name VARCHAR(100) NOT NULL UNIQUE,
@@ -272,7 +326,7 @@ SET context_window_tokens = 1000000,
 WHERE model_name IN ('deepseek-v4-flash', 'deepseek-v4-pro')
   AND source = 'system';
 
--- 15. AI 对话线程（统一存储，不再依赖 JSONL/index 文件）
+-- 9. AI 对话线程
 CREATE TABLE IF NOT EXISTS ai_threads (
     thread_id VARCHAR(64) PRIMARY KEY,
     scope VARCHAR(32) NOT NULL,
@@ -305,7 +359,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_threads_scope
 CREATE INDEX IF NOT EXISTS idx_ai_threads_parent
     ON ai_threads(parent_thread_id);
 
--- 16. AI 对话轮次：一轮用户输入及其最终 assistant 输出
+-- 10. AI 对话轮次：一轮用户输入及其最终 assistant 输出
 CREATE TABLE IF NOT EXISTS ai_turns (
     turn_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,
@@ -342,7 +396,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_turns_active_thread
 CREATE INDEX IF NOT EXISTS idx_ai_turns_thread_dispatch
     ON ai_turns(thread_id, protocol_status, dispatch_status, created_at);
 
--- 17. AI 单次运行记录：当前一个 Turn 对应一个 Run
+-- 11. AI 单次运行记录：一个 Turn 对应一个 Run
 CREATE TABLE IF NOT EXISTS ai_runs (
     run_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,
@@ -373,7 +427,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_runs_thread_time
 CREATE INDEX IF NOT EXISTS idx_ai_runs_turn
     ON ai_runs(turn_id);
 
--- 18. AI 对话消息
+-- 12. AI 对话消息
 CREATE TABLE IF NOT EXISTS ai_messages (
     message_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,
@@ -410,7 +464,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_messages_turn
 CREATE INDEX IF NOT EXISTS idx_ai_messages_run
     ON ai_messages(run_id);
 
--- 19. AI 运行事件（SSE 事件持久化）
+-- 13. AI 运行事件（SSE 事件持久化）
 CREATE TABLE IF NOT EXISTS ai_events (
     event_id VARCHAR(64) PRIMARY KEY,
     run_id VARCHAR(64),
@@ -433,7 +487,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_events_thread_seq
 CREATE INDEX IF NOT EXISTS idx_ai_events_run_seq
     ON ai_events(run_id, event_seq);
 
--- 20. AI 线程执行租约：跨实例保证同一线程同一时刻只有一个执行者
+-- 14. AI 线程执行租约：跨实例保证同一线程同一时刻只有一个执行者
 CREATE TABLE IF NOT EXISTS ai_thread_leases (
     thread_id VARCHAR(64) PRIMARY KEY,
     owner_id VARCHAR(128) NOT NULL,
@@ -447,7 +501,7 @@ CREATE TABLE IF NOT EXISTS ai_thread_leases (
 CREATE INDEX IF NOT EXISTS idx_ai_thread_leases_expiry
     ON ai_thread_leases(expires_at);
 
--- 21. AI 子 Agent 调用记录（父会话→子会话的派发关系）
+-- 15. AI 子 Agent 调用记录（父会话→子会话的派发关系）
 CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
     invocation_id VARCHAR(64) PRIMARY KEY,
     parent_thread_id VARCHAR(64) NOT NULL,
@@ -468,7 +522,7 @@ CREATE TABLE IF NOT EXISTS ai_subagent_invocations (
 CREATE INDEX IF NOT EXISTS idx_ai_subagent_parent
     ON ai_subagent_invocations(parent_thread_id, created_at);
 
--- 22. Agent 等待用户输入记录
+-- 16. Agent 等待用户输入记录
 CREATE TABLE IF NOT EXISTS ai_user_input_requests (
     request_id VARCHAR(64) PRIMARY KEY,
     thread_id VARCHAR(64) NOT NULL,

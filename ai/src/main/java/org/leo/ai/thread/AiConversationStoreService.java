@@ -604,59 +604,7 @@ public class AiConversationStoreService {
         return row.getMessageId();
     }
 
-    /**
-     * 原子创建一次 Turn：先写入运行记录，再写入 pending 用户消息。
-     * 这样消息永远可以追溯到所属 Run，执行队列拒绝也不会产生孤立消息。
-     */
-    @Transactional
-    public PersistedTurn beginTurn(String threadId, Integer configId,
-                                   String input, String userContent, Object attachments,
-                                   long startedAt, String runtimeJson,
-                                   AiTurnTrace trace) {
-        return beginTurn(null, threadId, configId, input, userContent, attachments,
-                startedAt, runtimeJson, trace);
-    }
-
-    /**
-     * 使用接入层已经分配的 Turn ID 创建持久化 Turn。这样 turn/start 可以在模型线程
-     * 真正启动前把稳定 ID 返回给客户端；旧调用点传 null 时仍由存储层生成。
-     */
-    @Transactional
-    public PersistedTurn beginTurn(String requestedTurnId,
-                                   String threadId,
-                                   Integer configId,
-                                   String input,
-                                   String userContent,
-                                   Object attachments,
-                                   long startedAt,
-                                   String runtimeJson,
-                                   AiTurnTrace trace) {
-        return beginTurn(
-                requestedTurnId, null, null, threadId, configId, input,
-                userContent, attachments, startedAt, runtimeJson, trace, null);
-    }
-
-    /**
-     * 使用协议层预分配的稳定 user/assistant Item ID 创建 Turn。
-     */
-    @Transactional
-    public PersistedTurn beginTurn(String requestedTurnId,
-                                   String requestedUserItemId,
-                                   String requestedAssistantItemId,
-                                   String threadId,
-                                   Integer configId,
-                                   String input,
-                                   String userContent,
-                                   Object attachments,
-                                   long startedAt,
-                                   String runtimeJson,
-                                   AiTurnTrace trace) {
-        return beginTurn(
-                requestedTurnId, requestedUserItemId, requestedAssistantItemId,
-                threadId, configId, input, userContent, attachments,
-                startedAt, runtimeJson, trace, null);
-    }
-
+    /** 原子创建 Turn，并关联预留 Item、运行记录、追踪信息和执行租约。 */
     @Transactional
     public PersistedTurn beginTurn(String requestedTurnId,
                                    String requestedUserItemId,

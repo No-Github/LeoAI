@@ -263,31 +263,6 @@ public class NetworkInfoService extends ComponentService {
         return value != null ? value : source.get(second);
     }
 
-    // ==================== collectAll helper ====================
-
-    private void safeCollect(Map<String, Object> target, String key,
-                             String opName, int osType) {
-        try {
-            Object value;
-            if ("interfaces".equals(opName)) {
-                value = doCollectInterfaces();
-            } else if ("arp".equals(opName)) {
-                value = doCollectArp(osType);
-            } else if ("routes".equals(opName)) {
-                value = doCollectRoutes(osType);
-            } else if ("dnsConfig".equals(opName)) {
-                value = doCollectDnsConfig(osType);
-            } else {
-                value = doCollectHosts(osType);
-            }
-            if (value != null) target.put(key, value);
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<String, Object>();
-            err.put("error", e.getClass().getName() + ": " + e.getMessage());
-            target.put(key, err);
-        }
-    }
-
     // ==================== 1. 网卡信息（Java API，跨平台）====================
 
     private List<Map<String, Object>> doCollectInterfaces() throws Exception {

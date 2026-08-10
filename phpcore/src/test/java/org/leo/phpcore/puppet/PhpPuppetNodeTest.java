@@ -23,6 +23,7 @@ import org.leo.core.puppet.capability.Socks5ProxyCapable;
 import org.leo.core.puppet.capability.SqlCapable;
 import org.leo.core.puppet.capability.UserAccountCapable;
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.puppet.database.SqlCommand;
 import org.leo.core.rpc.PuppetRpcEnvelopeMapper;
 import org.leo.core.rpc.PuppetOperation;
 import org.leo.core.rpc.PuppetRpcRequest;
@@ -347,6 +348,29 @@ class PhpPuppetNodeTest {
         assertEquals("db-password", request.get("password"));
         assertEquals("UPDATE inventory SET quantity = 2 WHERE id = 1", request.get("sql"));
         assertEquals(1, ((Number) result.get("affectedRows")).intValue());
+    }
+
+    @Test
+    void forwardsBoundDatabaseParametersSeparatelyFromSql() throws Exception {
+        List<Map<String, Object>> invokes = new ArrayList<>();
+        Communication communication = bytes -> {
+            DecodedRequest decoded = decodeRequest(bytes);
+            if (decoded.request().operation() == PuppetOperation.COMPONENT_INVOKE) {
+                invokes.add(decoded.execution());
+            }
+            return response(decoded, Map.of("code", 200, "columns", List.of(), "rows", List.of(),
+                    "rowCount", 0, "affectedRows", 1));
+        };
+        PhpPuppetNode node = node(communication, new PortableDisguise());
+        DatabaseConnectionSpec connection = DatabaseConnectionSpec.fromMap(Map.of(
+                "dialect", "sqlite", "connectionMode", "standard",
+                "variant", "file", "file", "/tmp/example.sqlite"));
+
+        node.executeSql(connection, SqlCommand.parameterized(
+                "UPDATE inventory SET name = ? WHERE id = ?", List.of("O'Reilly", 7)));
+
+        assertEquals("UPDATE inventory SET name = ? WHERE id = ?", invokes.get(0).get("sql"));
+        assertEquals(List.of("O'Reilly", 7), invokes.get(0).get("parameters"));
     }
 
     @Test

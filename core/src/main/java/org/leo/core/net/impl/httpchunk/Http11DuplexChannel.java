@@ -108,7 +108,7 @@ public final class Http11DuplexChannel implements Closeable {
         return await(sendAsync(data), TransportLimits.READ_TIMEOUT_MILLIS);
     }
 
-    public CompletableFuture<byte[]> sendAsync(byte[] data) throws Exception {
+    private CompletableFuture<byte[]> sendAsync(byte[] data) throws Exception {
         byte[] payload = data == null ? new byte[0] : data;
         TransportLimits.requireMessageSize(payload);
         ensureOpen();
@@ -142,7 +142,7 @@ public final class Http11DuplexChannel implements Closeable {
         }
     }
 
-    public byte[] await(CompletableFuture<byte[]> future, long timeoutMillis) throws Exception {
+    private byte[] await(CompletableFuture<byte[]> future, long timeoutMillis) throws Exception {
         try {
             return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {

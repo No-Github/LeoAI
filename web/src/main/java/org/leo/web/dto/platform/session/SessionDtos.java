@@ -23,6 +23,7 @@ public final class SessionDtos {
 
     public record SessionInfo(
             String sessionId,
+            String projectId,
             String puppetId,
             String puppetName,
             String connLink,

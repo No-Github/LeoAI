@@ -3,7 +3,6 @@ package org.leo.jmg.mem.injectortpl.jetty;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -193,21 +192,6 @@ public class JettyCustomizerInjector {
             throw e;
         } catch (Exception e) {
             throw new RuntimeException("Error invoking method: " + methodName, e);
-        }
-    }
-
-    @SuppressWarnings("all")
-    private String getErrorMessage(Throwable throwable) {
-        PrintStream printStream = null;
-        try {
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            printStream = new PrintStream(outputStream);
-            throwable.printStackTrace(printStream);
-            return outputStream.toString();
-        } finally {
-            if (printStream != null) {
-                printStream.close();
-            }
         }
     }
 }

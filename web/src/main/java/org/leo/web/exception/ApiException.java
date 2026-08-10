@@ -3,6 +3,10 @@ package org.leo.web.exception;
 import org.leo.core.util.ApiResponse;
 import org.springframework.http.HttpStatus;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * API 层业务异常。
  *
@@ -13,11 +17,22 @@ public class ApiException extends RuntimeException {
 
     private final int code;
     private final HttpStatus httpStatus;
+    private final Map<String, Object> details;
 
     private ApiException(int code, HttpStatus httpStatus, String message) {
+        this(code, httpStatus, message, Map.of());
+    }
+
+    private ApiException(int code,
+                         HttpStatus httpStatus,
+                         String message,
+                         Map<String, Object> details) {
         super(message);
         this.code = code;
         this.httpStatus = httpStatus;
+        this.details = details == null
+                ? Map.of()
+                : Collections.unmodifiableMap(new LinkedHashMap<String, Object>(details));
     }
 
     public int getCode() {
@@ -26,6 +41,25 @@ public class ApiException extends RuntimeException {
 
     public HttpStatus getHttpStatus() {
         return httpStatus;
+    }
+
+    public Map<String, Object> getDetails() {
+        return details;
+    }
+
+    public static ApiException databaseError(int code,
+                                             String message,
+                                             Map<String, Object> details) {
+        HttpStatus status = switch (code) {
+            case 400 -> HttpStatus.BAD_REQUEST;
+            case 429 -> HttpStatus.TOO_MANY_REQUESTS;
+            case 500 -> HttpStatus.INTERNAL_SERVER_ERROR;
+            case 502 -> HttpStatus.BAD_GATEWAY;
+            case 503 -> HttpStatus.SERVICE_UNAVAILABLE;
+            case 504 -> HttpStatus.GATEWAY_TIMEOUT;
+            default -> HttpStatus.UNPROCESSABLE_ENTITY;
+        };
+        return new ApiException(status.value(), status, message, details);
     }
 
     public static ApiException badRequest(String message) {

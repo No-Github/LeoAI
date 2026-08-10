@@ -16,7 +16,7 @@ import java.sql.Statement;
 import java.util.HashSet;
 import java.util.Set;
 
-/** Initializes the current release schema and seed data for a fresh installation. */
+/** Ensures the current database schema, indexes, journal mode and seed data. */
 @Component
 @Order(0)
 public class DatabaseInitializer implements CommandLineRunner {
@@ -31,7 +31,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         enableWalMode();
-        validateAiConversationSchema();
+        reconcileAndValidateSchema();
         if (needsSeedData()) {
             log.info("检测到全新数据库，写入默认团队与基础配置；管理员账户由安全引导流程创建...");
             executeScript("sql/data.sql");
@@ -66,14 +66,17 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    /** 启动时校验 AI Turn 数据库结构。 */
-    private void validateAiConversationSchema() {
+    /** 补齐允许在线添加的结构，并校验其余数据库约束。 */
+    private void reconcileAndValidateSchema() {
         try (Connection connection = dataSource.getConnection()) {
             ensureColumn(connection, "ai_threads", "context_checkpoint_json", "TEXT");
             ensureColumn(connection, "ai_turns", "answer_to_question_id", "VARCHAR(64)");
             ensureUserInputRequestTable(connection);
             ensureColumn(connection, "ai_user_input_requests",
                     "confirmation_consumed_at", "INTEGER");
+            requireColumns(connection, "puppets",
+                    Set.of("puppet_id", "create_by_user_id", "team_id", "permission"));
+            normalizePuppetTeamOwnership(connection);
             requireColumns(connection, "ai_threads",
                     Set.of("thread_id", "context_summary", "context_checkpoint_json"));
             requireColumns(connection, "ai_turns",
@@ -106,6 +109,32 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "created_at", "answered_at", "confirmation_consumed_at", "expires_at"));
         } catch (SQLException error) {
             throw new IllegalStateException("校验 AI 对话数据库结构失败", error);
+        }
+    }
+
+    /** 让团队可见 Puppet 的团队归属与创建者保持一致。 */
+    private void normalizePuppetTeamOwnership(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            int updated = statement.executeUpdate("""
+                    UPDATE puppets
+                    SET team_id = (
+                        SELECT users.team_id
+                        FROM users
+                        WHERE users.user_id = puppets.create_by_user_id
+                    )
+                    WHERE permission = 'team'
+                      AND (team_id IS NULL OR TRIM(team_id) = '')
+                      AND EXISTS (
+                          SELECT 1
+                          FROM users
+                          WHERE users.user_id = puppets.create_by_user_id
+                            AND users.team_id IS NOT NULL
+                            AND TRIM(users.team_id) <> ''
+                      )
+                    """);
+            if (updated > 0) {
+                log.info("已补齐 {} 个 Puppet 的团队归属", updated);
+            }
         }
     }
 
@@ -147,7 +176,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         }
     }
 
-    /** 对可向后兼容的 nullable 字段执行幂等升级。 */
+    /** 幂等补齐允许在线添加的 nullable 字段。 */
     private void ensureColumn(Connection connection,
                               String table,
                               String column,
@@ -158,7 +187,7 @@ public class DatabaseInitializer implements CommandLineRunner {
             statement.executeUpdate("ALTER TABLE " + table
                     + " ADD COLUMN " + column + " " + definition);
         }
-        log.info("数据库结构升级完成: {}.{}", table, column);
+        log.info("数据库字段已补齐: {}.{}", table, column);
     }
 
     private void requireColumns(Connection connection, String table,

@@ -31,6 +31,25 @@ class DatabaseInitializerFreshStartTest {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
         }
         initializer.run();
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    INSERT INTO users
+                      (user_id, user_name, password, privilege, status,
+                       create_time, update_time, team_id)
+                    VALUES ('owner-1', 'owner-1', 'hash', 'normal', 1,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'team-a')
+                    """);
+            statement.executeUpdate("""
+                    INSERT INTO puppets
+                      (puppet_id, puppet_name, parent_puppet_id, create_by_user_id,
+                       conn_link, req_disguise_id, resp_disguise_id, permission,
+                       create_time, update_time)
+                    VALUES ('team-puppet', 'team-puppet', 'root', 'owner-1', '/',
+                            'request', 'response', 'team',
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """);
+        }
         initializer.run();
 
         try (Connection connection = dataSource.getConnection();
@@ -74,6 +93,8 @@ class DatabaseInitializerFreshStartTest {
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='uk_users_user_name_nocase'"));
             assertEquals(1, scalar(statement,
                     "SELECT COUNT(*) FROM system_configs WHERE config_key='system.version' AND config_value='1.0.0'"));
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM puppets WHERE puppet_id='team-puppet' AND team_id='team-a'"));
 
             SQLException rejected = assertThrows(SQLException.class, () -> statement.executeUpdate("""
                     INSERT INTO puppets
@@ -87,9 +108,9 @@ class DatabaseInitializerFreshStartTest {
     }
 
     @Test
-    void upgradesLegacyAiThreadWithCheckpointMetadataColumn() throws Exception {
+    void addsMissingCheckpointMetadataColumn() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
-        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("legacy-checkpoint.db"));
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("missing-checkpoint.db"));
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
             try (Statement statement = connection.createStatement()) {

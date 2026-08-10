@@ -10,6 +10,7 @@ import org.leo.core.util.ApiResponse;
 import org.leo.core.util.javassist.JavassistDisguiseFactory;
 import org.leo.web.util.ControllerUtil;
 import org.leo.web.security.AdminOnlyEndpoint;
+import org.leo.web.util.DownloadHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -260,7 +261,7 @@ public class DisguiseManagerController {
             String filename = disguiseId.trim() + ".disguise";
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
                     .body(data);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest()
@@ -296,7 +297,7 @@ public class DisguiseManagerController {
             String filename = "disguises_" + LocalDate.now() + ".zip";
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, "application/zip")
-                    .header(HttpHeaders.CONTENT_DISPOSITION, buildAttachment(filename))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, DownloadHeaders.attachmentValue(filename))
                     .body(zip);
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
@@ -329,17 +330,6 @@ public class DisguiseManagerController {
         } catch (Exception e) {
             return ApiResponse.error("导入失败: " + e.getMessage());
         }
-    }
-
-    /** 构造 RFC 5987 兼容的 Content-Disposition attachment 头。 */
-    private static String buildAttachment(String filename) {
-        String encoded;
-        try {
-            encoded = java.net.URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
-        } catch (Exception e) {
-            encoded = filename;
-        }
-        return "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + encoded;
     }
 
     private User getCurrentUser(HttpServletRequest request) {

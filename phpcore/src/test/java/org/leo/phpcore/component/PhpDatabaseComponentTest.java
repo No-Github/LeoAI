@@ -125,7 +125,25 @@ class PhpDatabaseComponentTest {
                 .anyMatch(item -> "sqlite".equals(((Map<?, ?>) item).get("id"))));
     }
 
+    @Test
+    void limitsLargeResultSetsAndReportsTheBoundary() throws Exception {
+        Map<String, Object> selected = execute(
+                "WITH RECURSIVE numbers(value) AS (SELECT 1 UNION ALL "
+                        + "SELECT value + 1 FROM numbers WHERE value < 5) SELECT value FROM numbers",
+                Map.of("maxRows", 2));
+
+        assertSuccess(selected);
+        assertEquals(2, selected.get("rowCount"));
+        assertEquals(true, selected.get("truncated"));
+        assertEquals("MAX_ROWS", selected.get("truncationReason"));
+        assertTrue(((Number) selected.get("resultBytes")).intValue() > 0);
+    }
+
     private Map<String, Object> execute(String sql) throws Exception {
+        return execute(sql, Map.of());
+    }
+
+    private Map<String, Object> execute(String sql, Map<String, Object> options) throws Exception {
         Map<String, Object> connection = new LinkedHashMap<>();
         connection.put("dialect", "sqlite");
         connection.put("connectionMode", "standard");
@@ -134,6 +152,7 @@ class PhpDatabaseComponentTest {
         Map<String, Object> params = new LinkedHashMap<>(new PhpDatabaseConnectionAdapter()
                 .adapt(DatabaseConnectionSpec.fromMap(connection)));
         params.put("sql", sql);
+        params.putAll(options);
         return invoke("exec", params);
     }
 

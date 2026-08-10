@@ -243,7 +243,7 @@ public class ShellGeneratorConfig {
             return this;
         }
 
-        /** 设置生成物预期运行的 Java 版本；默认 AUTO 保持原有行为。 */
+        /** 设置生成物预期运行的 Java 版本；默认 AUTO。 */
         public Builder targetJavaVersion(TargetJavaVersion targetJavaVersion) {
             config.targetJavaVersion = targetJavaVersion == null
                     ? TargetJavaVersion.AUTO

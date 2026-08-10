@@ -1,6 +1,7 @@
 package org.leo.core.puppet.capability;
 
 import org.leo.core.puppet.database.DatabaseConnectionSpec;
+import org.leo.core.puppet.database.SqlCommand;
 
 import java.util.Map;
 
@@ -12,6 +13,16 @@ public interface SqlCapable {
 
     Map<String, Object> executeSql(DatabaseConnectionSpec connection,
                                    String sqlScript) throws Exception;
+
+    /**
+     * Executes a SQL command with values kept separate from the SQL text.
+     * Implementations backed by prepared statements should override this
+     * method. The default preserves the original functional-interface shape.
+     */
+    default Map<String, Object> executeSql(DatabaseConnectionSpec connection,
+                                           SqlCommand command) throws Exception {
+        return executeSql(connection, command.sql());
+    }
 
     /**
      * Inspects the database provider inside the remote Puppet runtime.

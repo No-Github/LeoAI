@@ -1,0 +1,1 @@
+import{mn as e}from"./vendor-element-plus-CQCFyCvS.js";function t(t){function n(){return typeof t==`function`?t():e(t)}function r(e={}){return{sessionId:n(),...e}}return{withSession:r,sessionId:n}}export{t};

@@ -568,6 +568,12 @@ public class JavaPuppetNode extends AbstractPuppetNode implements BasicInfoCapab
     }
 
     @Override
+    public Map<String, Object> executeSql(org.leo.core.puppet.database.DatabaseConnectionSpec connection,
+                                          org.leo.core.puppet.database.SqlCommand command) throws Exception {
+        return sqlService.executeSql(connection, command);
+    }
+
+    @Override
     public Map<String, Object> inspectDatabaseRuntime(Map<String, Object> connection) throws Exception {
         return sqlService.inspectRuntime(connection);
     }

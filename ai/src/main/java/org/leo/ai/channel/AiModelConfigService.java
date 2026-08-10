@@ -698,10 +698,6 @@ public class AiModelConfigService {
         }
     }
 
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
-    }
-
     private void validateProvider(AiProvider row, boolean creating) {
         if (row == null) throw new IllegalArgumentException("供应商不能为空");
         if (creating && isBlank(row.getName())) throw new IllegalArgumentException("供应商名称不能为空");

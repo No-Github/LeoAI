@@ -162,7 +162,7 @@ public final class PuppetNodeSessionWorkDirUtil {
      * <p>采用 last-write-wins 策略直接覆盖，避免并发写损坏文件。
      *
      * @param sessionId 会话 ID
-     * @param hostId    主机 ID（仅用于 JSON 中的 hostId 字段记录，不再作为 key 合并）
+     * @param hostId    主机 ID（用于 JSON 中的 hostId 字段）
      * @param basicInfo 主机基础信息 Map
      * @return 写入的文件，失败时返回 null
      */

@@ -15,7 +15,7 @@ import java.util.zip.GZIPInputStream;
  * GlassFish / Payara WebSocket 内存马注入器。
  * <p>
  * Context 发现逻辑复用 {@link GlassFishFilterInjector}（基于 Tomcat 内核的
- * ContainerBackgroundProcessor 线程扫描），注入逻辑改为通过 ServletContext
+ * ContainerBackgroundProcessor 线程扫描），并通过 ServletContext
  * 获取 ServerContainer 并 addEndpoint。
  * <p>
  * GlassFish / Payara 使用 Tyrus 作为 JSR-356 实现，
