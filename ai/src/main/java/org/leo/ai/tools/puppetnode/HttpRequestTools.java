@@ -5,6 +5,7 @@ import org.leo.ai.util.PuppetNodeSessionUtils;
 import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.puppet.capability.HttpSenderCapable;
 import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -34,11 +35,15 @@ public class HttpRequestTools {
             cache: 为 true 时对 GET 请求结果按 URL 缓存（适用于 Actuator、Nacos API、云 metadata 等幂等端点）；POST/PUT/DELETE 忽略此参数。
             返回状态码、响应头和响应体。
             """)
-    public Map<String, Object> httpRequest(String method, String url,
-                                           String headers, String body,
-                                           int connectTimeout, int readTimeout,
-                                           boolean followRedirects,
-                                           boolean cache) throws Exception {
+    public Map<String, Object> httpRequest(
+            @P("请求方法：GET/POST/PUT/DELETE/HEAD") String method,
+            @P("目标 URL") String url,
+            @P(value = "每行一个 Key: Value 的请求头", required = false) String headers,
+            @P(value = "请求体；GET/HEAD 可省略", required = false) String body,
+            @P(value = "连接超时毫秒；0 使用默认值", required = false, defaultValue = "0") int connectTimeout,
+            @P(value = "读取超时毫秒；0 使用默认值", required = false, defaultValue = "0") int readTimeout,
+            @P(value = "是否跟随重定向", required = false, defaultValue = "false") boolean followRedirects,
+            @P(value = "是否缓存 GET 结果", required = false, defaultValue = "false") boolean cache) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         // 仅 GET 方法支持缓存
         if (cache && "GET".equalsIgnoreCase(method)) {
@@ -68,10 +73,14 @@ public class HttpRequestTools {
     // ==================== Repeater：原始报文发送 ====================
 
     @Tool("在 puppet 侧发送原始 HTTP 报文（Repeater 模式）。传入完整的 HTTP 请求文本（请求行 + 头 + 空行 + body），支持自定义目标主机、端口、TLS、超时。适用于精确控制请求报文的场景，如安全测试、漏洞验证、API 调试。不缓存。")
-    public Map<String, Object> sendRawRequest(String rawHttp,
-                                              String targetHost, int targetPort,
-                                              boolean useTls, boolean followRedirects,
-                                              int connectTimeout, int readTimeout) throws Exception {
+    public Map<String, Object> sendRawRequest(
+            @P("完整原始 HTTP 请求文本") String rawHttp,
+            @P("目标主机") String targetHost,
+            @P("目标端口") int targetPort,
+            @P(value = "是否使用 TLS", required = false, defaultValue = "false") boolean useTls,
+            @P(value = "是否跟随重定向", required = false, defaultValue = "false") boolean followRedirects,
+            @P(value = "连接超时毫秒；0 使用默认值", required = false, defaultValue = "0") int connectTimeout,
+            @P(value = "读取超时毫秒；0 使用默认值", required = false, defaultValue = "0") int readTimeout) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         Map<String, Object> result = node.sendRawHttp(rawHttp, targetHost, targetPort, useTls, followRedirects, connectTimeout, readTimeout);
@@ -85,11 +94,16 @@ public class HttpRequestTools {
             + "threads 为并发线程数（默认5，最大50），delayMs 为请求间延迟毫秒。"
             + "matchRules 可选匹配规则：{statusCode, bodyContains, bodyNotContains, bodyLengthMin, bodyLengthMax}。"
             + "返回 taskId，用 queryFuzz 轮询进度和结果，用 stopFuzz 终止。")
-    public Map<String, Object> startFuzz(String rawHttp,
-                                         Map<String, List<String>> payloads,
-                                         String targetHost, int targetPort,
-                                         boolean useTls, int threads, int delayMs,
-                                         Map<String, Object> matchRules) throws Exception {
+    public Map<String, Object> startFuzz(
+            @P("含 {{变量名}} 占位符的完整原始 HTTP 请求") String rawHttp,
+            @P("变量名到候选值列表的映射") Map<String, List<String>> payloads,
+            @P("目标主机") String targetHost,
+            @P("目标端口") int targetPort,
+            @P(value = "是否使用 TLS", required = false, defaultValue = "false") boolean useTls,
+            @P(value = "并发线程数，默认5，最大50", required = false, defaultValue = "5") int threads,
+            @P(value = "请求间延迟毫秒，默认0", required = false, defaultValue = "0") int delayMs,
+            @P(value = "可选匹配规则：statusCode、bodyContains、bodyNotContains、bodyLengthMin、bodyLengthMax",
+                    required = false) Map<String, Object> matchRules) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         HttpSenderCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, HttpSenderCapable.class);
         return node.startFuzz(rawHttp, payloads, targetHost, targetPort, useTls, threads, delayMs, matchRules);
@@ -105,7 +119,7 @@ public class HttpRequestTools {
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
-            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
     @Tool("停止正在运行的 Fuzzer 任务。传入 taskId，强制终止所有进行中的请求。")
     public Map<String, Object> stopFuzz(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

@@ -46,7 +46,8 @@ public class WebRuntimeTools {
             + "• interceptor → 传 identifier = interceptorId（Spring/Struts2/JSF）")
     public Map<String, Object> removeWebRuntimeComponent(
             @P("组件类型: filter/servlet/valve/listener/controller/interceptor") String componentType,
-            @P("容器上下文名称。valve/listener/controller/interceptor 时可为空") String contextName,
+            @P(value = "容器上下文名称；filter/servlet 必填，其余组件类型可省略",
+                    required = false) String contextName,
             @P("组件标识，含义因类型而异（见工具描述）") String identifier) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         WebRuntimeManageCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, WebRuntimeManageCapable.class);

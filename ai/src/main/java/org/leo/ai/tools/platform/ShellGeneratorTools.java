@@ -1,5 +1,6 @@
 package org.leo.ai.tools.platform;
 
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -149,13 +150,15 @@ public class ShellGeneratorTools {
           "绝不返回 Core 字节码或 Base64。生成 Java WebShell 时，在用户选定请求/响应伪装、协议和兼容参数后先调用此工具。" +
           "protocol 支持 http/httpchunk；coreClassName 留空自动随机；obfuscationSeed 留空自动随机，指定后可复现生成。")
     public Map<String, Object> createJavaCoreArtifact(
-            String reqDisguiseId,
-            String respDisguiseId,
-            String protocol,
-            String coreClassName,
-            String targetJavaVersion,
-            String servletNamespace,
-            Long obfuscationSeed) throws Exception {
+            @P("请求 Disguise ID") String reqDisguiseId,
+            @P("响应 Disguise ID") String respDisguiseId,
+            @P("传输协议：http 或 httpchunk") String protocol,
+            @P(value = "Core 类名；省略时随机生成", required = false) String coreClassName,
+            @P(value = "目标 Java 版本：auto/6/7/8/9+/17+；默认 auto",
+                    required = false, defaultValue = "auto") String targetJavaVersion,
+            @P(value = "Servlet 命名空间：auto/javax/jakarta；默认 auto",
+                    required = false, defaultValue = "auto") String servletNamespace,
+            @P(value = "混淆随机种子；省略时随机生成", required = false) Long obfuscationSeed) throws Exception {
         Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
         CoreArtifact artifact = CORE_ARTIFACT_GENERATION_SERVICE.generate(
@@ -190,7 +193,9 @@ public class ShellGeneratorTools {
           "模板必须保留五个有序阶段占位符，平台会在最终组装时注入受控核心代码。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> getWebShellWrapperContract(String shellType, String protocol) {
+    public Map<String, Object> getWebShellWrapperContract(
+            @P("外层类型：JSP 或 JSPX") String shellType,
+            @P("传输协议：http 或 httpchunk") String protocol) {
         WebShellWrapperContract contract = WEB_SHELL_WRAPPER_SERVICE.getContract(shellType, protocol);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("artifactType", contract.getArtifactType());
@@ -205,8 +210,9 @@ public class ShellGeneratorTools {
           "AI 只修改无 Payload 的模板结构，不能展开五个阶段占位符；模板通过契约校验后只返回 wrapperTemplateId，" +
           "不会把 Core 或最终代码放入模型上下文。shellType 必须为 JSP/JSPX，requirements 描述业务外观或结构变化目标。")
     public Map<String, Object> designWebShellWrapper(
-            String coreArtifactId,
-            String shellType,
+            @P("createJavaCoreArtifact 返回的制品 ID") String coreArtifactId,
+            @P("外层类型：JSP 或 JSPX") String shellType,
+            @P(value = "外观或结构变化要求；省略时使用基线契约", required = false)
             String requirements) throws Exception {
         CoreArtifact artifact = requireCoreArtifact(coreArtifactId);
         WebShellWrapperContract contract = WEB_SHELL_WRAPPER_SERVICE.getContract(
@@ -252,11 +258,13 @@ public class ShellGeneratorTools {
           "obfuscate 必须明确传 true/false；false 表示空步骤不混淆，true 且未指定步骤时使用平台默认混淆，" +
           "true 且指定 jspObfuscationSteps 时按合法步骤执行。组装前会再次验证模板、协议和格式一致性。")
     public Map<String, Object> assembleWebShellWrapper(
-            String coreArtifactId,
-            String wrapperTemplateId,
-            Boolean obfuscate,
-            List<String> jspObfuscationSteps,
-            Integer respCode) throws Exception {
+            @P("Core 制品 ID") String coreArtifactId,
+            @P("已验证 Wrapper 模板 ID") String wrapperTemplateId,
+            @P("是否启用 JSP 混淆，必须明确 true/false") Boolean obfuscate,
+            @P(value = "JSP 混淆步骤有序列表；省略时使用默认，空列表表示不混淆",
+                    required = false) List<String> jspObfuscationSteps,
+            @P(value = "HTTP 响应码；默认200", required = false,
+                    defaultValue = "200") Integer respCode) throws Exception {
         if (obfuscate == null) {
             throw new IllegalArgumentException("obfuscate 必须明确为 true 或 false");
         }
@@ -305,14 +313,17 @@ public class ShellGeneratorTools {
           "headerName 与 headerValue 必须同时设置或同时留空；respCode 默认 200；seed 留空时自动随机。" +
           "PHP 当前只支持 webshell，不支持 Java 内存马参数和 JSP 模板变异。")
     public Map<String, Object> generatePhpWebShell(
-            String reqDisguiseId,
-            String respDisguiseId,
-            String protocol,
-            String outputMode,
-            String headerName,
-            String headerValue,
-            Integer respCode,
-            String seed) throws Exception {
+            @P("请求 Disguise ID") String reqDisguiseId,
+            @P("响应 Disguise ID") String respDisguiseId,
+            @P(value = "协议；PHP 当前默认并支持 http", required = false,
+                    defaultValue = "http") String protocol,
+            @P(value = "输出模式：compact/packed/portable；默认 compact",
+                    required = false, defaultValue = "compact") String outputMode,
+            @P(value = "触发 Header 名；须与 headerValue 同时提供", required = false) String headerName,
+            @P(value = "触发 Header 值；须与 headerName 同时提供", required = false) String headerValue,
+            @P(value = "HTTP 响应码；默认200", required = false,
+                    defaultValue = "200") Integer respCode,
+            @P(value = "生成种子；省略时随机", required = false) String seed) throws Exception {
         Disguise reqDisguise = requireDisguise(reqDisguiseId, "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");
 
@@ -371,9 +382,10 @@ public class ShellGeneratorTools {
           "byPassJavaModule 仅对 DefineClassJSP 有效；" +
           "mutationHint 可选，指定变异方向。")
     public Map<String, Object> mutateJspTemplate(
-            String packerType,
-            Boolean byPassJavaModule,
-            String mutationHint) throws Exception {
+            @P("Packer 类型：ClassLoaderJSP 或 DefineClassJSP") String packerType,
+            @P(value = "是否绕过 Java 模块限制；默认 false，仅 DefineClassJSP 有效",
+                    required = false, defaultValue = "false") Boolean byPassJavaModule,
+            @P(value = "结构变异方向", required = false) String mutationHint) throws Exception {
         String baseTemplate = resolveBaseTemplate(packerType, byPassJavaModule);
 
         String mutated = null;
@@ -440,25 +452,32 @@ public class ShellGeneratorTools {
           "jspObfuscationSteps：混淆步骤 ID 有序列表，null 使用默认策略，空列表不混淆。" +
           "customJspTemplate：由 mutateJspTemplate 返回的变体模板，用于规避 AI 检测。")
     public Map<String, Object> generateMemoryShell(
-            String reqDisguiseId,
-            String respDisguiseId,
-            String headerName,
-            String headerValue,
-            String serverType,
-            String serverVersion,
-            String shellType,
-            String packerType,
-            String protocol,
-            String targetJavaVersion,
-            String servletNamespace,
-            String urlPattern,
-            String coreClassName,
-            String injectorClassName,
-            String shellClassName,
-            Boolean isAbstractTranslet,
-            Boolean byPassJavaModule,
-            Integer respCode,
-            List<String> jspObfuscationSteps,
+            @P("请求 Disguise ID") String reqDisguiseId,
+            @P("响应 Disguise ID") String respDisguiseId,
+            @P(value = "HTTP 模式触发 Header 名；须与 headerValue 同时提供", required = false) String headerName,
+            @P(value = "HTTP 模式触发 Header 值；须与 headerName 同时提供", required = false) String headerValue,
+            @P("目标应用服务器类型") String serverType,
+            @P(value = "目标服务器版本；能力元数据要求时必填", required = false) String serverVersion,
+            @P("注入器形态") String shellType,
+            @P("Packer 类型") String packerType,
+            @P("协议：http/httpchunk/websocket") String protocol,
+            @P(value = "目标 Java 版本：auto/6/7/8/9+/17+；默认 auto",
+                    required = false, defaultValue = "auto") String targetJavaVersion,
+            @P(value = "Servlet 命名空间：auto/javax/jakarta；默认 auto",
+                    required = false, defaultValue = "auto") String servletNamespace,
+            @P(value = "URL 模式；http 默认 /*，websocket 默认 /leo", required = false) String urlPattern,
+            @P(value = "Core 类名；省略时随机", required = false) String coreClassName,
+            @P(value = "Injector 类名；省略时随机", required = false) String injectorClassName,
+            @P(value = "Shell 类名；省略时随机", required = false) String shellClassName,
+            @P(value = "是否使用 AbstractTranslet；默认 false",
+                    required = false, defaultValue = "false") Boolean isAbstractTranslet,
+            @P(value = "是否绕过 Java 模块限制；默认 false",
+                    required = false, defaultValue = "false") Boolean byPassJavaModule,
+            @P(value = "HTTP 响应码；默认200", required = false,
+                    defaultValue = "200") Integer respCode,
+            @P(value = "JSP 混淆步骤；省略时使用默认，空列表表示关闭",
+                    required = false) List<String> jspObfuscationSteps,
+            @P(value = "mutateJspTemplate 返回的自定义模板", required = false)
             String customJspTemplate) throws Exception {
         Disguise reqDisguise  = requireDisguise(reqDisguiseId,  "reqDisguiseId");
         Disguise respDisguise = requireDisguise(respDisguiseId, "respDisguiseId");

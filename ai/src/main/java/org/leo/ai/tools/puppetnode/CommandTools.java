@@ -61,7 +61,8 @@ public class CommandTools {
             + "已知高频命令（env、java进程参数）自动命中会话缓存。不能用于查看平台侧 VFS。")
     public Map<String, Object> exec(
             @P("要执行的命令") String cmd,
-            @P("超时秒数。0=默认 30s；>0=自定义（1~120）。检测到耗时命令时忽略此参数自动转异步。") int timeout) throws Exception {
+            @P(value = "超时秒数。0=默认 30s；>0=自定义（1~120）。检测到耗时命令时忽略此参数自动转异步。",
+                    required = false, defaultValue = "0") int timeout) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
 
         // ── 1. 缓存命中检查（已知高频命令） ──
@@ -78,33 +79,43 @@ public class CommandTools {
         return execSync(sessionId, cmd, timeoutSec);
     }
 
-    @Tool("查询异步命令的当前输出。当 exec 返回 taskId 时使用。"
-            + "返回 output（当前累积输出）和 status。"
+    @Tool("查询异步命令的新输出。当 exec 返回 taskId 时使用；每次读取会消费当前输出缓冲区。"
+            + "返回 output、status、alive，命令结束时还会返回 exitCode。"
             + "如果输出已包含所需信息或为空（命令已结束），调用 stopTask 释放资源。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
     public Map<String, Object> queryTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
-        String output = readFromTerminal(sessionId, taskId);
+        Map<String, Object> terminal = readTerminalState(sessionId, taskId);
         HashMap<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
-        result.put("output", output);
-        result.put("status", "running");
-        result.put("hint", "如果输出已包含所需信息或为空（命令已结束），调用 stopTask 释放资源。");
+        result.put("output", terminalOutput(terminal));
+        boolean alive = terminal != null && Boolean.TRUE.equals(terminal.get("alive"));
+        result.put("alive", alive);
+        result.put("status", alive ? "running" : "completed");
+        if (terminal != null && terminal.get("exitCode") != null) {
+            result.put("exitCode", terminal.get("exitCode"));
+        }
+        if (terminal != null && terminal.get("error") != null) {
+            result.put("error", terminal.get("error"));
+        }
+        result.put("hint", alive
+                ? "继续轮询；获得所需信息后调用 stopTask 释放资源。"
+                : "命令已结束，调用 stopTask 释放终端资源。");
         compressOutputField(result);
         return result;
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
-            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
     @Tool("终止异步命令并释放终端资源。返回终止前的最后一段输出。无论命令是否结束都应在不再需要时调用。")
     public Map<String, Object> stopTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         try {
-            String output = readFromTerminal(sessionId, taskId);
+            String output = terminalOutput(readTerminalState(sessionId, taskId));
             stopTerminal(sessionId, taskId);
             auditService.logSuccess(sessionId, auditNode, "COMMAND_STOP", "AI停止命令进程", taskId,
                     commandAuditParams(sessionId, null, "async-stop", taskId, null), "停止命令进程成功");
@@ -396,7 +407,7 @@ public class CommandTools {
         while (System.currentTimeMillis() < waitDeadline) {
             Thread.sleep(300);
             try {
-                String output = readFromTerminal(sessionId, processId);
+                String output = terminalOutput(readTerminalState(sessionId, processId));
                 if (output != null && !output.isEmpty()) {
                     // 收到 prompt（如 "sh-3.2$ " 或 "C:\>"），shell 已就绪
                     log.debug("Terminal ready, processId={}, prompt={}", processId,
@@ -415,9 +426,17 @@ public class CommandTools {
         return getCommandNode(sessionId).execCommand("write", cmd + "\n", processId);
     }
 
-    private String readFromTerminal(String sessionId, String processId) throws Exception {
-        Map<String, Object> results = getCommandNode(sessionId).execCommand("read", "", processId);
-        return new String((byte[]) results.get("data"));
+    private Map<String, Object> readTerminalState(String sessionId, String processId) throws Exception {
+        return getCommandNode(sessionId).execCommand("read", "", processId);
+    }
+
+    private static String terminalOutput(Map<String, Object> terminal) {
+        if (terminal == null) return "";
+        Object data = terminal.get("data");
+        if (data instanceof byte[] bytes) {
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return data == null ? "" : String.valueOf(data);
     }
 
     private Map<String, Object> stopTerminal(String sessionId, String processId) throws Exception {

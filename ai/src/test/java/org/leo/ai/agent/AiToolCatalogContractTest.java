@@ -1,6 +1,10 @@
 package org.leo.ai.agent;
 
 import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.service.tool.AiServiceTool;
+import dev.langchain4j.service.tool.ToolService;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
 import org.leo.ai.tools.common.AgentWorkspaceTools;
@@ -28,6 +32,8 @@ import org.leo.ai.tools.puppetnode.ScanTools;
 import org.leo.ai.tools.puppetnode.ScriptTools;
 import org.leo.ai.tools.puppetnode.SqlTools;
 import org.leo.ai.tools.puppetnode.WebRuntimeTools;
+import org.leo.ai.service.AiPlanCoordinator;
+import org.leo.ai.service.AiUserInputService;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -37,8 +43,10 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 /** 防止工具清单重新出现重名、无风险声明或无预算增长。 */
 class AiToolCatalogContractTest {
@@ -98,6 +106,33 @@ class AiToolCatalogContractTest {
         for (String removed : REMOVED_TOOL_NAMES) {
             assertFalse(names.contains(removed), "已清理工具被重新暴露: " + removed);
         }
+    }
+
+    @Test
+    void controlToolSchemasExposeComplexFieldsAndRealOptionality() {
+        AiServiceTool inputTool = namedTool(
+                ToolService.findTools(new UserInputTools(mock(AiUserInputService.class))),
+                "request_user_input");
+        List<String> inputRequired = inputTool.toolSpecification().parameters().required();
+        assertEquals(List.of("prompt"), inputRequired);
+
+        AiServiceTool planTool = namedTool(ToolService.findTools(new PlanTools(
+                mock(AgentRuntimeResolver.class), mock(AiPlanCoordinator.class))), "createPlan");
+        JsonObjectSchema parameters = planTool.toolSpecification().parameters();
+        assertEquals(Set.of("title", "goal", "steps"), Set.copyOf(parameters.required()));
+        JsonArraySchema steps = assertInstanceOf(
+                JsonArraySchema.class, parameters.properties().get("steps"));
+        JsonObjectSchema step = assertInstanceOf(JsonObjectSchema.class, steps.items());
+        assertEquals(Set.of("description", "toolHint", "parallel", "successCriteria",
+                        "maxRetries", "dependsOn"), step.properties().keySet());
+        assertEquals(List.of("description"), step.required());
+        assertTrue(step.properties().values().stream()
+                .allMatch(property -> property.description() != null
+                        && !property.description().isBlank()));
+    }
+
+    private static AiServiceTool namedTool(List<AiServiceTool> tools, String name) {
+        return tools.stream().filter(tool -> name.equals(tool.name())).findFirst().orElseThrow();
     }
 
     private static List<Declaration> declarations() {

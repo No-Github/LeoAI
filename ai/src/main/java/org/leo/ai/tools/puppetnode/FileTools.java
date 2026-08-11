@@ -65,7 +65,10 @@ public class FileTools {
     // ── 分块传输 ─────────────────────────────────────────────────────────────
 
     @Tool("启动或续传文件下载任务（puppet 侧→平台侧）。threads 默认 4（最大 16），chunkSize 默认 1048576。")
-    public Map<String, Object> startDownloadTask(String filePath, Integer threads, Integer chunkSize) throws Exception {
+    public Map<String, Object> startDownloadTask(
+            @P("puppet 侧待下载文件的绝对路径") String filePath,
+            @P(value = "下载线程数，默认4，最大16", required = false, defaultValue = "4") Integer threads,
+            @P(value = "分块大小，默认1048576", required = false, defaultValue = "1048576") Integer chunkSize) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         String userId = session.getCreateByUser();
@@ -173,7 +176,10 @@ public class FileTools {
     }
 
     @Tool("启动文件上传任务（平台侧 VFS→puppet 侧）。vfsPath 相对 VFS 根目录（users/<userId>/uploads/... 或 skills/...）。filePath 为目标服务器落地路径。chunkSize 默认 1048576。")
-    public Map<String, Object> startUploadTask(String vfsPath, String filePath, Integer chunkSize) throws Exception {
+    public Map<String, Object> startUploadTask(
+            @P("平台侧 VFS 相对路径") String vfsPath,
+            @P("puppet 侧目标文件绝对路径") String filePath,
+            @P(value = "分块大小，默认1048576", required = false, defaultValue = "1048576") Integer chunkSize) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         PuppetNodeSession session = PuppetNodeSessionUtils.getSession(sessionId);
         String userId = session.getCreateByUser();
@@ -284,8 +290,10 @@ public class FileTools {
     public Map<String, Object> searchFileContent(
             @P("搜索目录的绝对路径") String directory,
             @P("搜索模式（关键词或正则表达式）") String pattern,
-            @P("文件扩展名过滤，逗号分隔（如 yml,yaml,properties,xml）。为空则搜所有文件。") String fileGlob,
-            @P("最大返回条数（默认 200）") int maxResults) throws Exception {
+            @P(value = "文件扩展名过滤，逗号分隔（如 yml,yaml,properties,xml）；省略时搜索所有文件",
+                    required = false) String fileGlob,
+            @P(value = "最大返回条数，默认 200，最大 500",
+                    required = false, defaultValue = "200") int maxResults) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         if (directory == null || directory.isBlank()) {
             throw new IllegalArgumentException("directory 不能为空");

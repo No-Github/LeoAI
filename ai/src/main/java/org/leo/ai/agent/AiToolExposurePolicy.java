@@ -63,8 +63,10 @@ public class AiToolExposurePolicy {
                 ? SkillRegistryService.SCOPE_PLATFORM
                 : SkillRegistryService.SCOPE_PUPPET_NODE;
         List<SkillMeta> skills = skillRegistry.listSkills(skillScope);
+        // 所有清单声明都参与门控；禁用、草稿或校验失败的 Skill 也按 fail-closed 隐藏其工具。
+        List<SkillMeta> declaredSkills = skillRegistry.listAllSkills(skillScope);
         Set<String> gatedTools = new HashSet<>();
-        for (SkillMeta skill : skills) gatedTools.addAll(skill.getRequiredTools());
+        for (SkillMeta skill : declaredSkills) gatedTools.addAll(skill.getRequiredTools());
         AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
         Set<String> activeTools = runtime == null || runtime.getActivatedSkills().isEmpty()
                 ? Set.of() : activatedTools(skills, runtime.getActivatedSkills());

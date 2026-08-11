@@ -1,5 +1,6 @@
 package org.leo.web.service;
 
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolMemoryId;
 import org.leo.ai.audit.AiAuditLogStore;
@@ -90,10 +91,13 @@ public class PlatformPuppetAiBridgeTools {
                     + "此时会复用当前用户可访问的活跃会话，若不存在则建立新的实时会话。"
                     + "每次委派都会创建隔离子线程并记录父子关系。task 必填；configId 可选，默认沿用平台 AI 当前模型。")
     public Map<String, Object> dispatch(@ToolMemoryId String parentThreadId,
-                                        String task,
-                                        String sessionId,
-                                        String puppetId,
-                                        Integer configId) {
+                                        @P("交给 Puppet AI 的完整任务描述") String task,
+                                        @P(value = "活跃 Puppet 会话 ID；与 puppetId 至少提供一个，优先使用此项",
+                                                required = false) String sessionId,
+                                        @P(value = "Puppet ID；sessionId 省略时用于查找或建立会话",
+                                                required = false) String puppetId,
+                                        @P(value = "AI 配置 ID；省略时沿用平台 AI 当前模型",
+                                                required = false) Integer configId) {
         String normalizedTask = requireText(task, "task 不能为空");
         Caller caller = requireCaller(parentThreadId);
         PuppetNodeSession session = resolveSession(sessionId, puppetId, caller.user());

@@ -56,7 +56,10 @@ public class PluginTools {
     @Tool("根据 pluginId 获取插件详情。includeBytecodeBase64=true 时额外返回 base64 编码后的 bytecode。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
-    public Map<String, Object> getPluginById(String pluginId, Boolean includeBytecodeBase64) {
+    public Map<String, Object> getPluginById(
+            @P("插件 ID") String pluginId,
+            @P(value = "是否返回 bytecodeBase64；默认 false",
+                    required = false, defaultValue = "false") Boolean includeBytecodeBase64) {
         Plugin plugin = pluginManager.getPluginById(requireNonBlank(pluginId, "pluginId不能为空"));
         if (plugin == null) {
             throw new IllegalArgumentException("插件不存在");
@@ -68,14 +71,19 @@ public class PluginTools {
           value = "创建并保存新的平台插件。pluginType=java 时 bytecodeBase64 必填且必须是合法字节码；"
                 + "pluginType 为 js/groovy/python 等脚本类型时改为传 scriptContent（脚本明文）。"
                 + "未传 version 时默认 1.0；pluginId 自动派生（java 取类名，脚本取 pluginName）。")
-    public Map<String, Object> addPlugin(String userId, String pluginName, String pluginDescription,
-                                         String version,
+    public Map<String, Object> addPlugin(
+                                         @P("创建人用户 ID") String userId,
+                                         @P(value = "插件名称；脚本插件必填", required = false) String pluginName,
+                                         @P(value = "插件描述", required = false) String pluginDescription,
+                                         @P(value = "版本；默认 1.0", required = false,
+                                                 defaultValue = "1.0") String version,
                                          @P(value = "Java 字节码 base64，仅 java 类型必填", required = false)
                                          String bytecodeBase64,
                                          @P(value = "脚本明文，js/groovy/python 等脚本类型必填", required = false)
                                          String scriptContent,
-                                         String paramsDemo,
-                                         String pluginType, String remark) throws Exception {
+                                         @P(value = "参数示例", required = false) String paramsDemo,
+                                         @P("插件类型：java/js/groovy/python 等") String pluginType,
+                                         @P(value = "备注", required = false) String remark) throws Exception {
         Plugin plugin = new Plugin();
         plugin.setPluginName(trimToNull(pluginName));
         plugin.setPluginDescription(trimToNull(pluginDescription));
@@ -111,14 +119,18 @@ public class PluginTools {
     @Tool(name = "updatePlugin",
           value = "更新已有插件。pluginId 必填。java 类型可重新提交 bytecodeBase64；"
                 + "脚本类型可重新提交 scriptContent。识别变化后会按类名/插件名 + 版本重新生成 pluginId。")
-    public Map<String, Object> updatePlugin(String pluginId, String pluginName, String pluginDescription,
-                                            String version,
+    public Map<String, Object> updatePlugin(
+                                            @P("待更新插件 ID") String pluginId,
+                                            @P(value = "新插件名称", required = false) String pluginName,
+                                            @P(value = "新插件描述", required = false) String pluginDescription,
+                                            @P(value = "新版本", required = false) String version,
                                             @P(value = "Java 字节码 base64，仅 java 类型有效", required = false)
                                             String bytecodeBase64,
                                             @P(value = "脚本明文，仅脚本类型有效", required = false)
                                             String scriptContent,
-                                            String paramsDemo,
-                                            String pluginType, String remark) throws Exception {
+                                            @P(value = "新参数示例", required = false) String paramsDemo,
+                                            @P(value = "新插件类型", required = false) String pluginType,
+                                            @P(value = "新备注", required = false) String remark) throws Exception {
         String normalizedPluginId = requireNonBlank(pluginId, "pluginId不能为空");
         Plugin existing = pluginManager.getPluginById(normalizedPluginId);
         if (existing == null) {
@@ -177,7 +189,7 @@ public class PluginTools {
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
             operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定平台插件。")
-    public Map<String, Object> deletePlugin(String pluginId) {
+    public Map<String, Object> deletePlugin(@P("待删除插件 ID") String pluginId) {
         Plugin plugin = pluginManager.getPluginById(requireNonBlank(pluginId, "pluginId不能为空"));
         if (plugin == null) {
             throw new IllegalArgumentException("插件不存在");
@@ -206,7 +218,7 @@ public class PluginTools {
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
             operation = org.leo.ai.agent.AiToolOperation.READ_ONLY, parallelizable = true)
     public Map<String, Object> decompilePluginBytecode(
-            String bytecodeBase64,
+            @P("插件内容的 Base64") String bytecodeBase64,
             @P(value = "插件类型：java（默认）/ js / groovy / python …", required = false)
             String pluginType) throws Exception {
         String normalized = requireNonBlank(bytecodeBase64, "bytecodeBase64不能为空");

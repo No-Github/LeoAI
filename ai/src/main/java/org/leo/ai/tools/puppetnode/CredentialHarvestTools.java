@@ -40,7 +40,7 @@ public class CredentialHarvestTools {
             + "• springEnv — Spring Environment PropertySource 中的敏感配置（含占位符解析后的实际值）\n"
             + "可选传入 filter 关键字进一步过滤。结果会缓存，重复调用直接返回。")
     public Map<String, Object> harvestAll(
-            @P("过滤关键字（可选，用于缩小搜索范围）") String filter) throws Exception {
+            @P(value = "过滤关键字，用于缩小搜索范围", required = false) String filter) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
         CredentialHarvestCapable node = PuppetNodeSessionUtils.requireCapability(sessionId, CredentialHarvestCapable.class);
         String cacheKey = CACHE_KEY_ALL + (filter != null && !filter.isBlank() ? ":" + filter : "");

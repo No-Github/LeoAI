@@ -3,6 +3,7 @@ package org.leo.ai.service;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * 为 system prompt 生成轻量 Skill 索引。
@@ -47,6 +48,12 @@ public class LeoSkillsProvider {
         return index;
     }
 
+    /** 按当前运行时权限生成索引；带过滤器的结果不进入全局缓存。 */
+    public String getFormattedSkills(String scope, Predicate<SkillMeta> filter) {
+        SkillRegistryService.validateScope(scope);
+        return buildIndex(scope, filter != null ? filter : skill -> true);
+    }
+
     /** 管理写操作后清空索引缓存；Registry 缓存由调用方同时失效。 */
     public synchronized void invalidate() {
         puppetNodeIndex = null;
@@ -54,7 +61,13 @@ public class LeoSkillsProvider {
     }
 
     private String buildIndex(String scope) {
-        List<SkillMeta> skills = skillRegistry.listSkills(scope);
+        return buildIndex(scope, skill -> true);
+    }
+
+    private String buildIndex(String scope, Predicate<SkillMeta> filter) {
+        List<SkillMeta> skills = skillRegistry.listSkills(scope).stream()
+                .filter(filter)
+                .toList();
         if (skills.isEmpty()) return "";
 
         StringBuilder xml = new StringBuilder("<available_skills>\n");

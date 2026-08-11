@@ -17,13 +17,16 @@ import org.springframework.stereotype.Component;
 public class PlatformSystemPromptProvider {
 
     private final LeoSkillsProvider skillsProvider;
+    private final AgentRuntimeResolver runtimeResolver;
 
-    public PlatformSystemPromptProvider(LeoSkillsProvider skillsProvider) {
+    public PlatformSystemPromptProvider(LeoSkillsProvider skillsProvider,
+                                        AgentRuntimeResolver runtimeResolver) {
         this.skillsProvider = skillsProvider;
+        this.runtimeResolver = runtimeResolver;
     }
 
     public String getSystemMessage(Object memoryId) {
-        return HEADER + buildSkillsSection() + FOOTER;
+        return HEADER + buildSkillsSection(memoryId) + FOOTER;
     }
 
     // ── 静态部分 ──────────────────────────────────────────────────────────────
@@ -41,7 +44,7 @@ public class PlatformSystemPromptProvider {
 
             1. 直接调用工具完成任务，不把"我将执行"当成已经完成。
             2. 每次回答区分事实、推断和下一步建议。
-            3. 涉及新增、修改、删除前，先确认目标是否存在，避免误操作。
+            3. 新增前先查重；修改、删除前确认目标存在，避免误操作。
             4. 对相互独立的工具调用优先并发执行；存在前后依赖的操作保持串行。
             5. 委派前先明确目标 Puppet。目标不清楚时先调用 list_puppet_ai_targets 或查询 Puppet 列表；
                委派完成后根据子 Agent 返回的真实 summary 继续分析，并向用户说明实际执行目标。
@@ -82,7 +85,7 @@ public class PlatformSystemPromptProvider {
             ════════════════════════════════════════
 
             满足以下任一条件时使用 createPlan：
-            - 预计需要两个以上工具调用；
+            - 预计需要三个以上业务工具调用，且不是可一次并发完成的独立只读查询；
             - 涉及多个平台资源或多个 Puppet；
             - 包含查询、变更、验证等存在依赖关系的阶段；
             - 用户明确要求先规划再执行。
@@ -110,12 +113,16 @@ public class PlatformSystemPromptProvider {
 
     // ── 动态部分 ──────────────────────────────────────────────────────────────
 
-    private String buildSkillsSection() {
+    private String buildSkillsSection(Object memoryId) {
         StringBuilder sb = new StringBuilder();
         sb.append("════════════════════════════════════════\n");
         sb.append("【可用 Skills】\n");
         sb.append("════════════════════════════════════════\n\n");
-        String formatted = skillsProvider.getFormattedSkills(SkillRegistryService.SCOPE_PLATFORM);
+        var runtime = runtimeResolver.resolve(
+                AiToolAuthorizationPolicy.AgentScope.PLATFORM, memoryId);
+        String formatted = skillsProvider.getFormattedSkills(
+                SkillRegistryService.SCOPE_PLATFORM,
+                skill -> PlatformSkillAccessPolicy.mayUse(runtime, skill.getRequiredTools()));
         if (formatted == null || formatted.isBlank()) {
             sb.append("（当前暂无可用 skill）\n");
         } else {

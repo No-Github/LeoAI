@@ -8,6 +8,7 @@ import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
 import org.leo.ai.service.AiPlanCoordinator;
+import org.leo.ai.service.AiPlanStepInput;
 import org.leo.core.ai.AiRuntimeState;
 import org.springframework.stereotype.Component;
 
@@ -37,8 +38,9 @@ public class PlanTools {
             @P("计划标题") String title,
             @P("任务目标") String goal,
             @P("步骤对象列表：description、toolHint、parallel、successCriteria、maxRetries、dependsOn")
-            List<Map<String, Object>> steps,
-            @P("单步骤超时毫秒；0 表示不启用") long stepTimeoutMs) {
+            List<AiPlanStepInput> steps,
+            @P(value = "单步骤超时毫秒；0 表示不启用", required = false,
+                    defaultValue = "0") long stepTimeoutMs) {
         return success(coordinator.create(requireRuntime(), title, goal, steps, stepTimeoutMs));
     }
 
@@ -46,7 +48,8 @@ public class PlanTools {
     public Map<String, Object> updatePlanStep(
             @P("步骤序号，从 0 开始") int stepIndex,
             @P("start | complete | fail | skip") String action,
-            @P("结果证据或失败/跳过原因") String resultText) {
+            @P(value = "结果证据或失败/跳过原因；start 时可省略", required = false)
+            String resultText) {
         return success(coordinator.update(requireRuntime(), stepIndex, action, resultText));
     }
 

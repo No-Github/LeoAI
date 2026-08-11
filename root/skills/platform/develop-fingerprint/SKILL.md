@@ -7,7 +7,7 @@ description: 当用户希望在平台侧编写、生成、完善、检查、保�
 
 使用这个 skill 辅助用户编写平台指纹。所有平台指纹管理动作都必须通过 Tools 完成，不要让 Agent 自己读写 `root/fingerprint`、VFS 文件或本地 JSON 文件。
 
-可用工具来自 `platform_fingerprint_agent`，对应 `FingerprintTools`：
+可用工具由 `FingerprintTools` 提供：
 
 - `listFingerprints(protocol?)`: 获取全部指纹摘要，或按 `http`、`tcp` 等协议筛选。
 - `getFingerprintById(fingerprintId)`: 获取完整指纹对象，包含 `rule`。
@@ -20,11 +20,9 @@ description: 当用户希望在平台侧编写、生成、完善、检查、保�
 
 ### 执行前：制定计划
 
-在开始任何工具调用前，先输出以下三项：
-
-1. **要干什么**：明确用户意图（查询/新建/修改/删除），说明目标服务和协议类型。
-2. **要怎么干**：按"查询现状 → 生成指纹规则 → 自检规则 → 确认后保存"顺序执行。如果用户给了 fingerprintId，先用 getFingerprintById 读取当前内容。
-3. **干到什么程度结束**：指纹规则通过自检并保存成功，或用户明确要求只生成草案时停止。
+查询、生成、自检、保存等多个依赖阶段同时存在时调用 `createPlan` 跟踪真实进度；
+简单查看或单次解释直接执行，不额外输出固定计划模板。用户给了 fingerprintId 时，先用
+`getFingerprintById` 读取当前内容。
 
 ---
 

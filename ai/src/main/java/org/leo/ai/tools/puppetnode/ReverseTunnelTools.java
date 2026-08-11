@@ -35,7 +35,8 @@ public class ReverseTunnelTools {
             """)
     public Map<String, Object> startReverseTunnel(
             @P("【必填】puppet 端监听端口，1-65535") int remoteListenPort,
-            @P("puppet 端监听绑定地址，默认 127.0.0.1，公开到内网才传 0.0.0.0") String bindAddr,
+            @P(value = "puppet 端监听绑定地址，默认 127.0.0.1，公开到内网才传 0.0.0.0",
+                    required = false, defaultValue = "127.0.0.1") String bindAddr,
             @P("【必填】C2 侧（或 C2 可达的）转发目标主机") String forwardHost,
             @P("【必填】转发目标端口") int forwardPort) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

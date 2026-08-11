@@ -35,15 +35,19 @@ public class UserInputTools {
             CONFIRMATION 必须传入准确的 toolName 和完整 argumentsJson，参数改变后重新确认。
             """)
     public Map<String, Object> requestUserInput(
-            @P("CLARIFICATION 或 CONFIRMATION") String type,
+            @P(value = "CLARIFICATION 或 CONFIRMATION；默认 CLARIFICATION",
+                    required = false, defaultValue = "CLARIFICATION") String type,
             @P("一个具体、可直接回答的问题") String prompt,
-            @P("最多 4 个选项对象，每个对象包含 label（展示文本）、value（稳定提交值）和 intent（业务语义）；无法枚举时传空数组") List<AiUserInputOption> options,
-            @P("是否允许在问题卡片内自定义输入；默认 false，只有无法枚举答案时才传 true") Boolean allowFreeText,
-            @P("待执行动作及影响摘要；普通澄清可为空") String actionSummary,
-            @P("确认后计划调用的准确工具名；普通澄清可为空") String toolName,
-            @P("确认后计划调用的完整参数 JSON；普通澄清可为空") String argumentsJson,
-            @P("LOW、MEDIUM、HIGH 或 CRITICAL") String risk,
-            @P("有效期秒数；0 使用默认 24 小时") Long expiresInSeconds) {
+            @P(value = "最多 4 个选项对象，每个对象包含 label（展示文本）、value（稳定提交值）和 intent（业务语义）；只有允许自由输入时可省略",
+                    required = false) List<AiUserInputOption> options,
+            @P(value = "是否允许在问题卡片内自定义输入；默认 false，只有答案不可枚举时才传 true",
+                    required = false, defaultValue = "false") Boolean allowFreeText,
+            @P(value = "待执行动作及影响摘要；普通澄清可省略", required = false) String actionSummary,
+            @P(value = "确认后计划调用的准确工具名；普通澄清可省略", required = false) String toolName,
+            @P(value = "确认后计划调用的完整参数 JSON；普通澄清可省略", required = false) String argumentsJson,
+            @P(value = "LOW、MEDIUM、HIGH 或 CRITICAL；省略时按问题类型推导", required = false) String risk,
+            @P(value = "有效期秒数；省略或 0 使用默认 24 小时",
+                    required = false, defaultValue = "0") Long expiresInSeconds) {
         return service.request(type, prompt, options, allowFreeText,
                 actionSummary, toolName, argumentsJson, risk, expiresInSeconds);
     }

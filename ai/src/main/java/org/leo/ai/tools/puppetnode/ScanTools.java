@@ -48,7 +48,7 @@ public class ScanTools {
     }
 
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
-            operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
     @Tool("停止端口扫描任务（终止扫描释放资源）。")
     public Map<String, Object> stopScanPort(String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();

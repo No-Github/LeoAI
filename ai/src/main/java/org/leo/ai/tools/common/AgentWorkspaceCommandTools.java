@@ -43,7 +43,7 @@ public class AgentWorkspaceCommandTools {
     }
 
     @Tool("终止当前 Agent 工作空间中仍在运行的命令。")
-    @AiToolPolicy(kind = AiToolKind.COMMAND, operation = AiToolOperation.DESTRUCTIVE,
+    @AiToolPolicy(kind = AiToolKind.COMMAND, operation = AiToolOperation.WRITE,
             exclusive = true)
     public Map<String, Object> workspaceExecCancel(
             @P("workspaceExec 返回的 runId") String runId) {

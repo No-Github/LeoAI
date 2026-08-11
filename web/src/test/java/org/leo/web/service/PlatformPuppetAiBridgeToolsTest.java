@@ -1,5 +1,6 @@
 package org.leo.web.service;
 
+import dev.langchain4j.service.tool.ToolService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.audit.AiAuditLogStore;
@@ -22,6 +23,8 @@ import java.util.function.Consumer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -86,6 +89,19 @@ class PlatformPuppetAiBridgeToolsTest {
         verify(fixture.conversationStore).insertSubagentInvocation(any());
         verify(fixture.conversationStore, times(2)).updateSubagentInvocation(any());
         verify(fixture.permissionService).requireSessionAccess(session, fixture.user, "session-1");
+    }
+
+    @Test
+    void dispatchSchemaRequiresOnlyTheTaskSelectorPayload() {
+        Fixture fixture = fixture("user-1");
+        var specification = ToolService.findTools(fixture.tools).stream()
+                .filter(tool -> "dispatch_puppet_ai".equals(tool.name()))
+                .findFirst().orElseThrow().toolSpecification();
+
+        assertTrue(specification.parameters().required().contains("task"));
+        assertFalse(specification.parameters().required().contains("sessionId"));
+        assertFalse(specification.parameters().required().contains("puppetId"));
+        assertFalse(specification.parameters().required().contains("configId"));
     }
 
     private Fixture fixture(String recordOwner) {

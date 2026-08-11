@@ -64,8 +64,13 @@ public class TeamTools {
 
     @Tool("创建平台团队（仅 admin 可用）。teamName、leaderId 必填；未传 teamId 则自动生成 UUID。"
             + " leader 必须是已存在且尚未加入其他团队的用户。")
-    public Map<String, Object> addTeam(String teamId, String teamName, String leaderId,
-                                        String description, Integer status, String remark) {
+    public Map<String, Object> addTeam(
+            @P(value = "团队 ID；省略时自动生成", required = false) String teamId,
+            @P("唯一团队名称") String teamName,
+            @P("团队负责人用户 ID") String leaderId,
+            @P(value = "团队描述", required = false) String description,
+            @P(value = "状态：1启用、0停用；默认1", required = false, defaultValue = "1") Integer status,
+            @P(value = "备注", required = false) String remark) {
         String nTeamName = requireNonBlank(teamName, "teamName不能为空");
         String nLeaderId = requireNonBlank(leaderId, "leaderId不能为空");
         String nTeamId   = defaultIfBlank(teamId, java.util.UUID.randomUUID().toString());
@@ -97,8 +102,13 @@ public class TeamTools {
     }
 
     @Tool("更新平台团队。teamId 必填；若更换 leader，会校验新 leader 是否存在且未加入其他团队。")
-    public Map<String, Object> updateTeam(String teamId, String teamName, String leaderId,
-                                           String description, Integer status, String remark) {
+    public Map<String, Object> updateTeam(
+            @P("待更新团队 ID") String teamId,
+            @P(value = "新团队名称", required = false) String teamName,
+            @P(value = "新负责人用户 ID", required = false) String leaderId,
+            @P(value = "新团队描述；空字符串表示清空", required = false) String description,
+            @P(value = "新状态：1启用、0停用", required = false) Integer status,
+            @P(value = "新备注；空字符串表示清空", required = false) String remark) {
         Team existing = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
         if (existing == null) throw new IllegalArgumentException("团队不存在");
 
@@ -139,7 +149,7 @@ public class TeamTools {
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
             operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定团队（仅 admin 可用）。删除前会清空团队成员的 teamId。内置 system-admin 不可删除。")
-    public Map<String, Object> deleteTeam(String teamId) {
+    public Map<String, Object> deleteTeam(@P("待删除团队 ID") String teamId) {
         Team team = teamService.getTeamById(requireNonBlank(teamId, "teamId不能为空"));
         if (team == null) throw new IllegalArgumentException("团队不存在");
 

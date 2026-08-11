@@ -31,9 +31,9 @@ public class WebResearchTools {
             parallelizable = true)
     public Map<String, Object> webSearch(
             @P("搜索关键词") String query,
-            @P("可选域名白名单，如 [\"docs.oracle.com\"]") List<String> domains,
-            @P("只看最近多少天；0表示不限") int recencyDays,
-            @P("结果数，1-20") int maxResults) {
+            @P(value = "可选域名白名单，如 [\"docs.oracle.com\"]", required = false) List<String> domains,
+            @P(value = "只看最近多少天；0表示不限", required = false, defaultValue = "0") int recencyDays,
+            @P(value = "结果数，1-20；默认 5", required = false, defaultValue = "5") int maxResults) {
         return webService.search(query, domains, recencyDays, maxResults);
     }
 
@@ -42,7 +42,8 @@ public class WebResearchTools {
             parallelizable = true)
     public Map<String, Object> webFetch(
             @P("公开 http/https URL，仅允许80/443端口") String url,
-            @P("最多返回正文字符数") int maxChars) {
+            @P(value = "最多返回正文字符数；默认 12000", required = false,
+                    defaultValue = "12000") int maxChars) {
         return webService.toMap(webService.fetch(url, maxChars));
     }
 

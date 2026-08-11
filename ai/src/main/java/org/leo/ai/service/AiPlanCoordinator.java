@@ -19,7 +19,7 @@ public class AiPlanCoordinator {
     private static final int MAX_PLAN_STEPS = 32;
 
     public AiPlan create(AiRuntimeState runtime, String title, String goal,
-                         List<Map<String, Object>> steps, long stepTimeoutMs) {
+                         List<AiPlanStepInput> steps, long stepTimeoutMs) {
         AiPlan plan = new AiPlan(title, goal, normalizeSteps(steps));
         if (stepTimeoutMs > 0) plan.setStepTimeoutMs(stepTimeoutMs);
         runtime.addPlan(plan);
@@ -177,7 +177,7 @@ public class AiPlanCoordinator {
         runtime.offerSseEvent("patch", payload);
     }
 
-    private static List<AiPlanStep> normalizeSteps(List<Map<String, Object>> steps) {
+    private static List<AiPlanStep> normalizeSteps(List<AiPlanStepInput> steps) {
         List<AiPlanStep> result = new ArrayList<>();
         if (steps == null) return result;
         if (steps.size() > MAX_PLAN_STEPS) {
@@ -186,12 +186,13 @@ public class AiPlanCoordinator {
                     "计划步骤不能超过 " + MAX_PLAN_STEPS + " 个。",
                     "合并过细步骤，只保留可独立验证的关键阶段。");
         }
-        for (Map<String, Object> raw : steps) {
+        for (AiPlanStepInput raw : steps) {
             if (raw == null) continue;
-            String description = text(raw.get("description"));
+            String description = text(raw.getDescription());
             if (description.isBlank()) continue;
             int index = result.size();
-            List<Integer> dependsOn = numberList(raw.get("dependsOn"));
+            List<Integer> dependsOn = raw.getDependsOn() == null
+                    ? List.of() : List.copyOf(raw.getDependsOn());
             if (dependsOn.stream().anyMatch(dependency ->
                     dependency < 0 || dependency >= index)) {
                 throw AiToolException.modelCorrectable(
@@ -201,9 +202,9 @@ public class AiPlanCoordinator {
             }
             result.add(new AiPlanStep(
                     index, description,
-                    text(raw.get("toolHint")), bool(raw.get("parallel")),
-                    text(raw.get("successCriteria")),
-                    number(raw.get("maxRetries"), 1), dependsOn));
+                    text(raw.getToolHint()), Boolean.TRUE.equals(raw.getParallel()),
+                    text(raw.getSuccessCriteria()),
+                    raw.getMaxRetries() != null ? raw.getMaxRetries() : 1, dependsOn));
         }
         return result;
     }
@@ -212,24 +213,4 @@ public class AiPlanCoordinator {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
-    private static boolean bool(Object value) {
-        return value instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(value));
-    }
-
-    private static int number(Object value, int fallback) {
-        if (value instanceof Number number) return number.intValue();
-        try { return Integer.parseInt(String.valueOf(value)); }
-        catch (Exception ignored) { return fallback; }
-    }
-
-    private static List<Integer> numberList(Object value) {
-        List<Integer> result = new ArrayList<>();
-        if (value instanceof List<?> list) {
-            for (Object item : list) {
-                try { result.add(Integer.parseInt(String.valueOf(item))); }
-                catch (Exception ignored) { }
-            }
-        }
-        return result;
-    }
 }

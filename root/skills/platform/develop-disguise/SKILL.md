@@ -164,7 +164,7 @@ Headers 与协议体必须一致：JSON Content-Type 时 encode 产出 JSON 风�
 
 ## 五、工具
 
-### 主工具：`platform_disguise_agent`
+### 主工具：`DisguiseTools`
 
 | 工具 | 用途 |
 |---|---|
@@ -174,7 +174,7 @@ Headers 与协议体必须一致：JSON Content-Type 时 encode 产出 JSON 风�
 | `addDisguise(userId, disguiseName, encodeBody, decodeBody, headersJson, version, description, remark, disguiseId)` | 创建 |
 | `updateDisguise(disguiseId, disguiseName, encodeBody, decodeBody, headersJson, version, description, remark)` | 更新 |
 
-### 辅助工具：`platform_user_agent`
+### 辅助工具：`UserTools`
 
 创建 Disguise 且缺少 `userId` 时，用 `getUser(userId?, userName?)` 或 `listUsers(withoutTeam?)` 补齐。
 
@@ -184,11 +184,8 @@ Headers 与协议体必须一致：JSON Content-Type 时 encode 产出 JSON 风�
 
 ### 执行前：制定计划
 
-在任何工具调用前，先输出：
-
-1. **要干什么**：用户意图（新建/修改/测试/查看）+ 目标协议特征
-2. **要怎么干**：查询现状 → 生成草案 → testDisguise → 确认后保存一次
-3. **干到什么程度结束**：testDisguise 通过并保存成功，或用户明确只要草案时停止
+查询、生成、测试、保存等多个依赖阶段同时存在时调用 `createPlan` 跟踪真实进度；
+简单查看或单次测试直接执行，不额外输出固定计划模板。
 
 ### 执行步骤
 

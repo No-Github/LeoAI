@@ -72,9 +72,16 @@ public class UserTools {
 
     @Tool("创建平台用户。userName 和 password 必填；privilege 可选（admin/leader/normal，默认 normal）；"
             + "未传 userId 会自动生成。密码明文传入，系统自动 PBKDF2-SHA256 存储。")
-    public Map<String, Object> addUser(String userName, String password, String privilege,
-                                        String email, String phone, Integer status,
-                                        String teamId, String remark, String userId) {
+    public Map<String, Object> addUser(
+            @P("唯一用户名") String userName,
+            @P("初始密码；服务端仅保存安全哈希") String password,
+            @P(value = "角色：admin/leader/normal；默认 normal", required = false) String privilege,
+            @P(value = "邮箱", required = false) String email,
+            @P(value = "手机号", required = false) String phone,
+            @P(value = "状态：1启用、0停用；默认1", required = false, defaultValue = "1") Integer status,
+            @P(value = "所属团队 ID", required = false) String teamId,
+            @P(value = "备注", required = false) String remark,
+            @P(value = "用户 ID；省略时自动生成", required = false) String userId) {
         String name = requireNonBlank(userName, "userName不能为空");
         String pwd  = requireNonBlank(password, "password不能为空");
 
@@ -102,9 +109,16 @@ public class UserTools {
     }
 
     @Tool("更新平台用户。userId 必填，其余字段按需更新；password 不为空时自动安全哈希后存储。")
-    public Map<String, Object> updateUser(String userId, String userName, String password,
-                                           String privilege, String email, String phone,
-                                           Integer status, String teamId, String remark) {
+    public Map<String, Object> updateUser(
+            @P("待更新用户 ID") String userId,
+            @P(value = "新用户名", required = false) String userName,
+            @P(value = "新密码；服务端仅保存安全哈希", required = false) String password,
+            @P(value = "新角色：admin/leader/normal", required = false) String privilege,
+            @P(value = "新邮箱；空字符串表示清空", required = false) String email,
+            @P(value = "新手机号；空字符串表示清空", required = false) String phone,
+            @P(value = "新状态：1启用、0停用", required = false) Integer status,
+            @P(value = "新团队 ID；空字符串表示清空", required = false) String teamId,
+            @P(value = "新备注；空字符串表示清空", required = false) String remark) {
         User existing = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (existing == null) throw new IllegalArgumentException("用户不存在");
         boolean builtInAdmin = isBuiltInAdmin(existing);
@@ -152,7 +166,7 @@ public class UserTools {
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
             operation = org.leo.ai.agent.AiToolOperation.DESTRUCTIVE, exclusive = true)
     @Tool("删除指定平台用户。禁止删除 admin 用户。")
-    public Map<String, Object> deleteUser(String userId) {
+    public Map<String, Object> deleteUser(@P("待删除用户 ID") String userId) {
         User user = userService.getUserById(requireNonBlank(userId, "userId不能为空"));
         if (user == null) throw new IllegalArgumentException("用户不存在");
         if (isBuiltInAdmin(user)) throw new IllegalArgumentException("admin用户为系统内置账户，禁止删除");

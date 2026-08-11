@@ -4,6 +4,7 @@ import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.leo.ai.agent.AgentRuntimeResolver;
 import org.leo.ai.agent.AiToolException;
+import org.leo.ai.agent.PlatformSkillAccessPolicy;
 import org.leo.ai.service.SkillDescriptor;
 import org.leo.ai.service.SkillRegistryService;
 import org.leo.core.ai.AiRuntimeState;
@@ -80,6 +81,10 @@ public class SkillActivationTools {
         }
         AiRuntimeState runtime = runtimeResolver != null
                 ? runtimeResolver.resolveCurrent() : null;
+        if (SkillRegistryService.SCOPE_PLATFORM.equals(scope)
+                && !PlatformSkillAccessPolicy.mayUse(runtime, descriptor.requiredTools())) {
+            throw new SecurityException("当前身份无权激活该 skill: " + normalizedName);
+        }
         if (runtime != null) runtime.activateSkill(normalizedName);
 
         String policy = """

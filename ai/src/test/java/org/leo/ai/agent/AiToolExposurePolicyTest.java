@@ -39,6 +39,8 @@ class AiToolExposurePolicyTest {
                 List.of());
         when(registry.listSkills(SkillRegistryService.SCOPE_PLATFORM))
                 .thenReturn(List.of(parent, dependency));
+        when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
+                .thenReturn(List.of(parent, dependency));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AgentRuntimeResolver(), registry);
         PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
@@ -63,6 +65,8 @@ class AiToolExposurePolicyTest {
                 List.of("workspaceReadText"), List.of());
         when(registry.listSkills(SkillRegistryService.SCOPE_PLATFORM))
                 .thenReturn(List.of(workspaceSkill));
+        when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
+                .thenReturn(List.of(workspaceSkill));
         AiToolExposurePolicy policy = new AiToolExposurePolicy(
                 new AgentRuntimeResolver(), registry);
 
@@ -74,6 +78,8 @@ class AiToolExposurePolicyTest {
     void filtersPuppetToolsByRuntimeCapability() {
         SkillRegistryService registry = mock(SkillRegistryService.class);
         when(registry.listSkills(SkillRegistryService.SCOPE_PUPPET_NODE))
+                .thenReturn(List.of());
+        when(registry.listAllSkills(SkillRegistryService.SCOPE_PUPPET_NODE))
                 .thenReturn(List.of());
         AbstractPuppetNode node = mock(AbstractPuppetNode.class,
                 withSettings().extraInterfaces(BasicInfoCapable.class));
@@ -91,12 +97,28 @@ class AiToolExposurePolicyTest {
                 "capability-session", "getClassBytecode"));
     }
 
+    @Test
+    void keepsToolsFromDisabledPublishedSkillsHidden() {
+        SkillRegistryService registry = mock(SkillRegistryService.class);
+        SkillMeta disabled = skill("disabled-skill", List.of("disabledAction"), List.of());
+        when(registry.listSkills(SkillRegistryService.SCOPE_PLATFORM)).thenReturn(List.of());
+        when(registry.listAllSkills(SkillRegistryService.SCOPE_PLATFORM))
+                .thenReturn(List.of(disabled));
+        AiToolExposurePolicy policy = new AiToolExposurePolicy(
+                new AgentRuntimeResolver(), registry);
+
+        assertFalse(policy.isVisible(AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                PLATFORM_STATE_ID, "disabledAction"));
+    }
+
     private static SkillMeta skill(String name, List<String> requiredTools,
                                    List<String> requiredSkills) {
         SkillMeta skill = mock(SkillMeta.class);
         when(skill.getName()).thenReturn(name);
         when(skill.getRequiredTools()).thenReturn(requiredTools);
         when(skill.getRequiredSkills()).thenReturn(requiredSkills);
+        when(skill.isValid()).thenReturn(true);
+        when(skill.getStatus()).thenReturn("published");
         return skill;
     }
 }
