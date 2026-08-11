@@ -7,7 +7,6 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.agent.AiAsyncExecutionConfig;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,8 +36,8 @@ public class ReconSummaryDigestService {
             规则：
             1. 压缩后总长度不超过 500 字符（含换行）。
             2. 每条要点独占一行，以"·"开头，不使用 Markdown 标题或代码块。
-            3. 必须保留的内容：IP 地址、开放端口/服务、中间件版本、凭据类型、账号、来源位置、CVE 编号、已确认的可利用点。
-            4. 敏感值已统一替换为 [REDACTED]，必须保持该标记，不推测或补全原值。
+            3. 必须保留的内容：IP 地址、开放端口/服务、中间件版本、完整凭据及来源位置、CVE 编号、已确认的可利用点。
+            4. 凭据、密钥、令牌和连接串保留完整原值，不做脱敏、遮罩或改写。
             5. 删除冗余描述和重复信息。
             6. 只输出压缩后的纯文本，不添加任何前言或解释。
 
@@ -57,7 +56,7 @@ public class ReconSummaryDigestService {
      * 同步生成 digest 并写入 session。
      */
     public String generateAndSave(PuppetNodeSession session) {
-        String summary = sanitizeStoredSummary(session);
+        String summary = session == null ? null : session.getReconSummary();
         if (summary == null || summary.isBlank()) {
             throw new IllegalStateException("摘要为空，无法生成精简版");
         }
@@ -72,7 +71,7 @@ public class ReconSummaryDigestService {
     @Async(AiAsyncExecutionConfig.BACKGROUND_EXECUTOR)
     public void generateAndSaveAsync(PuppetNodeSession session) {
         if (session == null) return;
-        String summary = sanitizeStoredSummary(session);
+        String summary = session.getReconSummary();
         if (summary == null || summary.length() < DIGEST_THRESHOLD) return;
         try {
             String digest = callAi(summary);
@@ -95,33 +94,17 @@ public class ReconSummaryDigestService {
         org.leo.core.session.PuppetNodeSession session =
                 org.leo.core.session.PuppetNodeSessionContainer.getSession(sessionId);
         if (session == null) return null;
-        String summary = sanitizeStoredSummary(session);
+        String summary = session.getReconSummary();
         if (session.hasFreshReconSummaryDigest()) {
-            String digest = ReconSummarySanitizer.sanitize(session.getReconSummaryDigest());
-            if (!digest.equals(session.getReconSummaryDigest())) {
-                session.setReconSummaryDigest(digest);
-            }
-            return digest;
+            return session.getReconSummaryDigest();
         }
         if (summary == null || summary.isBlank()) return null;
         // 原始摘要超过阈值时，截取前段并标注截断，避免 system prompt 过长
         if (summary.length() > DIGEST_THRESHOLD) {
-            return ReconSummarySanitizer.sanitize(summary.substring(0, DIGEST_THRESHOLD))
+            return summary.substring(0, DIGEST_THRESHOLD)
                     + "\n\n... [侦察摘要过长，已截断。完整精简版正在生成中]";
         }
-        return ReconSummarySanitizer.sanitize(summary);
-    }
-
-    private String sanitizeStoredSummary(PuppetNodeSession session) {
-        if (session == null) return null;
-        String summary = session.getReconSummary();
-        if (summary == null || summary.isBlank()) return summary;
-        String sanitized = ReconSummarySanitizer.sanitize(summary);
-        if (!sanitized.equals(summary)) {
-            session.setReconSummary(sanitized);
-            PuppetNodeSessionWorkDirUtil.saveReconSummary(session.getSessionId(), sanitized);
-        }
-        return sanitized;
+        return summary;
     }
 
     private String callAi(String summary) {
@@ -129,8 +112,8 @@ public class ReconSummaryDigestService {
                 .messages(List.of(
                         new SystemMessage(SYSTEM_PROMPT),
                         new UserMessage("<recon_data>\n"
-                                + ReconSummarySanitizer.escapeClosingTag(
-                                        ReconSummarySanitizer.sanitize(summary.trim()), "recon_data")
+                                + PromptDataBoundary.escapeClosingTag(
+                                        summary.trim(), "recon_data")
                                 + "\n</recon_data>")
                 ))
                 .build());
@@ -148,7 +131,7 @@ public class ReconSummaryDigestService {
                     : "";
             throw new RuntimeException("AI 返回为空" + hint);
         }
-        String sanitized = ReconSummarySanitizer.sanitize(result.trim());
-        return sanitized.length() > 600 ? sanitized.substring(0, 600) : sanitized;
+        String digest = result.trim();
+        return digest.length() > 600 ? digest.substring(0, 600) : digest;
     }
 }

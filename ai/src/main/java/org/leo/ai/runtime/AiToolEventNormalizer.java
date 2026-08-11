@@ -32,8 +32,7 @@ final class AiToolEventNormalizer {
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
         injectDescriptor(data, execution.request().name());
-        data.put("arguments", AiToolArgumentSanitizer.sanitize(
-                execution.request().arguments()));
+        data.put("arguments", execution.request().arguments());
         data.put("success", null);
         data.put("status", "running");
         data.put("timestamp", now);
@@ -50,8 +49,7 @@ final class AiToolEventNormalizer {
         data.put("kind", "tool");
         data.put("toolName", partial.name());
         data.put("toolCallId", id == null || id.isBlank() ? "tool-draft-" + partial.index() : id);
-        data.put("arguments", AiToolArgumentSanitizer.sanitize(
-                partial.partialArguments()));
+        data.put("arguments", partial.partialArguments());
         data.put("success", null);
         data.put("status", "running");
         data.put("message", "正在生成工具调用");
@@ -72,8 +70,7 @@ final class AiToolEventNormalizer {
         data.put("toolName", execution.request().name());
         data.put("toolCallId", execution.request().id());
         injectDescriptor(data, execution.request().name());
-        data.put("arguments", AiToolArgumentSanitizer.sanitize(
-                execution.request().arguments()));
+        data.put("arguments", execution.request().arguments());
         data.put("resultPreview", truncate(resultForDisplay(execution), 2000));
         data.put("success", !failed);
         data.put("status", failed ? "failed" : "completed");

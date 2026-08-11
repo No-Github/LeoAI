@@ -60,13 +60,14 @@ public class AutoReconAppendService {
             - IP 地址、端口、域名、URL
             - 操作系统版本、内核版本、中间件版本
             - 数据库连接串、Redis/Memcached 地址
-            - 用户名、凭据类型与来源位置、证书路径（敏感值已统一替换为 [REDACTED]）
+            - 用户名、密码、令牌、密钥、连接串、证书等完整凭据及其来源位置
             - CVE 漏洞编号或已知漏洞描述
             - 内网存活主机或网段
             - 重要配置文件路径和内容摘要
 
             规则：
             - 若新输出中的情报已在摘要中记录（相同或高度相似），跳过该条目
+            - 凭据、密钥、令牌和连接串保留完整原值，不做脱敏、遮罩或改写
             - 只输出真正新增的情报，以 Markdown 无序列表格式（以 - 开头）
             - 总长度不超过 500 字符，不加任何标题或前言
             - 如果没有新的有价值情报，只输出一个词：SKIP
@@ -104,28 +105,26 @@ public class AutoReconAppendService {
             return;
         }
         try {
-            String safeToolOutput = ReconSummarySanitizer.sanitize(toolOutput);
-            String truncated = safeToolOutput.length() > 3000
-                    ? safeToolOutput.substring(0, 3000) + "\n...(输出已截断)" : safeToolOutput;
+            String truncated = toolOutput.length() > 3000
+                    ? toolOutput.substring(0, 3000) + "\n...(输出已截断)" : toolOutput;
 
             // 优先用精简版摘要做去重上下文（仅在 digest 未过期时使用），降低 token 消耗；
             // digest 过期或不存在时截取完整摘要前 1500 字符
             String currentSummary = session.getReconSummary();
             String contextSummary;
             if (session.hasFreshReconSummaryDigest()) {
-                contextSummary = ReconSummarySanitizer.sanitize(
-                        session.getReconSummaryDigest().trim());
+                contextSummary = session.getReconSummaryDigest().trim();
             } else if (currentSummary != null && !currentSummary.isBlank()) {
-                String safeSummary = ReconSummarySanitizer.sanitize(currentSummary.trim());
-                contextSummary = safeSummary.length() > 1500
-                        ? safeSummary.substring(0, 1500) + "\n...(摘要已截断)" : safeSummary;
+                String trimmedSummary = currentSummary.trim();
+                contextSummary = trimmedSummary.length() > 1500
+                        ? trimmedSummary.substring(0, 1500) + "\n...(摘要已截断)" : trimmedSummary;
             } else {
                 contextSummary = "（暂无）";
             }
             String summaryContext = "<existing_recon_data>\n"
-                    + ReconSummarySanitizer.escapeClosingTag(contextSummary, "existing_recon_data")
+                    + PromptDataBoundary.escapeClosingTag(contextSummary, "existing_recon_data")
                     + "\n</existing_recon_data>\n\n<new_tool_output>\n"
-                    + ReconSummarySanitizer.escapeClosingTag(truncated, "new_tool_output")
+                    + PromptDataBoundary.escapeClosingTag(truncated, "new_tool_output")
                     + "\n</new_tool_output>";
 
             ChatResponse response = chatModel.chat(ChatRequest.builder()
@@ -139,7 +138,7 @@ public class AutoReconAppendService {
                 return;
             }
 
-            String toAppend = ReconSummarySanitizer.sanitize(result.trim());
+            String toAppend = result.trim();
             if (toAppend.length() > MAX_APPEND_LEN) {
                 toAppend = toAppend.substring(0, MAX_APPEND_LEN);
             }

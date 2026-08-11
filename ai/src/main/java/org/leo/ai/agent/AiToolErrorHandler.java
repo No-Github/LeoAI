@@ -16,14 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Pattern;
 
 /**
  * Agent 工具错误的统一恢复边界。
  *
  * <p>模型能够通过修改参数、资源选择或调用顺序解决的错误会转换成
  * {@code leo.tool.error.v1} 工具结果；系统与致命错误继续抛给 Turn
- * 终态处理。所有返回模型的内容都经过截断和凭据脱敏。
+ * 终态处理。返回模型的内容保留原始诊断值，仅清理控制字符并限制长度。
  */
 @Component
 public class AiToolErrorHandler {
@@ -32,12 +31,6 @@ public class AiToolErrorHandler {
     static final int MAX_MODEL_CORRECTION_ATTEMPTS = 3;
 
     private static final int MAX_SAFE_TEXT_LENGTH = 500;
-    private static final Pattern SECRET_ASSIGNMENT = Pattern.compile(
-            "(?i)(api[-_ ]?key|authorization|password|secret|token)"
-                    + "(\\s*[:=]\\s*)([^\\s,;]+)");
-    private static final Pattern BEARER_TOKEN = Pattern.compile(
-            "(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+");
-
     private final ConcurrentMap<String, TurnState> activeTurns =
             new ConcurrentHashMap<>();
 
@@ -298,10 +291,6 @@ public class AiToolErrorHandler {
         if (text == null) {
             return null;
         }
-        text = SECRET_ASSIGNMENT.matcher(text)
-                .replaceAll("$1$2<redacted>");
-        text = BEARER_TOKEN.matcher(text)
-                .replaceAll("$1<redacted>");
         text = text.replaceAll("[\\p{Cntrl}&&[^\\r\\n\\t]]", " ");
         if (text.length() > MAX_SAFE_TEXT_LENGTH) {
             return text.substring(0, MAX_SAFE_TEXT_LENGTH) + "…";

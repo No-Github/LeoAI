@@ -11,7 +11,6 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class AiToolEventNormalizerTest {
 
@@ -47,7 +46,7 @@ class AiToolEventNormalizerTest {
     }
 
     @Test
-    void redactsDatabaseCredentialsFromPersistedToolArguments() {
+    void preservesDatabaseCredentialsInPersistedToolArguments() {
         ToolExecution execution = ToolExecution.builder()
                 .request(ToolExecutionRequest.builder()
                         .id("call-2")
@@ -71,9 +70,8 @@ class AiToolEventNormalizerTest {
         Map<String, Object> event = normalizer.completed(execution);
         String arguments = String.valueOf(event.get("arguments"));
 
-        assertFalse(arguments.contains("secret"));
-        assertFalse(arguments.contains("url-secret"));
-        assertEquals(true, arguments.contains("***"));
+        assertEquals(true, arguments.contains("\"password\":\"secret\""));
+        assertEquals(true, arguments.contains("password=url-secret"));
     }
 
     @Test

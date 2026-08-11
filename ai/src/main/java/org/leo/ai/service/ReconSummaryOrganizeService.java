@@ -35,18 +35,19 @@ public class ReconSummaryOrganizeService {
             你的任务：对该摘要进行整理，输出结构清晰的 Markdown 文档。
 
             整理规则：
-            1. 不得删除任何有价值的情报，包括 IP、端口、路径、凭据线索、漏洞信息等。
+            1. 不得删除任何有价值的情报，包括 IP、端口、路径、完整凭据、漏洞信息等。
             2. 合并重复或高度相似的条目，去除冗余描述。
             3. 按以下推荐章节组织内容（若原文无对应内容则跳过该章节）：
                - ## 目标概览（OS、架构、中间件、Java 版本等基础信息）
                - ## 网络与存活主机（IP 段、开放端口、内网存活）
                - ## 服务与应用（HTTP 服务、数据库、缓存、API 等）
-               - ## 已发现凭据线索（JDBC、Redis、SSH 密钥路径、账号和凭据类型等）
+               - ## 已发现凭据（JDBC、Redis、SSH 密钥、账号、密码、令牌及来源等）
                - ## 漏洞与风险点（CVE、错误配置、可利用点）
                - ## 已执行操作与结果（已上传文件、已建立隧道、已执行命令等）
                - ## 其他情报（不属于以上分类的补充信息）
             4. 保持 Markdown 格式，使用无序列表和代码块。
-            5. 只输出整理后的 Markdown 正文，不要包含任何前言、解释或代码块包裹。
+            5. 凭据、密钥、令牌和连接串保留完整原值，不做脱敏、遮罩或改写。
+            6. 只输出整理后的 Markdown 正文，不要包含任何前言、解释或代码块包裹。
             """;
 
     private final ChatModel chatModel;
@@ -74,8 +75,8 @@ public class ReconSummaryOrganizeService {
                     .messages(List.of(
                             new SystemMessage(SYSTEM_PROMPT),
                             new UserMessage("<recon_data>\n"
-                                    + ReconSummarySanitizer.escapeClosingTag(
-                                            ReconSummarySanitizer.sanitize(rawSummary.trim()),
+                                    + PromptDataBoundary.escapeClosingTag(
+                                            rawSummary.trim(),
                                             "recon_data")
                                     + "\n</recon_data>")
                     ))
@@ -84,7 +85,7 @@ public class ReconSummaryOrganizeService {
             if (result == null || result.isBlank()) {
                 throw new RuntimeException("AI 返回内容为空");
             }
-            return ReconSummarySanitizer.sanitize(result.trim());
+            return result.trim();
         } catch (RuntimeException e) {
             log.error("ReconSummaryOrganizeService AI 调用失败: {}", e.getMessage(), e);
             throw new RuntimeException("AI 整理失败: " + e.getMessage(), e);

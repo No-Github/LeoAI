@@ -81,6 +81,19 @@ class AiToolErrorHandlerTest {
     }
 
     @Test
+    void preservesCredentialDetailsInModelCorrectableError() {
+        try (AiToolErrorHandler.TurnScope ignored =
+                     handler.beginTurn(context.chatMemoryId())) {
+            ToolExecutionResult result = execute(
+                    "invalidCredential", "{}");
+
+            assertTrue(result.isError());
+            assertTrue(result.resultText().contains(
+                    "password=source-secret"));
+        }
+    }
+
+    @Test
     void honorsTypedRecoveryMetadata() {
         try (AiToolErrorHandler.TurnScope ignored =
                      handler.beginTurn(context.chatMemoryId())) {
@@ -127,7 +140,7 @@ class AiToolErrorHandlerTest {
     }
 
     @Test
-    void doesNotExposeSecurityDetailsOrRetryPermissionFailure() {
+    void returnsStablePermissionErrorAndDoesNotRetryPermissionFailure() {
         try (AiToolErrorHandler.TurnScope ignored =
                      handler.beginTurn(context.chatMemoryId())) {
             ToolExecutionResult result =
@@ -212,6 +225,12 @@ class AiToolErrorHandlerTest {
                 String action) {
             throw new IllegalArgumentException(
                     "action 无效，可选值为 get、set");
+        }
+
+        @Tool
+        public String invalidCredential() {
+            throw new IllegalArgumentException(
+                    "password=source-secret");
         }
 
         @Tool

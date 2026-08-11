@@ -12,7 +12,7 @@ import static org.mockito.Mockito.when;
 class PuppetNodeSystemPromptProviderTest {
 
     @Test
-    void wrapsAndSanitizesReconDigestAsUntrustedData() {
+    void wrapsReconDigestAsUntrustedDataWithoutRedactingCredentials() {
         ReconSummaryDigestService recon = mock(ReconSummaryDigestService.class);
         LeoSkillsProvider skills = mock(LeoSkillsProvider.class);
         when(recon.getDigest("session-1")).thenReturn(
@@ -23,8 +23,8 @@ class PuppetNodeSystemPromptProviderTest {
                 .getSystemMessage("session-1:thread-1");
 
         assertTrue(prompt.contains("<untrusted_recon_data>"));
-        assertTrue(prompt.contains("password=[REDACTED]"));
+        assertTrue(prompt.contains("password=secret"));
         assertTrue(prompt.contains("&lt;/untrusted_recon_data&gt;"));
-        assertFalse(prompt.contains("password=secret"));
+        assertFalse(prompt.contains("password=[REDACTED]"));
     }
 }
