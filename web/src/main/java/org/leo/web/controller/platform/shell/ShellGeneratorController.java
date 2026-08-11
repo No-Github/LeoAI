@@ -94,6 +94,7 @@ public class ShellGeneratorController {
         // 协议维度映射：{http/httpchunk/websocket: {serverType: [injectorName]}}
         // 供前端按当前协议直接取可用服务器与注入器，避免靠名字硬匹配 HTTPCHUNK 别名
         result.put("serverProtocolInjectorTypes", GeneratorCatalog.getProtocolInjectorMap());
+        result.put("injectorCapabilities", GeneratorCatalog.getCapabilityDescriptors());
 
         result.put("packerTypes", PackerRegistry.getHierarchy());
 
@@ -108,6 +109,7 @@ public class ShellGeneratorController {
         transportProtocols.put("memoryshell", ShellGeneratorConfig.getSupportedMemoryShellProtocols());
         result.put("transportProtocols", transportProtocols);
         result.put("runtimeGenerators", scriptGeneratorService.getMetadata());
+        result.put("memoryShellBuildOptions", getMemoryShellBuildOptions());
 
         return ApiResponse.success(result);
     }
@@ -199,6 +201,7 @@ public class ShellGeneratorController {
             HashMap<String, Object> data =
                     new HashMap<String, Object>(outcome.getMetadata());
             data.put("shell", outcome.getContent());
+            data.put("classArtifacts", outcome.getClassArtifacts());
 
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
@@ -233,6 +236,7 @@ public class ShellGeneratorController {
                 return ApiResponse.badRequest("packerType 不能为空");
             }
             String protocol = ControllerUtil.getOptionalStringParam(params, "protocol");
+            String serverVersion = ControllerUtil.getOptionalStringParam(params, "serverVersion");
             String headerName = ControllerUtil.getOptionalStringParam(params, "headerName");
             String headerValue = ControllerUtil.getOptionalStringParam(params, "headerValue");
 
@@ -257,6 +261,9 @@ public class ShellGeneratorController {
             Boolean isAbstractTranslet = getOptionalBooleanParam(params, "isAbstractTranslet");
             Integer respCode = getOptionalIntegerParam(params, "respCode");
             Boolean byPassJavaModule = getOptionalBooleanParam(params, "byPassJavaModule");
+            Boolean lambdaSuffix = getOptionalBooleanParam(params, "lambdaSuffix");
+            Boolean staticInitialize = getOptionalBooleanParam(params, "staticInitialize");
+            Boolean shrink = getOptionalBooleanParam(params, "shrink");
             String targetJavaVersion = ControllerUtil.getOptionalStringParam(params, "targetJavaVersion");
             String servletNamespace = ControllerUtil.getOptionalStringParam(params, "servletNamespace");
             Long obfuscationSeed = getOptionalLongParam(params, "obfuscationSeed");
@@ -268,6 +275,7 @@ public class ShellGeneratorController {
                     MemoryShellGenerationCommand.builder(reqDisguise, respDisguise)
                             .header(headerName, headerValue)
                             .serverType(serverType)
+                            .serverVersion(serverVersion)
                             .injectorName(shellType)
                             .packerType(packerType)
                             .protocol(protocol)
@@ -279,6 +287,9 @@ public class ShellGeneratorController {
                             .shellClassName(shellClassName)
                             .abstractTranslet(isAbstractTranslet)
                             .bypassJavaModule(byPassJavaModule)
+                            .lambdaSuffix(lambdaSuffix)
+                            .staticInitialize(staticInitialize)
+                            .shrink(shrink)
                             .responseCode(respCode)
                             .obfuscationSteps(jspObfuscationSteps)
                             .customJspTemplate(customJspTemplate)
@@ -290,6 +301,7 @@ public class ShellGeneratorController {
             HashMap<String, Object> data =
                     new HashMap<String, Object>(outcome.getMetadata());
             data.put("code", outcome.getContent());
+            data.put("classArtifacts", outcome.getClassArtifacts());
 
             return ApiResponse.success(data);
         } catch (IllegalArgumentException e) {
@@ -400,5 +412,26 @@ public class ShellGeneratorController {
             versions.add(version.getValue());
         }
         return versions;
+    }
+
+    private static Map<String, Object> getMemoryShellBuildOptions() {
+        Map<String, Object> options = new LinkedHashMap<String, Object>();
+        options.put("lambdaSuffix", option(false,
+                "为 Shell 与 Injector 类名追加 $Proxy0$$Lambda$1"));
+        options.put("staticInitialize", option(false,
+                "在 Injector 的类初始化阶段自动调用无参构造器"));
+        options.put("shrink", option(true,
+                "移除调试属性、注解与单文件装载不需要的类元数据"));
+        options.put("byPassJavaModule", option(false,
+                "JDK 9+ 自动启用，并在 Injector 构造入口安装模块兼容逻辑"));
+        return java.util.Collections.unmodifiableMap(options);
+    }
+
+    private static Map<String, Object> option(boolean defaultValue,
+                                              String description) {
+        Map<String, Object> descriptor = new LinkedHashMap<String, Object>();
+        descriptor.put("defaultValue", defaultValue);
+        descriptor.put("description", description);
+        return java.util.Collections.unmodifiableMap(descriptor);
     }
 }

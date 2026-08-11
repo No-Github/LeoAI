@@ -44,24 +44,11 @@ public enum TargetJavaVersion {
         if (value == null || value.trim().isEmpty()) {
             return AUTO;
         }
-        String normalized = value.trim().toUpperCase(Locale.ROOT)
-                .replace("JAVA", "JDK")
-                .replace("1.", "")
-                .replace("_", "")
-                .replace("-", "");
-        if ("AUTO".equals(normalized)) return AUTO;
-        if ("6".equals(normalized) || "JDK6".equals(normalized)) return JDK_6;
-        if ("7".equals(normalized) || "JDK7".equals(normalized)) return JDK_7;
-        if ("8".equals(normalized) || "JDK8".equals(normalized)) return JDK_8;
-        if ("9".equals(normalized) || "9+".equals(normalized)
-                || "JDK9".equals(normalized) || "JDK9+".equals(normalized)
-                || "11".equals(normalized) || "JDK11".equals(normalized)) {
-            return JDK_9_PLUS;
-        }
-        if ("17".equals(normalized) || "17+".equals(normalized)
-                || "JDK17".equals(normalized) || "JDK17+".equals(normalized)
-                || "21".equals(normalized) || "JDK21".equals(normalized)) {
-            return JDK_17_PLUS;
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        for (TargetJavaVersion target : values()) {
+            if (target.value.equals(normalized)) {
+                return target;
+            }
         }
         throw new IllegalArgumentException(
                 "targetJavaVersion 必须是 auto、6、7、8、9+ 或 17+，当前值: " + value);

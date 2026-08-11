@@ -64,6 +64,33 @@ public final class GenerationPlan {
                     "服务器类型 " + request.getServerType() + " 在 " + protocol
                             + " 协议下不支持 " + request.getInjectorName() + " 类型的注入器");
         }
+        if (!descriptor.supportsServletNamespace(
+                request.getEffectiveServletNamespace())) {
+            throw new IllegalArgumentException(
+                    request.getServerType() + " / " + request.getInjectorName()
+                            + " 仅支持 javax.servlet，当前选择为 jakarta.servlet");
+        }
+        if (!descriptor.supportsServerVersion(request.getServerVersion())) {
+            throw new IllegalArgumentException(
+                    request.getServerType() + " / " + request.getInjectorName()
+                            + " 需要 serverVersion，支持值: "
+                            + descriptor.getSupportedServerVersions());
+        }
+        if (!descriptor.supportsPacker(request.getPackerType())) {
+            throw new IllegalArgumentException(
+                    request.getServerType() + " / " + request.getInjectorName()
+                            + " 支持的 Packer: " + descriptor.getSupportedPackers());
+        }
+        if (request.isStaticInitialize() && !descriptor.supportsStaticInitialize()) {
+            throw new IllegalArgumentException(
+                    request.getServerType() + " / " + request.getInjectorName()
+                            + " 由 Agent JAR 的 premain/agentmain 驱动，不使用静态初始化挂载");
+        }
+        if ("AgentJarBase64".equalsIgnoreCase(request.getPackerType())
+                && descriptor.getSupportedPackers().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "AgentJarBase64 仅适用于声明 Agent JAR 装载能力的注入器");
+        }
 
         PackerRegistry.validateProtocolCompatibility(request.getPackerType(), protocol);
         validateTransportFields(request);
@@ -75,7 +102,7 @@ public final class GenerationPlan {
         PackerRegistry.validateCompatibility(
                 request.getPackerType(),
                 request.getTargetJavaVersion(),
-                request.isBypassJavaModule());
+                request.isBypassJavaModuleEffective());
 
         boolean abstractTranslet = request.isAbstractTransletRequested()
                 || PackerRegistry.requiresAbstractTranslet(request.getPackerType());

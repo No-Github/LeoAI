@@ -54,7 +54,7 @@ public final class ShellGenerationService {
                 PackerRegistry.evaluateCompatibility(
                         command.getPackerType(),
                         result.getTargetJavaVersion(),
-                        command.isBypassJavaModule());
+                        command.isBypassJavaModuleEffective());
         List<String> warnings =
                 new ArrayList<String>(compatibility.getWarnings());
         if (result.getServletNamespace() == ServletNamespace.JAKARTA
@@ -68,19 +68,40 @@ public final class ShellGenerationService {
         metadata.put("shellType", command.getInjectorName());
         metadata.put("protocol", result.getProtocol().getValue());
         metadata.put("serverType", command.getServerType());
+        metadata.put("serverVersion", command.getServerVersion());
         metadata.put("coreClassName", result.getCoreClassName());
         metadata.put("injectorClassName", result.getInjectorClassName());
         metadata.put("shellClassName", result.getShellClassName());
         metadata.put("urlPattern", command.getUrlPattern());
         metadata.put("isAbstractTranslet", result.isAbstractTranslet());
-        metadata.put("byPassJavaModule", command.isBypassJavaModule());
+        metadata.put("byPassJavaModuleRequested", command.isBypassJavaModule());
+        metadata.put("byPassJavaModule", command.isBypassJavaModuleEffective());
+        metadata.put("lambdaSuffix", command.isLambdaSuffix());
+        metadata.put("staticInitialize", command.isStaticInitialize());
+        metadata.put("shrink", command.isShrink());
         metadata.put("targetJavaVersion", result.getTargetJavaVersion().getValue());
         metadata.put("obfuscationSeed", Long.toString(result.getObfuscationSeed()));
         metadata.put("compatibilityWarnings",
                 java.util.Collections.unmodifiableList(warnings));
         metadata.put("servletNamespace", result.getServletNamespace().getValue());
         metadata.put("headerConfig", command.getHeaderConfig());
+        if ("UpgradeInjector".equals(command.getInjectorName())) {
+            metadata.put("activationConfig",
+                    "Connection: Upgrade; Upgrade: " + result.getShellClassName());
+        }
         metadata.put("templateMutated", command.hasCustomJspTemplate());
+        Map<String, Object> packingConfig = new LinkedHashMap<String, Object>();
+        packingConfig.put("packerType", command.getPackerType());
+        packingConfig.put("serverVersion", command.getServerVersion());
+        packingConfig.put("targetJavaVersion", result.getTargetJavaVersion().getValue());
+        packingConfig.put("servletNamespace", result.getServletNamespace().getValue());
+        packingConfig.put("abstractTranslet", result.isAbstractTranslet());
+        packingConfig.put("byPassJavaModule", command.isBypassJavaModuleEffective());
+        packingConfig.put("lambdaSuffix", command.isLambdaSuffix());
+        packingConfig.put("staticInitialize", command.isStaticInitialize());
+        packingConfig.put("shrink", command.isShrink());
+        metadata.put("packingConfig",
+                java.util.Collections.unmodifiableMap(packingConfig));
         addSizeMetadata(metadata, result.getContent());
         return new ShellGenerationOutcome(result, metadata);
     }

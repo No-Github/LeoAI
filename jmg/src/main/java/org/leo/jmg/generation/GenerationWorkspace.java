@@ -15,11 +15,13 @@ public final class GenerationWorkspace {
     private byte[] shellClassBytes;
     private byte[] injectorClassBytes;
     private boolean abstractTranslet;
+    private final boolean lambdaSuffix;
 
     private GenerationWorkspace(GenerationRequest request) {
         this.shellClassName = request.getRequestedShellClassName();
         this.injectorClassName = request.getRequestedInjectorClassName();
         this.abstractTranslet = request.isAbstractTransletRequested();
+        this.lambdaSuffix = request.isLambdaSuffix();
     }
 
     public static GenerationWorkspace create(GenerationRequest request) {
@@ -35,6 +37,10 @@ public final class GenerationWorkspace {
         }
         if (isBlank(injectorClassName)) {
             injectorClassName = ClassNameGenerator.generateServletStyleClassName();
+        }
+        if (lambdaSuffix) {
+            shellClassName = appendLambdaSuffix(shellClassName);
+            injectorClassName = appendLambdaSuffix(injectorClassName);
         }
     }
 
@@ -91,5 +97,11 @@ public final class GenerationWorkspace {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    static String appendLambdaSuffix(String className) {
+        return className.contains("$Lambda$")
+                ? className
+                : className + "$Proxy0$$Lambda$1";
     }
 }

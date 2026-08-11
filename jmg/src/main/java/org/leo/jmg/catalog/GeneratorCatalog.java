@@ -4,6 +4,7 @@ import org.leo.jmg.TransportProtocol;
 import org.leo.jmg.mem.ServerType;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -30,7 +31,13 @@ public final class GeneratorCatalog {
     private static final String SHELL_SERVLET_CHUNK = SHELL_PACKAGE + "LeoServletChunkTpl";
     private static final String SHELL_WEBSOCKET = SHELL_PACKAGE + "LeoWebSocketTpl";
     private static final String SHELL_INTERCEPTOR = SHELL_PACKAGE + "LeoInterceptorTpl";
-    private static final String SHELL_STRUCT2 = SHELL_PACKAGE + "LeoStruct2ActionTpl";
+    private static final String SHELL_CONTROLLER = SHELL_PACKAGE + "LeoControllerHandlerTpl";
+    private static final String SHELL_JETTY_CUSTOMIZER = SHELL_PACKAGE + "LeoJettyCustomizerTpl";
+    private static final String SHELL_JETTY_HANDLER = SHELL_PACKAGE + "LeoJettyHandlerTpl";
+    private static final String SHELL_JETTY_HANDLER_CHUNK = SHELL_PACKAGE + "LeoJettyHandlerChunkTpl";
+    private static final String SHELL_STRUTS2 = SHELL_PACKAGE + "LeoStruts2ActionTpl";
+    private static final String SHELL_AGENT = SHELL_PACKAGE + "LeoAgentTpl";
+    private static final String SHELL_AGENT_CHUNK = SHELL_PACKAGE + "LeoAgentChunkTpl";
     private static final Map<ServerType, List<InjectorDescriptor>> BY_SERVER;
     private static final List<InjectorDescriptor> ALL;
 
@@ -40,10 +47,12 @@ public final class GeneratorCatalog {
 
         registerTomcat(catalog);
         registerJbossFamily(catalog);
+        registerJetty5(catalog);
         registerJetty(catalog);
         registerUndertow(catalog);
         registerWebLogic(catalog);
         registerWebSphere(catalog);
+        registerResin2(catalog);
         registerResin(catalog);
         registerGlassfishFamily(catalog);
         registerSpringWebMvc(catalog);
@@ -51,7 +60,7 @@ public final class GeneratorCatalog {
         registerBes(catalog);
         registerInforSuite(catalog);
         registerTongWeb(catalog);
-        registerStruct2(catalog);
+        registerStruts2(catalog);
 
         List<InjectorDescriptor> all = new ArrayList<InjectorDescriptor>();
         Set<String> uniqueKeys = new LinkedHashSet<String>();
@@ -148,6 +157,36 @@ public final class GeneratorCatalog {
         return Collections.unmodifiableMap(result);
     }
 
+    /** 返回前端/AI 可直接消费的结构化挂载能力目录。 */
+    public static List<Map<String, Object>> getCapabilityDescriptors() {
+        List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+        for (InjectorDescriptor descriptor : ALL) {
+            Map<String, Object> row = new LinkedHashMap<String, Object>();
+            row.put("serverType", descriptor.getServerType().getValue());
+            row.put("protocol", descriptor.getProtocol().getValue());
+            row.put("injectorName", descriptor.getInjectorName());
+            row.put("mountType", descriptor.getMountType().getValue());
+            row.put("mountLabel", descriptor.getMountType().getLabel());
+            row.put("servletNamespaces", descriptor.getSupportedServletNamespaces());
+            row.put("defaultUrlPattern",
+                    descriptor.getProtocol() == TransportProtocol.WEBSOCKET ? "/leo" : "/*");
+            row.put("supportsHeaderGate", descriptor.supportsHeaderGate());
+            row.put("supportsLambdaSuffix", true);
+            row.put("supportsStaticInitialize", descriptor.supportsStaticInitialize());
+            row.put("supportsUrlPattern", descriptor.supportsUrlPattern());
+            if (descriptor.getMountType() == MountType.UPGRADE) {
+                row.put("activationHeaders", Arrays.asList(
+                        "Connection: Upgrade",
+                        "Upgrade: ${shellClassName}"));
+            }
+            row.put("requiresServerVersion", descriptor.requiresServerVersion());
+            row.put("serverVersions", descriptor.getSupportedServerVersions());
+            row.put("supportedPackers", descriptor.getSupportedPackers());
+            result.add(Collections.unmodifiableMap(row));
+        }
+        return Collections.unmodifiableList(result);
+    }
+
     private static void registerTomcat(Map<ServerType, List<InjectorDescriptor>> catalog) {
         List<Entry> entries = entries(
                 httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
@@ -156,19 +195,25 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatValveInjector"),
                 websocket("WebSocketInjector",
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketInjector"),
+                websocket("ByPassNginxWebSocketInjector",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketByPassInjector"),
+                httpAndChunk("UpgradeInjector", SHELL_AGENT, SHELL_AGENT_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatUpgradeInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatServletInjector"),
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatListenerInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector"),
                 http("ProxyValveInjector", SHELL_VALVE,
-                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatProxyValveInjector"),
-                http("UpgradeInjector", SHELL_FILTER,
-                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatUpgradeInjector"));
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatProxyValveInjector"));
         put(catalog, ServerType.TOMCAT, entries);
     }
 
     private static void registerJbossFamily(Map<ServerType, List<InjectorDescriptor>> catalog) {
-        List<Entry> entries = entries(
+        List<Entry> jbossWebEntries = entries(
                 httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterInjector"),
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
@@ -178,12 +223,28 @@ public final class GeneratorCatalog {
                 http("ProxyValveInjector", SHELL_VALVE,
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatProxyValveInjector"),
                 websocket("WebSocketInjector",
-                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketInjector"));
-        put(catalog, ServerType.JBOSS, entries);
-        put(catalog, ServerType.JBOSS_AS, entries);
-        put(catalog, ServerType.JBOSS_EAP6, entries);
-        put(catalog, ServerType.JBOSS_EAP7, entries);
-        put(catalog, ServerType.WILDFLY, entries);
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatWebSocketInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector"));
+        put(catalog, ServerType.JBOSS, jbossWebEntries);
+        put(catalog, ServerType.JBOSS_AS, jbossWebEntries);
+        put(catalog, ServerType.JBOSS_EAP6, jbossWebEntries);
+
+        List<Entry> undertowEntries = entries(
+                httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowFilterInjector"),
+                httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowListenerInjector"),
+                httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowServletInjector"),
+                websocket("WebSocketInjector",
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowWebSocketInjector"),
+                agentHttpAndChunk("AgentServletHandler",
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowServletHandlerAgentInjector"));
+        put(catalog, ServerType.JBOSS_EAP7, undertowEntries);
+        put(catalog, ServerType.WILDFLY, undertowEntries);
     }
 
     private static void registerJetty(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -194,10 +255,27 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.jetty.JettyListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.jetty.JettyServletInjector"),
-                http("CustomizerInjector", SHELL_FILTER,
+                versionedHttpAndChunk("HandlerInjector", SHELL_JETTY_HANDLER,
+                        SHELL_JETTY_HANDLER_CHUNK, Arrays.asList("7-10", "11"),
+                        "org.leo.jmg.mem.injectortpl.jetty.JettyHandlerInjector"),
+                http("CustomizerInjector", SHELL_JETTY_CUSTOMIZER,
                         "org.leo.jmg.mem.injectortpl.jetty.JettyCustomizerInjector"),
+                agentHttpAndChunk("AgentHandler",
+                        "org.leo.jmg.mem.injectortpl.jetty.JettyHandlerAgentInjector"),
                 websocket("WebSocketInjector",
                         "org.leo.jmg.mem.injectortpl.jetty.JettyWebSocketInjector")));
+    }
+
+    private static void registerJetty5(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.JETTY5, entries(
+                javaxHttpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.jetty5.Jetty5FilterInjector"),
+                javaxHttpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.jetty5.Jetty5ListenerInjector"),
+                javaxHttpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.jetty5.Jetty5ServletInjector"),
+                agentHttpAndChunk("AgentHandler",
+                        "org.leo.jmg.mem.injectortpl.jetty.JettyHandlerAgentInjector")));
     }
 
     private static void registerUndertow(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -208,6 +286,8 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowServletInjector"),
+                agentHttpAndChunk("AgentServletHandler",
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowServletHandlerAgentInjector"),
                 websocket("WebSocketInjector",
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowWebSocketInjector")));
     }
@@ -220,6 +300,8 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.weblogic.WebLogicListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.weblogic.WebLogicServletInjector"),
+                agentHttpAndChunk("AgentServletContext",
+                        "org.leo.jmg.mem.injectortpl.weblogic.WebLogicServletContextAgentInjector"),
                 websocket("WebSocketInjector",
                         "org.leo.jmg.mem.injectortpl.weblogic.WebLogicWebSocketInjector")));
     }
@@ -231,7 +313,9 @@ public final class GeneratorCatalog {
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.websphere.WebSphereListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.websphere.WebSphereServletInjector")));
+                        "org.leo.jmg.mem.injectortpl.websphere.WebSphereServletInjector"),
+                agentHttpAndChunk("AgentFilterManager",
+                        "org.leo.jmg.mem.injectortpl.websphere.WebSphereFilterChainAgentInjector")));
     }
 
     private static void registerResin(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -241,15 +325,31 @@ public final class GeneratorCatalog {
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.resin.ResinListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.resin.ResinServletInjector")));
+                        "org.leo.jmg.mem.injectortpl.resin.ResinServletInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.resin.ResinFilterChainAgentInjector")));
+    }
+
+    private static void registerResin2(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.RESIN2, entries(
+                javaxHttpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.resin2.Resin2FilterInjector"),
+                javaxHttpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.resin2.Resin2ServletInjector")));
     }
 
     private static void registerGlassfishFamily(Map<ServerType, List<InjectorDescriptor>> catalog) {
         List<Entry> entries = entries(
                 httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.glassfish.GlassFishFilterInjector"),
+                httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatListenerInjector"),
                 httpAndChunk("ValveInjector", SHELL_VALVE, SHELL_VALVE_CHUNK,
                         "org.leo.jmg.mem.injectortpl.glassfish.GlassFishValveInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector"),
                 websocket("WebSocketInjector",
                         "org.leo.jmg.mem.injectortpl.glassfish.GlassFishWebSocketInjector"));
         put(catalog, ServerType.GLASSFISH, entries);
@@ -260,24 +360,22 @@ public final class GeneratorCatalog {
         put(catalog, ServerType.SPRING_WEBMVC, entries(
                 http("InterceptorInjector", SHELL_INTERCEPTOR,
                         "org.leo.jmg.mem.injectortpl.springwebmvc.SpringWebMvcInterceptorInjector"),
-                http("MVCInterceptor", SHELL_INTERCEPTOR,
-                        "org.leo.jmg.mem.injectortpl.springwebmvc.SpringWebMvcInterceptorInjector"),
-                http("ControllerHandlerInjector", SHELL_INTERCEPTOR,
-                        "org.leo.jmg.mem.injectortpl.springwebmvc.SpringWebMvcControllerHandlerInjector")));
+                http("ControllerHandlerInjector", SHELL_CONTROLLER,
+                        "org.leo.jmg.mem.injectortpl.springwebmvc.SpringWebMvcControllerHandlerInjector"),
+                agentHttpAndChunk("AgentFrameworkServlet",
+                        "org.leo.jmg.mem.injectortpl.springwebmvc.SpringWebMvcFrameworkServletAgentInjector")));
     }
 
     private static void registerApusic(Map<ServerType, List<InjectorDescriptor>> catalog) {
         put(catalog, ServerType.APUSIC, entries(
-                http("FilterInjector_V9", SHELL_FILTER,
-                        "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"),
-                http("FilterInjector_V10", SHELL_FILTER,
-                        "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"),
                 httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterInjector"),
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.apusic.ApusicListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.apusic.ApusicServletInjector")));
+                        "org.leo.jmg.mem.injectortpl.apusic.ApusicServletInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.apusic.ApusicFilterChainAgentInjector")));
     }
 
     private static void registerBes(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -287,13 +385,25 @@ public final class GeneratorCatalog {
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.bes.BesListenerInjector"),
                 httpAndChunk("ValveInjector", SHELL_VALVE, SHELL_VALVE_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.bes.BesValveInjector")));
+                        "org.leo.jmg.mem.injectortpl.bes.BesValveInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.bes.BesFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.bes.BesContextValveAgentInjector")));
     }
 
     private static void registerInforSuite(Map<ServerType, List<InjectorDescriptor>> catalog) {
         put(catalog, ServerType.INFORSUITE, entries(
                 httpAndChunk("FilterInjector", SHELL_FILTER, SHELL_FILTER_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.inforsuite.InforSuiteFilterInjector")));
+                        "org.leo.jmg.mem.injectortpl.inforsuite.InforSuiteFilterInjector"),
+                httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatListenerInjector"),
+                httpAndChunk("ValveInjector", SHELL_VALVE, SHELL_VALVE_CHUNK,
+                        "org.leo.jmg.mem.injectortpl.glassfish.GlassFishValveInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector")));
     }
 
     private static void registerTongWeb(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -302,14 +412,19 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.tongweb.TongWebFilterInjector"),
                 httpAndChunk("ListenerInjector", SHELL_LISTENER, SHELL_LISTENER_CHUNK,
                         "org.leo.jmg.mem.injectortpl.tongweb.TongWebListenerInjector"),
-                httpAndChunk("ValveInjector", SHELL_VALVE, SHELL_VALVE_CHUNK,
-                        "org.leo.jmg.mem.injectortpl.tongweb.TongWebValveInjector")));
+                versionedHttpAndChunk("ValveInjector", SHELL_VALVE, SHELL_VALVE_CHUNK,
+                        Arrays.asList("6", "7", "8"),
+                        "org.leo.jmg.mem.injectortpl.tongweb.TongWebValveInjector"),
+                agentHttpAndChunk("AgentFilterChain",
+                        "org.leo.jmg.mem.injectortpl.tongweb.TongWebFilterChainAgentInjector"),
+                agentHttpAndChunk("AgentContextValve",
+                        "org.leo.jmg.mem.injectortpl.tongweb.TongWebContextValveAgentInjector")));
     }
 
-    private static void registerStruct2(Map<ServerType, List<InjectorDescriptor>> catalog) {
-        put(catalog, ServerType.STRUCT2, entries(
-                http("ActionInjector", SHELL_STRUCT2,
-                        "org.leo.jmg.mem.injectortpl.struct2.Struct2ActionInjectorTpl")));
+    private static void registerStruts2(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.STRUTS2, entries(
+                http("ActionInjector", SHELL_STRUTS2,
+                        "org.leo.jmg.mem.injectortpl.struts2.Struts2ActionInjector")));
     }
 
     private static Entry[] http(String injectorName,
@@ -339,6 +454,44 @@ public final class GeneratorCatalog {
         };
     }
 
+    private static Entry[] javaxHttpAndChunk(String injectorName,
+                                             String httpShellTemplate,
+                                             String chunkShellTemplate,
+                                             String injectorTemplate) {
+        return new Entry[]{
+                new Entry(TransportProtocol.HTTP, injectorName,
+                        httpShellTemplate, injectorTemplate, false),
+                new Entry(TransportProtocol.HTTP_CHUNK, injectorName,
+                        chunkShellTemplate, injectorTemplate, false)
+        };
+    }
+
+    private static Entry[] versionedHttpAndChunk(String injectorName,
+                                                  String httpShellTemplate,
+                                                  String chunkShellTemplate,
+                                                  List<String> serverVersions,
+                                                  String injectorTemplate) {
+        return new Entry[]{
+                new Entry(TransportProtocol.HTTP, injectorName,
+                        httpShellTemplate, injectorTemplate, true, serverVersions),
+                new Entry(TransportProtocol.HTTP_CHUNK, injectorName,
+                        chunkShellTemplate, injectorTemplate, true, serverVersions)
+        };
+    }
+
+    private static Entry[] agentHttpAndChunk(String injectorName,
+                                              String injectorTemplate) {
+        List<String> packers = Collections.singletonList("AgentJarBase64");
+        return new Entry[]{
+                new Entry(TransportProtocol.HTTP, injectorName,
+                        SHELL_AGENT, injectorTemplate, true,
+                        Collections.<String>emptyList(), packers, false),
+                new Entry(TransportProtocol.HTTP_CHUNK, injectorName,
+                        SHELL_AGENT_CHUNK, injectorTemplate, true,
+                        Collections.<String>emptyList(), packers, false)
+        };
+    }
+
     private static List<Entry> entries(Entry[]... groups) {
         List<Entry> result = new ArrayList<Entry>();
         for (Entry[] group : groups) {
@@ -353,7 +506,9 @@ public final class GeneratorCatalog {
         List<InjectorDescriptor> descriptors = new ArrayList<InjectorDescriptor>();
         for (Entry entry : entries) {
             descriptors.add(new InjectorDescriptor(serverType, entry.protocol,
-                    entry.injectorName, entry.shellTemplate, entry.injectorTemplate));
+                    entry.injectorName, entry.shellTemplate, entry.injectorTemplate,
+                    entry.supportsJakarta, entry.serverVersions, entry.supportedPackers,
+                    entry.supportsStaticInitialize));
         }
         catalog.put(serverType, descriptors);
     }
@@ -363,15 +518,65 @@ public final class GeneratorCatalog {
         private final String injectorName;
         private final String shellTemplate;
         private final String injectorTemplate;
+        private final boolean supportsJakarta;
+        private final List<String> serverVersions;
+        private final List<String> supportedPackers;
+        private final boolean supportsStaticInitialize;
 
         private Entry(TransportProtocol protocol,
                       String injectorName,
                       String shellTemplate,
                       String injectorTemplate) {
+            this(protocol, injectorName, shellTemplate, injectorTemplate,
+                    true, Collections.<String>emptyList(), Collections.<String>emptyList(), true);
+        }
+
+        private Entry(TransportProtocol protocol,
+                      String injectorName,
+                      String shellTemplate,
+                      String injectorTemplate,
+                      boolean supportsJakarta) {
+            this(protocol, injectorName, shellTemplate, injectorTemplate,
+                    supportsJakarta, Collections.<String>emptyList(), Collections.<String>emptyList(), true);
+        }
+
+        private Entry(TransportProtocol protocol,
+                      String injectorName,
+                      String shellTemplate,
+                      String injectorTemplate,
+                      boolean supportsJakarta,
+                      List<String> serverVersions) {
+            this(protocol, injectorName, shellTemplate, injectorTemplate,
+                    supportsJakarta, serverVersions, Collections.<String>emptyList(), true);
+        }
+
+        private Entry(TransportProtocol protocol,
+                      String injectorName,
+                      String shellTemplate,
+                      String injectorTemplate,
+                      boolean supportsJakarta,
+                      List<String> serverVersions,
+                      List<String> supportedPackers) {
+            this(protocol, injectorName, shellTemplate, injectorTemplate,
+                    supportsJakarta, serverVersions, supportedPackers, true);
+        }
+
+        private Entry(TransportProtocol protocol,
+                      String injectorName,
+                      String shellTemplate,
+                      String injectorTemplate,
+                      boolean supportsJakarta,
+                      List<String> serverVersions,
+                      List<String> supportedPackers,
+                      boolean supportsStaticInitialize) {
             this.protocol = protocol;
             this.injectorName = injectorName;
             this.shellTemplate = shellTemplate;
             this.injectorTemplate = injectorTemplate;
+            this.supportsJakarta = supportsJakarta;
+            this.serverVersions = serverVersions;
+            this.supportedPackers = supportedPackers;
+            this.supportsStaticInitialize = supportsStaticInitialize;
         }
     }
 }

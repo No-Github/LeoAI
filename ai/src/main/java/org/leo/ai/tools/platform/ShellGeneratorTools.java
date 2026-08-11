@@ -127,6 +127,7 @@ public class ShellGeneratorTools {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("serverInjectorTypes", GeneratorCatalog.getServerInjectorMap());
         data.put("serverProtocolInjectorTypes", GeneratorCatalog.getProtocolInjectorMap());
+        data.put("injectorCapabilities", GeneratorCatalog.getCapabilityDescriptors());
         data.put("packerTypes", PackerRegistry.getHierarchy());
         data.put("packerObfuscationSteps", PackerRegistry.getPackerObfuscationStepsMap());
         data.put("packerCompatibility", PackerRegistry.getCompatibilityMap());
@@ -426,6 +427,7 @@ public class ShellGeneratorTools {
           "reqDisguiseId / respDisguiseId：用户为本次生成选择的请求/响应伪装器 ID，必填。" +
           "headerName / headerValue：http 模式下为必填触发 Header；websocket 模式不使用 Header 门禁。" +
           "serverType：目标应用服务器类型，必填，可通过 getShellGeneratorMeta 获取。" +
+          "serverVersion：能力元数据标记 requiresServerVersion 时必填；TongWeb Valve 使用 6 / 7 / 8。" +
           "shellType：注入器形态，必填，可通过 getShellGeneratorMeta 获取。" +
           "packerType：打包器类型，必填，可通过 getShellGeneratorMeta 获取。" +
           "protocol：http / httpchunk / websocket，由用户选择；" +
@@ -443,6 +445,7 @@ public class ShellGeneratorTools {
             String headerName,
             String headerValue,
             String serverType,
+            String serverVersion,
             String shellType,
             String packerType,
             String protocol,
@@ -464,6 +467,7 @@ public class ShellGeneratorTools {
                 MemoryShellGenerationCommand.builder(reqDisguise, respDisguise)
                         .header(headerName, headerValue)
                         .serverType(serverType)
+                        .serverVersion(serverVersion)
                         .injectorName(shellType)
                         .packerType(packerType)
                         .protocol(protocol)

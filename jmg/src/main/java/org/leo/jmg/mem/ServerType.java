@@ -1,13 +1,12 @@
 package org.leo.jmg.mem;
 
-import java.util.Locale;
-
 /**
  * 应用服务器 / 运行环境类型（与生成器能力目录中的 server 段一致）
  */
 public enum ServerType {
 
     TOMCAT("Tomcat"),
+    JETTY5("Jetty5"),
     JETTY("Jetty"),
     JBOSS("JBoss"),
     JBOSS_AS("JBossAS"),
@@ -16,6 +15,7 @@ public enum ServerType {
     JBOSS_EAP7("JBossEAP7"),
     WILDFLY("Wildfly"),
     RESIN("Resin"),
+    RESIN2("Resin2"),
     GLASSFISH("Glassfish"),
     PAYARA("Payara"),
     WEBLOGIC("WebLogic"),
@@ -25,7 +25,7 @@ public enum ServerType {
     BES("BES"),
     INFORSUITE("InforSuite"),
     TONGWEB("TongWeb"),
-    STRUCT2("Struct2");
+    STRUTS2("Struts2");
 
     private final String value;
 
@@ -38,9 +38,7 @@ public enum ServerType {
         return value;
     }
 
-    /**
-     * 解析 API / 用户输入；大小写不敏感；TongWeb6/7/8 等别名映射到 {@link #TONGWEB}
-     */
+    /** 解析 API / 用户输入，大小写不敏感。 */
     public static ServerType fromString(String s) {
         if (s == null || s.trim().isEmpty()) {
             return null;
@@ -50,10 +48,6 @@ public enum ServerType {
             if (e.value.equalsIgnoreCase(t)) {
                 return e;
             }
-        }
-        String lower = t.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("tongweb")) {
-            return TONGWEB;
         }
         return null;
     }

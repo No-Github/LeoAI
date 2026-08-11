@@ -29,6 +29,8 @@ public class ShellGeneratorConfig {
     private String protocol = "http";
     // 中间件类型（用于注入器，需要用户明确指定宿主机中间件类型）
     private String serverType;
+    // 中间件主版本；当前用于选择 TongWeb 6/7/8 的容器接口包名。
+    private String serverVersion;
     private String shellType;
     private String packerType;
     private TargetJavaVersion targetJavaVersion = TargetJavaVersion.AUTO;
@@ -43,8 +45,14 @@ public class ShellGeneratorConfig {
     private String requestedInjectorClassName;
     private String urlPattern = "/*";
     private boolean isAbstractTranslet = false;
-    /** 部分 Packer（如 ScriptEngine）是否绕过 Java 模块封装 */
+    /** 是否显式启用 Java 模块兼容；目标为 JDK 9+ 时生成请求会自动启用。 */
     private boolean byPassJavaModule = false;
+    /** 是否为 Shell 与 Injector 类名追加 Lambda 风格后缀。 */
+    private boolean lambdaSuffix = false;
+    /** 是否在 Injector 的静态初始化块中自动调用无参构造器。 */
+    private boolean staticInitialize = false;
+    /** 是否移除调试属性、注解和无关类元数据以缩小生成物。 */
+    private boolean shrink = true;
 
     /**
      * 用户自定义 JSP/JSPX 混淆步骤 ID 列表（有序）。
@@ -221,6 +229,14 @@ public class ShellGeneratorConfig {
             return this;
         }
 
+        /** 设置目标中间件主版本，例如 TongWeb Valve 使用 6、7 或 8。 */
+        public Builder serverVersion(String serverVersion) {
+            config.serverVersion = serverVersion == null
+                    ? null
+                    : serverVersion.trim();
+            return this;
+        }
+
         /**
          * 注入器形态名称，如 FilterInjector，须为该 serverType 下支持的注入器名
          */
@@ -271,6 +287,21 @@ public class ShellGeneratorConfig {
 
         public Builder byPassJavaModule(boolean byPassJavaModule) {
             config.byPassJavaModule = byPassJavaModule;
+            return this;
+        }
+
+        public Builder lambdaSuffix(boolean lambdaSuffix) {
+            config.lambdaSuffix = lambdaSuffix;
+            return this;
+        }
+
+        public Builder staticInitialize(boolean staticInitialize) {
+            config.staticInitialize = staticInitialize;
+            return this;
+        }
+
+        public Builder shrink(boolean shrink) {
+            config.shrink = shrink;
             return this;
         }
 
@@ -355,6 +386,10 @@ public class ShellGeneratorConfig {
         return serverType;
     }
 
+    public String getServerVersion() {
+        return serverVersion;
+    }
+
     public String getShellType() {
         return shellType;
     }
@@ -377,6 +412,18 @@ public class ShellGeneratorConfig {
 
     public boolean isByPassJavaModule() {
         return byPassJavaModule;
+    }
+
+    public boolean isLambdaSuffix() {
+        return lambdaSuffix;
+    }
+
+    public boolean isStaticInitialize() {
+        return staticInitialize;
+    }
+
+    public boolean isShrink() {
+        return shrink;
     }
 
     public List<String> getJspObfuscationSteps() {

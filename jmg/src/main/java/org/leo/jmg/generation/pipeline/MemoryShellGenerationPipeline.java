@@ -1,6 +1,5 @@
 package org.leo.jmg.generation.pipeline;
 
-import org.leo.core.util.asm.ClassFileMinimizer;
 import org.leo.jmg.generation.GenerationPlan;
 import org.leo.jmg.generation.GenerationRequest;
 import org.leo.jmg.generation.GenerationWorkspace;
@@ -50,8 +49,7 @@ public final class MemoryShellGenerationPipeline {
 
         InjectorGenerator injectorGenerator = new InjectorGenerator();
         workspace.setInjectorClassBytes(
-                ClassFileMinimizer.transform(
-                        injectorGenerator.makeInjector(plan, workspace)));
+                injectorGenerator.makeInjector(plan, workspace));
         return workspace.getInjectorClassBytes();
     }
 }

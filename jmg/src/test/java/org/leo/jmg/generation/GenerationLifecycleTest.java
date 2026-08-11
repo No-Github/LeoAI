@@ -1,5 +1,7 @@
 package org.leo.jmg.generation;
 
+import javassist.ClassPool;
+import javassist.CtClass;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
 import org.leo.core.util.request.GenerationRandom;
@@ -10,6 +12,7 @@ import org.leo.jmg.TransportProtocol;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.io.ByteArrayInputStream;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GenerationLifecycleTest {
 
@@ -137,6 +141,66 @@ class GenerationLifecycleTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void lambdaModuleBypassAndStaticInitializationAreAppliedToInjector() throws Exception {
+        GenerationRequest request = GenerationRequest.from(injectorConfig()
+                .targetJavaVersion("9+")
+                .shellClassName("sample.Payload")
+                .injectorClassName("sample.Loader")
+                .lambdaSuffix(true)
+                .staticInitialize(true)
+                .obfuscationSeed(127L)
+                .build());
+
+        assertFalse(request.isBypassJavaModule());
+        assertTrue(request.isBypassJavaModuleEffective());
+
+        GenerationResult result = new ShellGenerator(request)
+                .generateFormattedInjector();
+        assertEquals("sample.Payload$Proxy0$$Lambda$1",
+                result.getShellClassName());
+        assertEquals("sample.Loader$Proxy0$$Lambda$1",
+                result.getInjectorClassName());
+
+        CtClass injector = new ClassPool(null).makeClass(
+                new ByteArrayInputStream(result.getInjectorClassBytes()));
+        try {
+            assertNotNull(injector.getDeclaredMethod("bypassJavaModule"));
+            assertNotNull(injector.getClassInitializer());
+        } finally {
+            injector.detach();
+        }
+    }
+
+    @Test
+    void lambdaSuffixIsIdempotentForCustomNames() {
+        GenerationRequest request = GenerationRequest.from(injectorConfig()
+                .shellClassName("sample.Payload$Proxy0$$Lambda$1")
+                .injectorClassName("sample.Loader$Proxy0$$Lambda$1")
+                .lambdaSuffix(true)
+                .build());
+        GenerationWorkspace workspace = GenerationWorkspace.create(request);
+
+        workspace.resolveClassNames();
+        workspace.resolveClassNames();
+
+        assertEquals("sample.Payload$Proxy0$$Lambda$1",
+                workspace.getShellClassName());
+        assertEquals("sample.Loader$Proxy0$$Lambda$1",
+                workspace.getInjectorClassName());
+    }
+
+    @Test
+    void agentMountRejectsMisleadingStaticInitialization() {
+        assertThrows(IllegalArgumentException.class, () ->
+                GenerationPlan.forInjector(GenerationRequest.from(injectorConfig()
+                        .protocol("http")
+                        .shellType("AgentFilterChain")
+                        .packerType("AgentJarBase64")
+                        .staticInitialize(true)
+                        .build())));
     }
 
     private static void assertEquivalent(GenerationResult expected,

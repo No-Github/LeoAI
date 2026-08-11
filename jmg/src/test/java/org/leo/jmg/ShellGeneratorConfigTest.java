@@ -13,7 +13,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -104,8 +103,10 @@ class ShellGeneratorConfigTest {
         assertEquals("org.leo.jmg.mem.shell.http.LeoValveChunkTpl",
                 GeneratorCatalog.resolve(
                         "Tomcat", "ValveInjector", "httpchunk").getShellTemplateName());
-        assertNull(GeneratorCatalog.resolve(
-                "InforSuite", "ListenerInjector", "httpchunk"));
+        assertEquals("org.leo.jmg.mem.shell.http.LeoListenerChunkTpl",
+                GeneratorCatalog.resolve(
+                        "InforSuite", "ListenerInjector", "httpchunk")
+                        .getShellTemplateName());
     }
 
     @Test
@@ -173,14 +174,14 @@ class ShellGeneratorConfigTest {
     }
 
     @Test
-    void parsesExplicitTargetJavaVersionsAndDefaultsToAuto() {
+    void parsesCanonicalTargetJavaVersionsAndDefaultsToAuto() {
         assertEquals(TargetJavaVersion.AUTO, builder().build().getTargetJavaVersion());
         assertEquals(TargetJavaVersion.JDK_6,
-                builder().targetJavaVersion("1.6").build().getTargetJavaVersion());
+                builder().targetJavaVersion("6").build().getTargetJavaVersion());
         assertEquals(TargetJavaVersion.JDK_8,
-                builder().targetJavaVersion("jdk_8").build().getTargetJavaVersion());
+                builder().targetJavaVersion("8").build().getTargetJavaVersion());
         assertEquals(TargetJavaVersion.JDK_9_PLUS,
-                builder().targetJavaVersion("11").build().getTargetJavaVersion());
+                builder().targetJavaVersion("9+").build().getTargetJavaVersion());
         assertEquals(TargetJavaVersion.JDK_17_PLUS,
                 builder().targetJavaVersion("17+").build().getTargetJavaVersion());
         assertThrows(IllegalArgumentException.class,
@@ -211,6 +212,23 @@ class ShellGeneratorConfigTest {
         assertEquals(first.getCoreClassName(), second.getCoreClassName());
         assertEquals(first.getMethodAction(), second.getMethodAction());
         assertEquals(first.getFieldParams(), second.getFieldParams());
+    }
+
+    @Test
+    void tongWebValveRequiresKnownMajorVersion() {
+        ShellGeneratorConfig.Builder tongWebValve = builder()
+                .header("X-Test", "secret")
+                .serverType("TongWeb")
+                .shellType("ValveInjector")
+                .packerType("DefaultBase64");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(tongWebValve.build()));
+        assertDoesNotThrow(() -> validateInjector(tongWebValve.serverVersion("6").build()));
+        assertDoesNotThrow(() -> validateInjector(tongWebValve.serverVersion("7").build()));
+        assertDoesNotThrow(() -> validateInjector(tongWebValve.serverVersion("8").build()));
+        assertThrows(IllegalArgumentException.class,
+                () -> validateInjector(tongWebValve.serverVersion("9").build()));
     }
 
     private ShellGeneratorConfig.Builder builder() {

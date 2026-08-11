@@ -111,6 +111,7 @@ public class LeoListenerChunkTpl extends ClassLoader implements ServletRequestLi
         }
     }
 
+    @SuppressWarnings("PMD.UnusedFormalParameter")
     private Object getResponseFromRequest(Object request) throws Exception {
         return null;
     }

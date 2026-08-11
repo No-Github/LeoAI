@@ -24,6 +24,7 @@ public final class GenerationRequest {
     private final int responseCode;
     private final TransportProtocol protocol;
     private final String serverType;
+    private final String serverVersion;
     private final String injectorName;
     private final String packerType;
     private final TargetJavaVersion targetJavaVersion;
@@ -34,7 +35,10 @@ public final class GenerationRequest {
     private final String requestedInjectorClassName;
     private final String urlPattern;
     private final boolean abstractTransletRequested;
-    private final boolean bypassJavaModule;
+    private final boolean bypassJavaModuleRequested;
+    private final boolean lambdaSuffix;
+    private final boolean staticInitialize;
+    private final boolean shrink;
     private final List<String> jspObfuscationSteps;
     private final long obfuscationSeed;
     private final String customJspTemplate;
@@ -55,6 +59,7 @@ public final class GenerationRequest {
         this.responseCode = config.getRespCode();
         this.protocol = TransportProtocol.parse(config.getProtocol());
         this.serverType = config.getServerType();
+        this.serverVersion = config.getServerVersion();
         this.injectorName = config.getShellType();
         this.packerType = config.getPackerType();
         this.targetJavaVersion = config.getTargetJavaVersion();
@@ -65,7 +70,10 @@ public final class GenerationRequest {
         this.requestedInjectorClassName = config.getRequestedInjectorClassName();
         this.urlPattern = config.getUrlPattern();
         this.abstractTransletRequested = config.isAbstractTranslet();
-        this.bypassJavaModule = config.isByPassJavaModule();
+        this.bypassJavaModuleRequested = config.isByPassJavaModule();
+        this.lambdaSuffix = config.isLambdaSuffix();
+        this.staticInitialize = config.isStaticInitialize();
+        this.shrink = config.isShrink();
         List<String> steps = config.getJspObfuscationSteps();
         this.jspObfuscationSteps = steps == null
                 ? null
@@ -128,6 +136,10 @@ public final class GenerationRequest {
         return serverType;
     }
 
+    public String getServerVersion() {
+        return serverVersion;
+    }
+
     public String getInjectorName() {
         return injectorName;
     }
@@ -173,7 +185,23 @@ public final class GenerationRequest {
     }
 
     public boolean isBypassJavaModule() {
-        return bypassJavaModule;
+        return bypassJavaModuleRequested;
+    }
+
+    public boolean isBypassJavaModuleEffective() {
+        return bypassJavaModuleRequested || targetJavaVersion.isAtLeast(9);
+    }
+
+    public boolean isLambdaSuffix() {
+        return lambdaSuffix;
+    }
+
+    public boolean isStaticInitialize() {
+        return staticInitialize;
+    }
+
+    public boolean isShrink() {
+        return shrink;
     }
 
     public List<String> getJspObfuscationSteps() {

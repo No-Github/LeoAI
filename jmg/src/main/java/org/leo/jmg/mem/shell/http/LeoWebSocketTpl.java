@@ -14,8 +14,6 @@ public class LeoWebSocketTpl extends javax.websocket.Endpoint implements javax.w
 
     private static String coreClassName;
     private static String coreClass;
-    private static int respCode;
-
     private javax.websocket.Session session;
     private final java.util.concurrent.ConcurrentHashMap<Long, Object[]> inboundMessages =
             new java.util.concurrent.ConcurrentHashMap<Long, Object[]>();

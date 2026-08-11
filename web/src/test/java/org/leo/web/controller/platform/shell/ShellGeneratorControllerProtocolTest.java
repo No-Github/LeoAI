@@ -1,5 +1,6 @@
 package org.leo.web.controller.platform.shell;
 
+import org.leo.jmg.generation.GeneratedClassArtifact;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
@@ -40,6 +41,39 @@ class ShellGeneratorControllerProtocolTest {
 
         assertEquals(List.of("http", "httpchunk"), protocols.get("webshell"));
         assertEquals(List.of("http", "httpchunk", "websocket"), protocols.get("memoryshell"));
+        assertFalse(((List<?>) data.get("injectorCapabilities")).isEmpty());
+        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
+                        && "ValveInjector".equals(item.get("injectorName"))
+                        && Boolean.TRUE.equals(item.get("requiresServerVersion"))));
+        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
+                        && "AgentFilterChain".equals(item.get("injectorName"))
+                        && List.of("AgentJarBase64").equals(item.get("supportedPackers"))
+                        && Boolean.FALSE.equals(item.get("supportsStaticInitialize"))
+                        && Boolean.FALSE.equals(item.get("supportsUrlPattern"))));
+        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "Jetty".equals(item.get("serverType"))
+                        && "HandlerInjector".equals(item.get("injectorName"))
+                        && List.of("7-10", "11").equals(item.get("serverVersions"))));
+        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "Tomcat".equals(item.get("serverType"))
+                        && "ByPassNginxWebSocketInjector".equals(item.get("injectorName"))
+                        && Boolean.TRUE.equals(item.get("supportsHeaderGate"))));
+        assertTrue(((List<?>) data.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "Tomcat".equals(item.get("serverType"))
+                        && "UpgradeInjector".equals(item.get("injectorName"))
+                        && List.of("Connection: Upgrade", "Upgrade: ${shellClassName}")
+                        .equals(item.get("activationHeaders"))));
+        assertTrue(((Map<?, ?>) data.get("packerCompatibility"))
+                .containsKey("AgentJarBase64"));
+        assertTrue(((Map<?, ?>) data.get("memoryShellBuildOptions"))
+                .containsKey("lambdaSuffix"));
     }
 
     @Test
@@ -57,6 +91,7 @@ class ShellGeneratorControllerProtocolTest {
         assertEquals("websocket", data.get("protocol"));
         assertEquals("WebSocket endpoint: /socket", data.get("headerConfig"));
         assertFalse(String.valueOf(data.get("code")).isBlank());
+        assertGeneratedClassArtifacts(data);
     }
 
     @Test
@@ -67,12 +102,23 @@ class ShellGeneratorControllerProtocolTest {
                 "shellType", "FilterInjector",
                 "packerType", "DefaultBase64",
                 "headerName", "X-Test",
-                "headerValue", "secret"
+                "headerValue", "secret",
+                "targetJavaVersion", "9+",
+                "lambdaSuffix", true,
+                "staticInitialize", true,
+                "shrink", false
         ));
         assertEquals(200, chunked.get("code"));
         Map<?, ?> chunkedData = (Map<?, ?>) chunked.get("data");
         assertEquals("httpchunk", chunkedData.get("protocol"));
+        assertEquals(true, chunkedData.get("byPassJavaModule"));
+        assertEquals(true, chunkedData.get("lambdaSuffix"));
+        assertEquals(true, chunkedData.get("staticInitialize"));
+        assertEquals(false, chunkedData.get("shrink"));
+        assertTrue(String.valueOf(chunkedData.get("injectorClassName"))
+                .contains("$Lambda$"));
         assertFalse(String.valueOf(chunkedData.get("code")).isBlank());
+        assertGeneratedClassArtifacts(chunkedData);
 
         HashMap<String, Object> websocketJsp = controller.generateWebShell(params(
                 "protocol", "websocket",
@@ -80,6 +126,30 @@ class ShellGeneratorControllerProtocolTest {
         ));
         assertEquals(400, websocketJsp.get("code"));
         assertTrue(String.valueOf(websocketJsp.get("msg")).contains("内存构建"));
+    }
+
+    @Test
+    void tongWebValveRequiresAndReturnsServerVersion() {
+        HashMap<String, Object> missingVersion = controller.generateMemoryShell(params(
+                "serverType", "TongWeb",
+                "shellType", "ValveInjector",
+                "packerType", "DefaultBase64",
+                "headerName", "X-Test",
+                "headerValue", "secret"
+        ));
+        assertEquals(400, missingVersion.get("code"));
+
+        HashMap<String, Object> generated = controller.generateMemoryShell(params(
+                "serverType", "TongWeb",
+                "serverVersion", "8",
+                "shellType", "ValveInjector",
+                "packerType", "DefaultBase64",
+                "headerName", "X-Test",
+                "headerValue", "secret"
+        ));
+        assertEquals(200, generated.get("code"));
+        Map<?, ?> data = (Map<?, ?>) generated.get("data");
+        assertEquals("8", data.get("serverVersion"));
     }
 
     private HashMap<String, Object> params(Object... values) {
@@ -105,5 +175,15 @@ class ShellGeneratorControllerProtocolTest {
         disguise.setEncodeBody(
                 "public byte[] encode(java.util.HashMap data){return new byte[0];}");
         return disguise;
+    }
+
+    private static void assertGeneratedClassArtifacts(Map<?, ?> data) {
+        List<?> artifacts = (List<?>) data.get("classArtifacts");
+        assertEquals(3, artifacts.size());
+        GeneratedClassArtifact injector = (GeneratedClassArtifact) artifacts.get(2);
+        assertEquals("injector", injector.getRole());
+        assertEquals("base64", injector.getContentEncoding());
+        assertEquals(64, injector.getSha256().length());
+        assertTrue(injector.getSizeBytes() > 0);
     }
 }

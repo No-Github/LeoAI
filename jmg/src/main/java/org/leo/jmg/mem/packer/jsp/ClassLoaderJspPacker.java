@@ -27,7 +27,7 @@ public class ClassLoaderJspPacker implements Packer {
     @Override
     public String pack(ClassPackerConfig config) {
         try (GenerationRandom.Scope ignored = GenerationRandom.withSeed(config.getObfuscationSeed())) {
-            // AI 生成的自定义模板优先；未提供时回退到内置模板
+            // 自定义模板优先，否则使用内置模板。
             boolean custom = config.getCustomTemplate() != null
                     && !config.getCustomTemplate().trim().isEmpty();
             String tpl = custom

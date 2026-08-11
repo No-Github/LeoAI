@@ -67,6 +67,7 @@ public class LeoListenerTpl extends ClassLoader implements ServletRequestListene
         }
     }
 
+    @SuppressWarnings("PMD.UnusedFormalParameter")
     private Object getResponseFromRequest(Object request) throws Exception {
         return null;
     }

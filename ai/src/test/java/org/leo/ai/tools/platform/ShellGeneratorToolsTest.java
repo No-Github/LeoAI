@@ -53,6 +53,16 @@ class ShellGeneratorToolsTest {
 
         Map<String, Object> metadata = tools.getShellGeneratorMeta();
         assertTrue(((Map<?, ?>) metadata.get("runtimeGenerators")).containsKey("php"));
+        assertTrue(((List<?>) metadata.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
+                        && "ValveInjector".equals(item.get("injectorName"))
+                        && Boolean.TRUE.equals(item.get("requiresServerVersion"))));
+        assertTrue(((List<?>) metadata.get("injectorCapabilities")).stream()
+                .map(Map.class::cast)
+                .anyMatch(item -> "TongWeb".equals(item.get("serverType"))
+                        && "AgentContextValve".equals(item.get("injectorName"))
+                        && List.of("AgentJarBase64").equals(item.get("supportedPackers"))));
 
         Map<String, Object> result = tools.generatePhpWebShell(
                 "req", "resp", "http", "portable", "X-Test", "secret", 202, "seed-a");

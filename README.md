@@ -184,9 +184,13 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 ### Shell 生成器
 
 #### 内存马生成
-- 支持类型：Filter、Servlet、Listener、Valve、Interceptor、Controller、WebSocket
-- 支持中间件：Tomcat、Jetty、JBossAS、JBossEAP6、JBossEAP7、Wildfly、Undertow、Resin、Glassfish、Payara、WebLogic、WebSphere、SpringWebMVC、Apusic、BES、InforSuite、TongWeb、Struct2（共 18 种）
-- 表达式注入 Packer：OGNL、SpEL、EL、Groovy、Freemarker、MVEL、BeanShell、Velocity、Thymeleaf、JEXL、Jinjava、JXPath、Rhino、Aviator、ScriptEngine、BCEL、Translet、XmlDecoder、H2、Base64、Hex 等（共 41 种）
+- 支持类型：Filter、Servlet、Listener、Valve、Interceptor、Controller、WebSocket、HTTP UpgradeProtocol
+- 支持中间件：Tomcat、Jetty5、Jetty、JBoss/JBossAS、JBossEAP6、JBossEAP7、Wildfly、Undertow、Resin2、Resin、Glassfish、Payara、WebLogic、WebSphere、SpringWebMVC、Apusic、BES、InforSuite、TongWeb、Struts2（共 21 种）
+- TongWeb Valve 按主版本适配运行时契约：6 → `com.tongweb.web.thor`、7 → `com.tongweb.catalina`、8 → `com.tongweb.server`；界面与 API 会要求选择 `serverVersion`
+- Agent 挂载已覆盖 Tomcat/JBoss/GlassFish/Payara/InforSuite/TongWeb 的 FilterChain 与 ContextValve、Jetty Handler、Undertow ServletHandler、Resin FilterChain、WebLogic ServletContext、WebSphere FilterManager、Spring MVC FrameworkServlet、Apusic 和 BES；Jetty 7–11 另提供普通根 Handler 挂载；Tomcat WebSocket 提供反向代理兼容挂载，并以单类 JDK Proxy Valve 补齐 Upgrade 请求；Tomcat 8.5–11 还提供 Connector 级 `UpgradeInjector`，生成结果会给出 `Connection: Upgrade` 与动态 `Upgrade: <shellClassName>` 激活头；保留 Header 门禁、自定义响应码、HTTP Chunk、Lambda 类名后缀等构建能力
+- `AgentJarBase64` 产物含 `premain`/`agentmain` 清单，可用于 `-javaagent` 与 Attach API
+- Packer：OGNL、SpEL、EL、Groovy、Freemarker、MVEL、BeanShell、Velocity、Thymeleaf、JEXL、Jinjava、JXPath、Rhino、Aviator、ScriptEngine、BCEL、Translet、XmlDecoder、H2、Base64、Hex、JarBase64、AgentJarBase64 等（共 46 种）
+- 构建策略：Lambda 风格类名后缀、Injector 静态初始化、Class 瘦身、JDK 9+ 自动模块兼容；能力元数据会隐藏全局挂载点的 URL 配置，并对 Agent 挂载关闭静态初始化；Packer 可同时取得 Core、Shell、Injector 三阶段类条目
 
 #### WebShell 生成
 - 支持格式：JSP、JSPX、Groovy
@@ -194,6 +198,9 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 <img src="docs/images/screenshot-script-builder.png" alt="脚本构建器" width="800" />
 
 *脚本构建：通信协议、请求/响应伪装、混淆流水线和结果预览*
+
+每次 Java 构建除最终 Packer 文本外，还会生成可单独下载的 Core、Shell、Injector
+Class 产物；界面展示各文件大小，服务端同时返回 SHA-256 摘要用于完整性校验。
 
 ### 指纹与识别规则
 
@@ -632,6 +639,7 @@ AI 副驾提供侦察、凭据、提权、横向移动和 Web 容器检查等快
 3. 选择通信协议：JSP/JSPX WebShell 支持 HTTP、HTTP Chunked；内存构建支持 HTTP、HTTP Chunked、WebSocket
 4. 内存构建按后端能力矩阵选择目标中间件和注入器；HTTP Chunk 使用普通注入器形态名，WebSocket 使用端点路径
 5. 配置连接密钥，点击「**生成**」
+6. 生成完成后可从「**Class 产物**」菜单分别下载 Core、Shell 与 Injector；WebShell 构建提供 Core Class
 
 ### 流量伪装
 

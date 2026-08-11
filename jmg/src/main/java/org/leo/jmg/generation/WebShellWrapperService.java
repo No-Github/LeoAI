@@ -31,7 +31,7 @@ public final class WebShellWrapperService {
         int status = responseCode == null ? 200 : responseCode.intValue();
         validateResponseCode(status, artifact.getProtocol());
 
-        String content = render(contract, artifact, template, status);
+        String content = render(artifact, template, status);
         content = obfuscate(contract, artifact, content, obfuscationSteps);
 
         Map<String, Object> metadata = new LinkedHashMap<String, Object>();
@@ -48,8 +48,7 @@ public final class WebShellWrapperService {
         return new WebShellWrapperResult(content, metadata);
     }
 
-    private String render(WebShellWrapperContract contract,
-                          CoreArtifact artifact,
+    private String render(CoreArtifact artifact,
                           String template,
                           int responseCode) throws Exception {
         String payload = gzipBase36(artifact.getBytecode());
