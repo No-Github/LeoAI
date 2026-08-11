@@ -38,12 +38,12 @@ public class ResponseUtil {
     }
 
     private static String getCommonMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response = null;" +
+        return "{Object response = null;" +
                 "        try {" +
-                "            response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1, \"request\"), \"response\");" +
+                "            response = getFieldValue(getFieldValue($1, \"request\"), \"response\");" +
                 "        } catch (Exception ex) {" +
                 "            try {" +
-                "                response = (javax.servlet.http.HttpServletResponse) getFieldValue($1, \"response\");" +
+                "                response = getFieldValue($1, \"response\");" +
                 "            } catch (Exception ex1) {" +
                 "            }" +
                 "        }" +
@@ -51,56 +51,56 @@ public class ResponseUtil {
     }
 
     private static String getResinMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;" +
-                "        response = (javax.servlet.http.HttpServletResponse) getFieldValue($1, \"_response\");" +
+        return "{Object response;" +
+                "        response = getFieldValue($1, \"_response\");" +
                 "        return response;}";
     }
 
     private static String getJettyMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;\n" +
+        return "{Object response;\n" +
                 "        try{\n" +
-                "            response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1,\"_channel\"),\"_response\");\n" +
+                "            response = getFieldValue(getFieldValue($1,\"_channel\"),\"_response\");\n" +
                 "        }catch (Exception e){\n" +
                 "            try{\n" +
-                "                response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1,\"_connection\"),\"_response\");\n" +
+                "                response = getFieldValue(getFieldValue($1,\"_connection\"),\"_response\");\n" +
                 "            }catch (Exception ex){\n" +
-                "                response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue(getFieldValue($1,\"_servletChannel\"),\"_response\"),\"_servletApiResponse\");\n" +
+                "                response = getFieldValue(getFieldValue(getFieldValue($1,\"_servletChannel\"),\"_response\"),\"_servletApiResponse\");\n" +
                 "            }\n" +
                 "        }\n" +
                 "        return response;}";
     }
 
     private static String getJetty5MethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;"
-                + "try{response=(javax.servlet.http.HttpServletResponse)getFieldValue($1,\"_servletHttpResponse\");}"
-                + "catch(Exception e){try{response=(javax.servlet.http.HttpServletResponse)getFieldValue(getFieldValue($1,\"_request\"),\"_servletHttpResponse\");}"
-                + "catch(Exception ex){response=(javax.servlet.http.HttpServletResponse)getFieldValue(getFieldValue($1,\"request\"),\"_servletHttpResponse\");}}"
+        return "{Object response;"
+                + "try{response=getFieldValue($1,\"_servletHttpResponse\");}"
+                + "catch(Exception e){try{response=getFieldValue(getFieldValue($1,\"_request\"),\"_servletHttpResponse\");}"
+                + "catch(Exception ex){response=getFieldValue(getFieldValue($1,\"request\"),\"_servletHttpResponse\");}}"
                 + "return response;}";
     }
 
     private static String getGlassFishMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;"
-                + "try{response=(javax.servlet.http.HttpServletResponse)getFieldValue(getFieldValue($1,\"request\"),\"response\");}"
-                + "catch(Exception e){try{response=(javax.servlet.http.HttpServletResponse)getFieldValue($1,\"response\");}"
-                + "catch(Exception ex){response=(javax.servlet.http.HttpServletResponse)getFieldValue(getFieldValue($1,\"reqFacHelper\"),\"response\");}}"
+        return "{Object response;"
+                + "try{response=getFieldValue(getFieldValue($1,\"request\"),\"response\");}"
+                + "catch(Exception e){try{response=getFieldValue($1,\"response\");}"
+                + "catch(Exception ex){response=getFieldValue(getFieldValue($1,\"reqFacHelper\"),\"response\");}}"
                 + "return response;}";
     }
 
     private static String getWebsphereMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;" +
-                "        response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1, \"_connContext\"), \"_response\");" +
+        return "{Object response;" +
+                "        response = getFieldValue(getFieldValue($1, \"_connContext\"), \"_response\");" +
                 "        return response;}";
     }
 
 
     private static String getUndertowMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response = null;\n" +
+        return "{Object response = null;\n" +
                 "java.util.Map map = (java.util.Map) getFieldValue(getFieldValue($1, \"exchange\"), \"attachments\");\n" +
                 "Object[] keys = map.keySet().toArray();\n" +
                 "for (int i = 0; i < keys.length; i++) {\n" +
                 "    Object key = keys[i];\n" +
                 "    if (map.get(key).toString().contains(\"ServletRequestContext\")) {\n" +
-                "        response = (javax.servlet.http.HttpServletResponse) getFieldValue(map.get(key), \"servletResponse\");\n" +
+                "        response = getFieldValue(map.get(key), \"servletResponse\");\n" +
                 "        break;\n" +
                 "    }\n" +
                 "}\n" +
@@ -109,12 +109,12 @@ public class ResponseUtil {
     }
 
     private static String getTongwebMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response = null;" +
+        return "{Object response = null;" +
                 "        try {" +
-                "            response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1, \"request\"), \"response\");" +
+                "            response = getFieldValue(getFieldValue($1, \"request\"), \"response\");" +
                 "        } catch (Exception ex) {" +
                 "            try {" +
-                "                response = (javax.servlet.http.HttpServletResponse) getFieldValue($1, \"response\");" +
+                "                response = getFieldValue($1, \"response\");" +
                 "            } catch (Exception ex1) {" +
                 "            }" +
                 "        }\n" +
@@ -122,8 +122,8 @@ public class ResponseUtil {
     }
 
     private static String getApusicMethodBody() {
-        return "{javax.servlet.http.HttpServletResponse response;" +
-                "        response = (javax.servlet.http.HttpServletResponse) getFieldValue(getFieldValue($1, \"http\"),\"response\");" +
+        return "{Object response;" +
+                "        response = getFieldValue(getFieldValue($1, \"http\"),\"response\");" +
                 "        return response;}";
     }
 

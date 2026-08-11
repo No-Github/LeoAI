@@ -129,6 +129,24 @@ class ShellGeneratorControllerProtocolTest {
     }
 
     @Test
+    void generatesTomcatListenerWithoutLegacyServletApiOnWebClasspath() {
+        HashMap<String, Object> generated = controller.generateMemoryShell(params(
+                "protocol", "http",
+                "serverType", "Tomcat",
+                "shellType", "ListenerInjector",
+                "packerType", "DefaultBase64",
+                "servletNamespace", "jakarta",
+                "headerName", "X-Test",
+                "headerValue", "secret"
+        ));
+
+        assertEquals(200, generated.get("code"), String.valueOf(generated.get("msg")));
+        Map<?, ?> data = (Map<?, ?>) generated.get("data");
+        assertEquals("jakarta", data.get("servletNamespace"));
+        assertGeneratedClassArtifacts(data);
+    }
+
+    @Test
     void tongWebValveRequiresAndReturnsServerVersion() {
         HashMap<String, Object> missingVersion = controller.generateMemoryShell(params(
                 "serverType", "TongWeb",
