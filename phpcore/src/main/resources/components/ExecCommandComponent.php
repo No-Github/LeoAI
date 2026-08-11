@@ -222,12 +222,12 @@ $createFifo = static function ($path) use ($available, $findCommand) {
     return false;
 };
 $selectShell = static function () {
-    foreach (['/bin/sh', '/bin/bash', '/bin/zsh', '/bin/ksh'] as $candidate) {
-        if (is_file($candidate) && is_executable($candidate)) return $candidate;
-    }
     $configured = getenv('SHELL');
     if ($configured !== false && strpos($configured, "\0") === false
         && is_file($configured) && is_executable($configured)) return $configured;
+    foreach (['/bin/bash', '/bin/zsh', '/bin/ksh', '/bin/sh'] as $candidate) {
+        if (is_file($candidate) && is_executable($candidate)) return $candidate;
+    }
     return null;
 };
 $launchDetached = static function ($runner, $useProcessGroup) use ($capture, $findCommand) {
@@ -277,8 +277,7 @@ $startPty = static function ($paths, $cols, $rows) use (
             'resizable' => !empty($candidate['resizable']),
             'backendFailures' => $failures,
             'pid' => $started['pid'], 'processGroup' => $started['processGroup'],
-            'readOffset' => 0, 'cols' => $cols, 'rows' => $rows,
-            'active' => true, 'createdAt' => time(), 'lastAccess' => time()
+            'readOffset' => 0, 'active' => true
         ];
         $failures[] = $candidate['backend'];
         $stopPty(['pty' => true, 'pid' => $started['pid'],
@@ -326,8 +325,7 @@ $newCommandState = static function ($backendFailures = []) {
         'pty' => false, 'resizable' => false,
         'backendFailures' => is_array($backendFailures) ? $backendFailures : [],
         'cwd' => $cwd, 'previousCwd' => '', 'buffer' => '', 'escape' => false,
-        'skipLf' => false, 'active' => true, 'createdAt' => time(),
-        'lastAccess' => time(), 'cols' => 80, 'rows' => 24
+        'skipLf' => false, 'active' => true
     ];
 };
 $appendOutput = static function ($path, $data) {
@@ -462,7 +460,7 @@ $cleanup = static function ($excludeKey) use (
 
 return [
     'id' => 'ExecCommandComponent',
-    'version' => '2.1.0',
+    'version' => '2.3.0',
     'handle' => static function ($action, $params) use (
         $get, $baseDirectory, $sessionPaths, $loadState, $saveState, $startPty,
         $writePty, $readPty, $isAlive, $stopPty, $removeSessionFiles,
@@ -493,13 +491,13 @@ return [
                     'missing' => true, 'instanceId' => $instanceId];
                 $data = !empty($state['pty']) ? $readPty($paths['output'], $state) : $readOutput($paths['output']);
                 $alive = !empty($state['pty']) ? $isAlive($state['pid']) : !empty($state['active']);
-                $state['active'] = $alive; $state['lastAccess'] = time(); $saveState($paths['state'], $state);
+                $state['active'] = $alive; $saveState($paths['state'], $state);
                 $exitCode = is_file($paths['exit']) ? (int)trim((string)@file_get_contents($paths['exit'])) : null;
                 return [
                     'code' => 200, 'data' => leo_binary($data), 'alive' => $alive,
                     'pty' => !empty($state['pty']), 'resizable' => !empty($state['resizable']),
                     'backend' => $state['backend'], 'exitCode' => $exitCode,
-                    'instanceId' => $instanceId,
+                    'instanceId' => $instanceId, 'longPolling' => false,
                     'backendFailures' => isset($state['backendFailures']) ? $state['backendFailures'] : []
                 ];
             }
@@ -512,7 +510,6 @@ return [
                 $cols = max(20, min(500, (int)$match[1])); $rows = max(5, min(200, (int)$match[2]));
                 $resizable = !empty($state['resizable']);
                 if ($resizable) @file_put_contents($paths['size'], $cols . ',' . $rows, LOCK_EX);
-                $state['cols'] = $cols; $state['rows'] = $rows; $state['lastAccess'] = time();
                 $saveState($paths['state'], $state);
                 return [
                     'code' => 200, 'cols' => $cols, 'rows' => $rows,
@@ -538,6 +535,7 @@ return [
                     'code' => 200, 'initialized' => true, 'alive' => true,
                     'pty' => !empty($state['pty']), 'resizable' => !empty($state['resizable']),
                     'backend' => $state['backend'], 'instanceId' => $instanceId,
+                    'longPolling' => false,
                     'backendFailures' => isset($state['backendFailures']) ? $state['backendFailures'] : []
                 ];
             }
@@ -548,11 +546,12 @@ return [
             } else {
                 $written = $writeCommand($state, $command, $paths['output']);
             }
-            $state['lastAccess'] = time(); $saveState($paths['state'], $state);
+            $saveState($paths['state'], $state);
             return [
                 'code' => 200, 'written' => $written, 'alive' => !empty($state['active']),
                 'pty' => !empty($state['pty']), 'resizable' => !empty($state['resizable']),
                 'backend' => $state['backend'], 'instanceId' => $instanceId,
+                'longPolling' => false,
                 'backendFailures' => isset($state['backendFailures']) ? $state['backendFailures'] : []
             ];
         } finally {

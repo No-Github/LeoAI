@@ -1,1 +1,0 @@
-import{o as e}from"./auth-CD0l-VXo.js";function t(t){return e.post(`/puppet-node/resource/get`,t)}export{t};

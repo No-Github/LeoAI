@@ -31,8 +31,8 @@ public class WebResearchTools {
             parallelizable = true)
     public Map<String, Object> webSearch(
             @P("搜索关键词") String query,
-            @P(value = "可选域名白名单，如 [\"docs.oracle.com\"]", required = false) List<String> domains,
-            @P(value = "只看最近多少天；0表示不限", required = false, defaultValue = "0") int recencyDays,
+            @P(value = "可选严格域名范围，如 [\"docs.oracle.com\"]；结果仅保留该域及子域", required = false) List<String> domains,
+            @P(value = "时间范围；0或大于365表示不限，1-365向上映射到1/7/31/365天档位", required = false, defaultValue = "0") int recencyDays,
             @P(value = "结果数，1-20；默认 5", required = false, defaultValue = "5") int maxResults) {
         return webService.search(query, domains, recencyDays, maxResults);
     }

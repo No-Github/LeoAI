@@ -4,7 +4,6 @@ import org.leo.core.config.LeoConfig;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
-import org.leo.core.entity.AsyncShellTask;
 import org.leo.core.entity.Puppet;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.HostScopedCapable;
@@ -20,11 +19,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -89,9 +86,6 @@ public class PuppetNodeSession {
 
     // ── 会话级 AI 上下文缓存（跨线程共享）────────────────────────────────────
     private volatile BoundedTtlCache aiContextCache;
-
-    // ── 后台异步 Shell 任务 ───────────────────────────────────────────────────
-    private final List<AsyncShellTask> asyncShellTasks = new CopyOnWriteArrayList<>();
 
     /** 最后活跃时间戳（ms），用于 TTL 清理。 */
     private volatile long lastActiveTime = System.currentTimeMillis();
@@ -453,25 +447,6 @@ public class PuppetNodeSession {
 
     public boolean isAutoAppendRecon()                        { return autoAppendRecon; }
     public void    setAutoAppendRecon(boolean autoAppendRecon) { this.autoAppendRecon = autoAppendRecon; }
-
-    // ── 后台 Shell 任务 ───────────────────────────────────────────────────────
-
-    public List<AsyncShellTask> getAsyncShellTasks() { return asyncShellTasks; }
-
-    public void addAsyncShellTask(AsyncShellTask task) { asyncShellTasks.add(task); }
-
-    public Optional<AsyncShellTask> findAsyncShellTask(String taskId) {
-        return asyncShellTasks.stream().filter(t -> t.getTaskId().equals(taskId)).findFirst();
-    }
-
-    public int clearFinishedAsyncShellTasks() {
-        int before = asyncShellTasks.size();
-        asyncShellTasks.removeIf(t ->
-            t.getStatus() == AsyncShellTask.TaskStatus.DONE ||
-            t.getStatus() == AsyncShellTask.TaskStatus.FAILED ||
-            t.getStatus() == AsyncShellTask.TaskStatus.CANCELLED);
-        return before - asyncShellTasks.size();
-    }
 
     // ── 连接链路 ──────────────────────────────────────────────────────────────
 

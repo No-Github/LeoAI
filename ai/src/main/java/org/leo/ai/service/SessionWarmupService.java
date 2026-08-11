@@ -83,7 +83,7 @@ public class SessionWarmupService {
             Map<String, Object> basicInfo = node.getBasicInfo();
             if (basicInfo != null) {
                 PuppetNodeSessionUtils.putAiContextValue(sessionId, BASIC_INFO_CACHE_KEY, basicInfo);
-                // 从 basicInfo 中提取 OS 平台并缓存，供 CommandTools.isWindows() 直接命中
+                // 从 basicInfo 中提取 OS 平台，供环境变量和文件工具选择目标侧命令。
                 detectAndCacheOsPlatform(sessionId, basicInfo);
             }
         } else {

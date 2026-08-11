@@ -20,8 +20,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Persistent interactive terminal component.
  *
  * Unix uses one full PTY backend (Python) and one dependency-free pipe shell.
- * Windows uses the same pipe contract through cmd.exe. Keeping one primary
- * path and one basic fallback makes startup behavior predictable.
+ * Windows prefers an installed winpty bridge and falls back to the native
+ * command pipe. Keeping one optional PTY path and one basic fallback makes
+ * startup behavior predictable across old and new hosts.
  *
  * Java 6 single-class payload: no lambdas, inner classes or Java 7+ APIs.
  */
@@ -39,14 +40,15 @@ public class ExecCommandComponent implements Runnable {
     private static final long START_TIMEOUT_MS = 2500L;
     private static final long STOP_WAIT_MS = 750L;
     private static final long BACKEND_PROBE_MS = 300L;
+    private static final int MAX_READ_WAIT_MS = 2000;
 
-    private static final String KEY_CREATED_AT = "createdAt";
     private static final String KEY_LAST_ACCESS_TIME = "lastAccessTime";
     private static final String KEY_BACKEND = "backend";
     private static final String KEY_PTY = "pty";
     private static final String KEY_RESIZABLE = "resizable";
     private static final String KEY_BACKEND_FAILURES = "backendFailures";
     private static final String KEY_INSTANCE_ID = "instanceId";
+    private static final String KEY_LONG_POLLING = "longPolling";
 
     private static final Map env = new ConcurrentHashMap();
     private static final Map THREAD_PARAMS = new ConcurrentHashMap();
@@ -159,7 +161,7 @@ public class ExecCommandComponent implements Runnable {
             notifyStateChange(processMap);
 
             if (Boolean.TRUE.equals(processMap.get("stopped"))) {
-                process.destroy();
+                terminateProcessTree(process);
                 return;
             }
 
@@ -176,11 +178,12 @@ public class ExecCommandComponent implements Runnable {
                     }
                     if (utf8.length > remaining) processMap.put("outputTruncated", Boolean.TRUE);
                 }
+                notifyStateChange(processMap);
             }
         } catch (Throwable error) {
             processMap.put("error", error.getMessage() != null ? error.getMessage() : error.getClass().getName());
             if (process != null) {
-                try { process.destroy(); } catch (Exception ignored) {}
+                terminateProcessTree(process);
             }
         } finally {
             if (reader != null) {
@@ -228,6 +231,7 @@ public class ExecCommandComponent implements Runnable {
             results.put("initialized", Boolean.TRUE);
             results.put("alive", Boolean.TRUE);
         } else if (operation == OP_READ) {
+            waitForReadableOutput(processMap, getBoundedIntParam("waitMs", 0, MAX_READ_WAIT_MS));
             readOutput(processMap);
         } else if (operation == OP_RESIZE) {
             resizeTerminal(processMap);
@@ -244,7 +248,6 @@ public class ExecCommandComponent implements Runnable {
     private Map startProcess(String processId) {
         ConcurrentHashMap placeholder = new ConcurrentHashMap();
         long now = System.currentTimeMillis();
-        placeholder.put(KEY_CREATED_AT, Long.valueOf(now));
         placeholder.put(KEY_LAST_ACCESS_TIME, Long.valueOf(now));
         Map existing;
         synchronized (env) {
@@ -298,13 +301,41 @@ public class ExecCommandComponent implements Runnable {
         byte[] command = getBytesParam("cmd");
         OutputStream writer = (OutputStream) processMap.get("stdin");
         if (writer == null) throw new IllegalStateException("terminal stdin is not ready");
-        if (isWindows()) {
+        if (isWindows() && !Boolean.TRUE.equals(processMap.get(KEY_PTY))) {
             command = convertCrForWindows(command);
             echoForWindows(processMap, command);
         }
         synchronized (writer) {
             writer.write(command);
             writer.flush();
+        }
+    }
+
+    private void waitForReadableOutput(Map processMap, int waitMillis) {
+        if (waitMillis <= 0 || hasReadableOutput(processMap)) return;
+        long deadline = System.currentTimeMillis() + waitMillis;
+        synchronized (processMap) {
+            while (!hasReadableOutput(processMap)
+                    && processMap.get("error") == null
+                    && !Boolean.TRUE.equals(processMap.get("exited"))
+                    && !Boolean.TRUE.equals(processMap.get("stopped"))) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                try {
+                    processMap.wait(remaining);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+    }
+
+    private boolean hasReadableOutput(Map processMap) {
+        ByteArrayOutputStream output = (ByteArrayOutputStream) processMap.get("output");
+        if (output == null) return false;
+        synchronized (output) {
+            return output.size() > 0;
         }
     }
 
@@ -351,8 +382,6 @@ public class ExecCommandComponent implements Runnable {
             writeTextFile(sizeFile, size[0] + "," + size[1]);
             resized = true;
         }
-        processMap.put("cols", Integer.valueOf(size[0]));
-        processMap.put("rows", Integer.valueOf(size[1]));
         results.put("cols", Integer.valueOf(size[0]));
         results.put("rows", Integer.valueOf(size[1]));
         results.put("resized", Boolean.valueOf(resized));
@@ -381,6 +410,7 @@ public class ExecCommandComponent implements Runnable {
         results.put(KEY_PTY, Boolean.valueOf(Boolean.TRUE.equals(processMap.get(KEY_PTY))));
         results.put(KEY_RESIZABLE, Boolean.valueOf(Boolean.TRUE.equals(processMap.get(KEY_RESIZABLE))));
         results.put(KEY_INSTANCE_ID, INSTANCE_ID);
+        results.put(KEY_LONG_POLLING, Boolean.TRUE);
         Object backendFailures = processMap.get(KEY_BACKEND_FAILURES);
         if (backendFailures != null) results.put(KEY_BACKEND_FAILURES, backendFailures);
     }
@@ -432,22 +462,26 @@ public class ExecCommandComponent implements Runnable {
             try { stdin.close(); } catch (Exception ignored) {}
         }
         Process process = (Process) processMap.get("process");
-        if (process != null) {
-            try { process.destroy(); } catch (Exception ignored) {}
-            long deadline = System.currentTimeMillis() + STOP_WAIT_MS;
-            while (isProcessAlive(process) && System.currentTimeMillis() < deadline) {
-                try { Thread.sleep(25L); } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            if (isProcessAlive(process)) {
-                try { process.destroy(); } catch (Exception ignored) {}
-            }
-        }
+        terminateProcessTree(process);
         ((ConcurrentHashMap) env).remove(processId, processMap);
         deleteTerminalFiles(processMap);
         notifyStateChange(processMap);
+    }
+
+    private void terminateProcessTree(Process process) {
+        if (process == null) return;
+        java.util.List descendants = snapshotDescendantProcessHandles(process);
+        destroyProcessHandles(descendants, false);
+        try { process.destroy(); } catch (Exception ignored) {}
+        long deadline = System.currentTimeMillis() + STOP_WAIT_MS;
+        while (isProcessAlive(process) && System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(25L); } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (isProcessAlive(process)) destroyProcessForcibly(process);
+        destroyProcessHandles(descendants, true);
     }
 
     private boolean isProcessAlive(Process process) {
@@ -460,11 +494,72 @@ public class ExecCommandComponent implements Runnable {
         }
     }
 
+    /**
+     * Java 9+ 环境通过反射捕获并清理子进程树；旧运行时保持原有 Process.destroy 行为。
+     * 反射实现避免生成的组件字节码直接依赖 ProcessHandle。
+     */
+    private java.util.List snapshotDescendantProcessHandles(Process process) {
+        java.util.ArrayList handles = new java.util.ArrayList();
+        Object stream = null;
+        try {
+            Class processHandleClass = Class.forName("java.lang.ProcessHandle");
+            Object root = Process.class.getMethod("toHandle", new Class[0])
+                    .invoke(process, new Object[0]);
+            stream = processHandleClass.getMethod("descendants", new Class[0])
+                    .invoke(root, new Object[0]);
+            Class baseStreamClass = Class.forName("java.util.stream.BaseStream");
+            Iterator iterator = (Iterator) baseStreamClass.getMethod("iterator", new Class[0])
+                    .invoke(stream, new Object[0]);
+            while (iterator.hasNext()) handles.add(iterator.next());
+        } catch (Throwable ignored) {
+            handles.clear();
+        } finally {
+            if (stream != null) {
+                try {
+                    Class.forName("java.util.stream.BaseStream")
+                            .getMethod("close", new Class[0]).invoke(stream, new Object[0]);
+                } catch (Throwable ignored) {}
+            }
+        }
+        return handles;
+    }
+
+    private void destroyProcessHandles(java.util.List handles, boolean forcibly) {
+        if (handles == null || handles.isEmpty()) return;
+        try {
+            Class processHandleClass = Class.forName("java.lang.ProcessHandle");
+            java.lang.reflect.Method destroy = processHandleClass.getMethod(
+                    forcibly ? "destroyForcibly" : "destroy", new Class[0]);
+            int index;
+            for (index = handles.size() - 1; index >= 0; index--) {
+                try { destroy.invoke(handles.get(index), new Object[0]); } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void destroyProcessForcibly(Process process) {
+        try {
+            Process.class.getMethod("destroyForcibly", new Class[0])
+                    .invoke(process, new Object[0]);
+        } catch (Throwable unavailable) {
+            try { process.destroy(); } catch (Exception ignored) {}
+        }
+    }
+
     private Process startCompatibleProcess(String processId, Map processMap) throws Exception {
         int attempt;
-        int attempts = isWindows() ? 1 : 2;
+        int attempts = 2;
         for (attempt = 0; attempt < attempts; attempt++) {
-            ProcessBuilder builder = createProcessBuilder(processId, processMap, attempt);
+            ProcessBuilder builder;
+            try {
+                builder = createProcessBuilder(processId, processMap, attempt);
+            } catch (Throwable error) {
+                recordBackendFailure(processMap,
+                        String.valueOf(valueOrDefault(processMap.get(KEY_BACKEND), "terminal-backend-" + attempt)),
+                        error.getMessage() != null ? error.getMessage() : error.getClass().getName());
+                resetBackendFiles(processMap);
+                continue;
+            }
             if (builder == null) continue;
             builder.redirectErrorStream(true);
             Process candidate = null;
@@ -480,7 +575,7 @@ public class ExecCommandComponent implements Runnable {
                 if (candidate != null && !isProcessAlive(candidate)) closeProcessStreams(candidate);
             }
             if (candidate != null && isProcessAlive(candidate)) {
-                try { candidate.destroy(); } catch (Exception ignored) {}
+                terminateProcessTree(candidate);
                 closeProcessStreams(candidate);
             }
             resetBackendFiles(processMap);
@@ -541,16 +636,31 @@ public class ExecCommandComponent implements Runnable {
 
     private ProcessBuilder createProcessBuilder(String processId, Map processMap, int attempt) throws IOException {
         if (isWindows()) {
-            if (attempt != 0) return null;
-            setBackend(processMap, "windows-pipe", false, false);
-            return new ProcessBuilder(new String[]{"cmd.exe", "/Q"});
+            String shell = selectWindowsShell();
+            if (attempt == 0) {
+                String winpty = findExecutable("winpty.exe");
+                if (winpty == null) winpty = findExecutable("winpty");
+                if (winpty == null) {
+                    recordBackendFailure(processMap, "windows-winpty", "helper unavailable");
+                    return null;
+                }
+                setBackend(processMap, "windows-winpty", true, false);
+                return new ProcessBuilder(new String[]{winpty, "-Xallow-non-tty", shell, "/Q", "/D"});
+            }
+            if (attempt != 1) return null;
+            setBackend(processMap, "windows-cmd-pipe", false, false);
+            return new ProcessBuilder(new String[]{shell, "/Q", "/D"});
         }
 
         String shell = selectShell();
         if (attempt == 0) {
             String python = findExecutable("python3");
             if (python == null) python = findExecutable("python");
-            if (python == null) return null;
+            if (python == null) {
+                recordBackendFailure(processMap, "python-pty", "helper unavailable");
+                return null;
+            }
+            setBackend(processMap, new File(python).getName() + "-pty", true, true);
             File directory = terminalDirectory();
             String key = Integer.toHexString(processId.hashCode()) + "-"
                     + Integer.toHexString(System.identityHashCode(processMap));
@@ -560,9 +670,6 @@ public class ExecCommandComponent implements Runnable {
             writeTextFile(size, "80,24");
             processMap.put("helperFile", helper);
             processMap.put("sizeFile", size);
-            processMap.put("cols", Integer.valueOf(80));
-            processMap.put("rows", Integer.valueOf(24));
-            setBackend(processMap, new File(python).getName() + "-pty", true, true);
             return new ProcessBuilder(new String[]{python, helper.getAbsolutePath(), shell, size.getAbsolutePath()});
         }
 
@@ -631,18 +738,28 @@ public class ExecCommandComponent implements Runnable {
     }
 
     private String selectShell() {
-        String[] candidates = new String[]{"/bin/sh", "/bin/bash", "/bin/zsh", "/bin/ksh"};
-        int index;
-        for (index = 0; index < candidates.length; index++) {
-            File file = new File(candidates[index]);
-            if (file.isFile() && file.canExecute()) return file.getAbsolutePath();
-        }
         String configured = System.getenv("SHELL");
         if (configured != null) {
             File file = new File(configured);
             if (file.isFile() && file.canExecute()) return file.getAbsolutePath();
         }
+        String[] candidates = new String[]{"/bin/bash", "/bin/zsh", "/bin/ksh", "/bin/sh"};
+        int index;
+        for (index = 0; index < candidates.length; index++) {
+            File file = new File(candidates[index]);
+            if (file.isFile() && file.canExecute()) return file.getAbsolutePath();
+        }
         return "/bin/sh";
+    }
+
+    private String selectWindowsShell() {
+        String configured = System.getenv("ComSpec");
+        if (configured != null) {
+            File file = new File(configured);
+            if (file.isFile()) return file.getAbsolutePath();
+        }
+        String resolved = findExecutable("cmd.exe");
+        return resolved != null ? resolved : "cmd.exe";
     }
 
     private void echoForWindows(Map processMap, byte[] command) {
@@ -696,10 +813,12 @@ public class ExecCommandComponent implements Runnable {
     private static String createInstanceId() {
         try {
             java.lang.management.RuntimeMXBean runtime = java.lang.management.ManagementFactory.getRuntimeMXBean();
-            String value = runtime.getName() + "|" + runtime.getStartTime();
+            String value = ExecCommandComponent.class.getName() + "|"
+                    + runtime.getName() + "|" + runtime.getStartTime();
             return Long.toHexString(runtime.getStartTime()) + "-" + Integer.toHexString(value.hashCode());
         } catch (Throwable ignored) {
-            String value = System.getProperty("java.vm.name", "java") + "|"
+            String value = ExecCommandComponent.class.getName() + "|"
+                    + System.getProperty("java.vm.name", "java") + "|"
                     + System.getProperty("user.dir", "") + "|" + System.currentTimeMillis();
             return Integer.toHexString(value.hashCode());
         }
@@ -730,5 +849,16 @@ public class ExecCommandComponent implements Runnable {
         } catch (UnsupportedEncodingException error) {
             throw new RuntimeException(error);
         }
+    }
+
+    private int getBoundedIntParam(String key, int minimum, int maximum) {
+        Object value = params.get(key);
+        int parsed = minimum;
+        if (value instanceof Number) {
+            parsed = ((Number) value).intValue();
+        } else if (value != null) {
+            try { parsed = Integer.parseInt(String.valueOf(value).trim()); } catch (Exception ignored) {}
+        }
+        return Math.max(minimum, Math.min(maximum, parsed));
     }
 }

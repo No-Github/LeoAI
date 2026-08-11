@@ -2,7 +2,6 @@ package org.leo.web.controller.platform.task;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.leo.ai.platform.PlatformAiState;
-import org.leo.core.entity.AsyncShellTask;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.core.session.AiThread;
@@ -13,7 +12,6 @@ import org.leo.service.DownloadEngineService;
 import org.leo.service.UploadEngineService;
 import org.leo.service.sql.SqlExportService;
 import org.leo.web.exception.ApiException;
-import org.leo.web.service.AsyncShellService;
 import org.leo.web.service.PlatformAiThreadService;
 import org.leo.web.service.PuppetNodeAiThreadService;
 import org.leo.web.util.ControllerUtil;
@@ -33,27 +31,24 @@ import java.util.Map;
 /**
  * 跨会话全局任务中心。
  *
- * <p>聚合节点后台 Shell、文件传输、数据库导出以及平台/节点 AI 运行状态。
+ * <p>聚合文件传输、数据库导出以及平台/节点 AI 运行状态。
  * 扫描等仅存在于浏览器内的临时任务由前端 TaskEngine 合并展示。</p>
  */
 @RestController
 @RequestMapping("/platform/task-center")
 public class GlobalTaskCenterController {
 
-    private final AsyncShellService asyncShellService;
     private final DownloadEngineService downloadEngineService;
     private final UploadEngineService uploadEngineService;
     private final SqlExportService sqlExportService;
     private final PuppetNodeAiThreadService puppetNodeAiThreadService;
     private final PlatformAiThreadService platformAiThreadService;
 
-    public GlobalTaskCenterController(AsyncShellService asyncShellService,
-                                      DownloadEngineService downloadEngineService,
+    public GlobalTaskCenterController(DownloadEngineService downloadEngineService,
                                       UploadEngineService uploadEngineService,
                                       SqlExportService sqlExportService,
                                       PuppetNodeAiThreadService puppetNodeAiThreadService,
                                       PlatformAiThreadService platformAiThreadService) {
-        this.asyncShellService = asyncShellService;
         this.downloadEngineService = downloadEngineService;
         this.uploadEngineService = uploadEngineService;
         this.sqlExportService = sqlExportService;
@@ -79,7 +74,6 @@ public class GlobalTaskCenterController {
             String puppetName = puppet != null ? puppet.getPuppetName() : sessionId;
             String connLink = puppet != null ? puppet.getConnLink() : null;
 
-            appendShellTasks(tasks, session, sessionId, puppetName, connLink);
             appendPuppetAiTasks(tasks, session, sessionId, puppetName, connLink);
             appendServiceTasks(tasks, "download", sessionId, puppetName, connLink,
                     safeTasks(() -> downloadEngineService.listBySessionId(taskOwnerId, sessionId)));
@@ -109,10 +103,6 @@ public class GlobalTaskCenterController {
 
         Object result;
         switch (kind) {
-            case "shell" -> {
-                PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(requireText(sessionId, "sessionId"));
-                result = asyncShellService.cancel(session, taskId);
-            }
             case "puppet_ai" -> {
                 PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(requireText(sessionId, "sessionId"));
                 AiThread thread = puppetNodeAiThreadService.requireThread(session, taskId);
@@ -152,26 +142,6 @@ public class GlobalTaskCenterController {
         }
 
         return ApiResponse.success(result);
-    }
-
-    private void appendShellTasks(List<Map<String, Object>> target,
-                                  PuppetNodeSession session,
-                                  String sessionId,
-                                  String puppetName,
-                                  String connLink) {
-        for (AsyncShellTask task : session.getAsyncShellTasks()) {
-            String status = normalizeStatus(task.getStatus().name());
-            LinkedHashMap<String, Object> item = baseTask(
-                    "shell", sessionId, puppetName, connLink, task.getTaskId(), task.getCommand(), status);
-            item.put("startedAt", task.getStartTime());
-            item.put("finishedAt", positiveOrNull(task.getEndTime()));
-            item.put("updatedAt", task.getEndTime() > 0 ? task.getEndTime() : task.getStartTime());
-            item.put("progress", terminal(status) ? 100 : 35);
-            item.put("detail", task.getCommand());
-            item.put("exitCode", task.getExitCode());
-            item.put("cancellable", active(status));
-            target.add(item);
-        }
     }
 
     private void appendPuppetAiTasks(List<Map<String, Object>> target,
@@ -347,7 +317,7 @@ public class GlobalTaskCenterController {
         String value = rawStatus == null ? "idle" : rawStatus.trim().toLowerCase(Locale.ROOT);
         return switch (value) {
             case "done", "completed", "success" -> "completed";
-            case "running", "uploading", "downloading", "exporting", "scanning", "shell_running" -> "running";
+            case "running", "uploading", "downloading", "exporting", "scanning" -> "running";
             case "pending", "new" -> "pending";
             case "paused" -> "paused";
             case "failed", "error" -> "failed";

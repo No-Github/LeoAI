@@ -7,6 +7,7 @@ import org.leo.core.util.request.ClassNameGenerator;
 import org.objectweb.asm.ClassReader;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.ThreadFactory;
@@ -56,6 +57,17 @@ class ComponentBytecodeProfileTest {
         String[] expected = ALL_COMPONENTS.clone();
         Arrays.sort(expected);
         assertArrayEquals(expected, names);
+    }
+
+    @Test
+    void terminalPayloadCarriesTheCurrentInteractiveProtocol() throws Exception {
+        byte[] payload = Files.readAllBytes(
+                new File("src/main/resources/component/ExecCommandComponent.payload").toPath());
+        String constants = new String(payload, StandardCharsets.ISO_8859_1);
+
+        assertTrue(constants.contains("longPolling"));
+        assertTrue(constants.contains("windows-winpty"));
+        assertTrue(constants.contains("java.lang.ProcessHandle"));
     }
 
     @Test

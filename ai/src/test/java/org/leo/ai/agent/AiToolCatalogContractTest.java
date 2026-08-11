@@ -85,7 +85,7 @@ class AiToolCatalogContractTest {
         List<Declaration> declarations = declarations();
         Set<String> names = new HashSet<>();
 
-        assertEquals(99, declarations.size(),
+        assertEquals(101, declarations.size(),
                 "工具预算发生变化；新增前应优先合并，并显式更新清单契约");
         for (Declaration declaration : declarations) {
             assertTrue(names.add(declaration.name()),
@@ -129,6 +129,30 @@ class AiToolCatalogContractTest {
         assertTrue(step.properties().values().stream()
                 .allMatch(property -> property.description() != null
                         && !property.description().isBlank()));
+    }
+
+    @Test
+    void terminalLifecycleToolsAreRoutineControlOperations() {
+        Declaration query = declarations().stream()
+                .filter(declaration -> "queryTask".equals(declaration.name()))
+                .findFirst().orElseThrow();
+        assertEquals(AiToolKind.QUERY, query.policy().kind());
+        assertEquals(AiToolOperation.WRITE, query.policy().operation());
+        assertFalse(query.policy().business());
+        assertFalse(query.policy().terminal());
+        assertTrue(query.policy().exclusive());
+
+        for (String toolName : List.of("writeTask", "resizeTask", "stopTask")) {
+            Declaration tool = declarations().stream()
+                    .filter(declaration -> toolName.equals(declaration.name()))
+                    .findFirst().orElseThrow();
+
+            assertEquals(AiToolKind.CONTROL, tool.policy().kind());
+            assertEquals(AiToolOperation.WRITE, tool.policy().operation());
+            assertFalse(tool.policy().business());
+            assertFalse(tool.policy().terminal());
+            assertTrue(tool.policy().exclusive());
+        }
     }
 
     private static AiServiceTool namedTool(List<AiServiceTool> tools, String name) {

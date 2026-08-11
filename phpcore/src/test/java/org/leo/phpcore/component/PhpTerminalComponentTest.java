@@ -50,6 +50,7 @@ class PhpTerminalComponentTest {
         assertTrue(initialized.containsKey("backend"));
         assertTrue(initialized.get("instanceId") instanceof String);
         assertTrue(initialized.get("backendFailures") instanceof java.util.List<?>);
+        assertEquals(Boolean.FALSE, initialized.get("longPolling"));
 
         invoke("write", "echo terminal-ok\r");
         String firstText = readUntil("terminal-ok", 3000);

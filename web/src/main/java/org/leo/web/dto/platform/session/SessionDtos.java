@@ -3,7 +3,7 @@ package org.leo.web.dto.platform.session;
 import java.util.List;
 
 /**
- * 会话管理相关 DTO（Record 风格，仿 AsyncShellDtos）。
+ * 会话管理相关 DTO（Record 风格）。
  *
  * <p>涵盖：会话管理、HostId 管理、侦察摘要、报告生成四个子模块的请求/响应类型。
  */

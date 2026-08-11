@@ -13,10 +13,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,6 +31,18 @@ class ExecCommandComponentTest {
         Class<?> transformed = new BytecodeLoader().define(className, bytecode);
         assertTrue(Runnable.class.isAssignableFrom(transformed));
         assertTrue(transformed.getDeclaredConstructor().newInstance() instanceof Runnable);
+    }
+
+    @Test
+    void transformedTerminalClassesExposeDistinctRoutingInstanceIds() throws Exception {
+        String firstName = "org.leo.generated.TerminalA" + System.nanoTime();
+        String secondName = "org.leo.generated.TerminalB" + System.nanoTime();
+        BytecodeLoader loader = new BytecodeLoader();
+        Class<?> first = loader.define(firstName,
+                CloneWithJavassist.cloneClass("ExecCommandComponent", firstName));
+        Class<?> second = loader.define(secondName,
+                CloneWithJavassist.cloneClass("ExecCommandComponent", secondName));
+        assertNotEquals(routingInstanceId(first), routingInstanceId(second));
     }
 
     @Test
@@ -82,6 +96,81 @@ class ExecCommandComponentTest {
     }
 
     @Test
+    void prefersConfiguredInteractiveShellBeforeCompatibilityFallbacks() throws Exception {
+        Assumptions.assumeFalse(System.getProperty("os.name", "").toLowerCase().contains("windows"));
+        ExecCommandComponent component = new ExecCommandComponent();
+        Method select = ExecCommandComponent.class.getDeclaredMethod("selectShell");
+        select.setAccessible(true);
+
+        String selected = (String) select.invoke(component);
+        String configured = System.getenv("SHELL");
+        if (configured != null) {
+            java.io.File configuredFile = new java.io.File(configured);
+            if (configuredFile.isFile() && configuredFile.canExecute()) {
+                assertEquals(configuredFile.getAbsolutePath(), selected);
+                return;
+            }
+        }
+        for (String candidate : new String[]{"/bin/bash", "/bin/zsh", "/bin/ksh", "/bin/sh"}) {
+            java.io.File file = new java.io.File(candidate);
+            if (file.isFile() && file.canExecute()) {
+                assertEquals(file.getAbsolutePath(), selected);
+                return;
+            }
+        }
+        assertEquals("/bin/sh", selected);
+    }
+
+    @Test
+    void selectsConfiguredWindowsCommandProcessorWithPortableFallback() throws Exception {
+        ExecCommandComponent component = new ExecCommandComponent();
+        Method select = ExecCommandComponent.class.getDeclaredMethod("selectWindowsShell");
+        select.setAccessible(true);
+
+        String selected = (String) select.invoke(component);
+        String configured = System.getenv("ComSpec");
+        if (configured != null && new java.io.File(configured).isFile()) {
+            assertEquals(new java.io.File(configured).getAbsolutePath(), selected);
+        } else {
+            assertTrue(selected.toLowerCase().endsWith("cmd.exe"), selected);
+        }
+    }
+
+    @Test
+    void longPollWaitReturnsAsSoonAsOutputArrives() throws Exception {
+        ExecCommandComponent component = new ExecCommandComponent();
+        Method wait = ExecCommandComponent.class.getDeclaredMethod(
+                "waitForReadableOutput", Map.class, int.class);
+        wait.setAccessible(true);
+        Map<String, Object> processState = new ConcurrentHashMap<>();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        processState.put("output", output);
+
+        Thread producer = new Thread(() -> {
+            try {
+                Thread.sleep(100L);
+                synchronized (output) {
+                    output.write('x');
+                }
+                synchronized (processState) {
+                    processState.notifyAll();
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        producer.start();
+        long started = System.nanoTime();
+        wait.invoke(component, processState, 1000);
+        long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        producer.join(1000L);
+
+        assertTrue(elapsed >= 50L, "long poll should wait for output");
+        assertTrue(elapsed < 750L, "long poll should wake before its deadline");
+        assertEquals(1, output.size());
+    }
+
+    @Test
     void firstWriteStartsProcessAndIsNotDropped() throws Exception {
         String processId = "test-" + UUID.randomUUID();
         try {
@@ -129,6 +218,7 @@ class ExecCommandComponentTest {
             assertEquals(Boolean.TRUE, initialized.get("alive"));
             assertTrue(initialized.get("backend") instanceof String);
             assertTrue(initialized.get("instanceId") instanceof String);
+            assertEquals(Boolean.TRUE, initialized.get("longPolling"));
 
             Assumptions.assumeTrue(Boolean.TRUE.equals(initialized.get("pty")),
                     "A native PTY backend is not available on this host");
@@ -182,6 +272,17 @@ class ExecCommandComponentTest {
             Thread.sleep(40);
         } while (System.nanoTime() < deadline);
         return output.toString();
+    }
+
+    private String routingInstanceId(Class<?> type) throws Exception {
+        for (Field field : type.getDeclaredFields()) {
+            if (field.getType() != String.class
+                    || !java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+            field.setAccessible(true);
+            Object value = field.get(null);
+            if (value instanceof String text && text.matches("[0-9a-f]+-[0-9a-f]+")) return text;
+        }
+        throw new AssertionError("routing instance id field was not found");
     }
 
     @SuppressWarnings("unchecked")

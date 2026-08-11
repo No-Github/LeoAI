@@ -6,8 +6,6 @@ import org.leo.ai.util.ToolResultUtils;
 import org.leo.core.puppet.AbstractPuppetNode;
 import org.leo.core.puppet.capability.CommandCapable;
 import org.leo.service.audit.PuppetAuditService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.P;
 import org.springframework.stereotype.Component;
@@ -19,10 +17,12 @@ import java.util.UUID;
 /**
  * 命令执行工具（精简版）
  * <p>
- * 对外仅暴露 3 个 @Tool 方法：
+ * 对外仅暴露 5 个 @Tool 方法：
  * <ul>
  *   <li>{@link #exec} — 统一执行入口，自动判断同步/异步/缓存</li>
  *   <li>{@link #queryTask} — 查询异步任务输出</li>
+ *   <li>{@link #writeTask} — 向异步终端继续写入输入</li>
+ *   <li>{@link #resizeTask} — 调整异步终端窗口尺寸</li>
  *   <li>{@link #stopTask} — 终止异步任务并释放资源</li>
  * </ul>
  * <p>
@@ -39,11 +39,6 @@ import java.util.UUID;
         operation = org.leo.ai.agent.AiToolOperation.WRITE)
 public class CommandTools {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandTools.class);
-
-    private static final String SIMPLE_COMMAND_CACHE_PREFIX = "simple-command:";
-    private static final String OS_PLATFORM_CACHE_KEY = "os-platform";
-
     private final PuppetAuditService auditService;
 
     public CommandTools(PuppetAuditService auditService) {
@@ -51,7 +46,7 @@ public class CommandTools {
     }
 
     // ══════════════════════════════════════════════════════════════════════════════
-    //  公开 @Tool 方法（仅 3 个）
+    //  公开 @Tool 方法（仅 5 个）
     // ══════════════════════════════════════════════════════════════════════════════
 
     @Tool("在 puppet 侧执行系统命令。统一入口，自动选择最优执行模式。\n"
@@ -81,9 +76,10 @@ public class CommandTools {
 
     @Tool("查询异步命令的新输出。当 exec 返回 taskId 时使用；每次读取会消费当前输出缓冲区。"
             + "返回 output、status、alive，命令结束时还会返回 exitCode。"
-            + "如果输出已包含所需信息或为空（命令已结束），调用 stopTask 释放资源。")
+            + "如果输出已包含所需信息或为空（命令已结束），调用 stopTask 释放资源；"
+            + "该资源回收动作直接执行，不需要另行确认。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.QUERY,
-            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false, exclusive = true)
     public Map<String, Object> queryTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
@@ -101,15 +97,64 @@ public class CommandTools {
             result.put("error", terminal.get("error"));
         }
         result.put("hint", alive
-                ? "继续轮询；获得所需信息后调用 stopTask 释放资源。"
-                : "命令已结束，调用 stopTask 释放终端资源。");
+                ? "继续轮询；获得所需信息后调用 stopTask 回收资源。"
+                : "命令已结束，直接调用 stopTask 清理异步终端。");
         compressOutputField(result);
         return result;
     }
 
-    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.COMMAND,
-            operation = org.leo.ai.agent.AiToolOperation.WRITE, exclusive = true)
-    @Tool("终止异步命令并释放终端资源。返回终止前的最后一段输出。无论命令是否结束都应在不再需要时调用。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.CONTROL,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false, exclusive = true)
+    @Tool("向当前 AI 通过 exec 创建的异步终端写入后续输入。用于回答交互提示、发送控制字符"
+            + "或继续操作终端程序；普通文本输入通常设置 appendNewline=true，Ctrl+C 使用 input=\\u0003"
+            + "且 appendNewline=false。该终端交互动作直接执行，不需要用户确认。")
+    public Map<String, Object> writeTask(
+            @P("exec 返回的 taskId") String taskId,
+            @P(value = "写入终端的原始文本或控制字符；允许空字符串与 appendNewline=true 组合表示单独按回车")
+                    String input,
+            @P(value = "是否在输入末尾追加换行；普通命令或提示回答设为 true，控制字符设为 false",
+                    required = false, defaultValue = "false") boolean appendNewline) throws Exception {
+        String sessionId = AiToolContext.requireSessionId();
+        String rawInput = input != null ? input : "";
+        if (rawInput.isEmpty() && !appendNewline) {
+            throw new IllegalArgumentException("input 为空时 appendNewline 必须为 true");
+        }
+        String payload = appendNewline ? rawInput + "\n" : rawInput;
+        Map<String, Object> terminal = writeRawToTerminal(sessionId, payload, taskId);
+        HashMap<String, Object> result = new HashMap<>(copyStringKeyMap(terminal));
+        result.put("taskId", taskId);
+        result.put("status", "written");
+        result.put("writtenChars", payload.length());
+        result.put("appendNewline", appendNewline);
+        result.put("hint", "使用 queryTask(taskId) 读取交互后的新输出。");
+        return result;
+    }
+
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.CONTROL,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false, exclusive = true)
+    @Tool("调整当前 AI 异步终端的窗口尺寸。适用于依赖 TTY 行列数的交互程序；"
+            + "PTY 后端会实时调整，PIPE/FIXED 后端会返回 resizable=false。该动作直接执行，不需要用户确认。")
+    public Map<String, Object> resizeTask(
+            @P("exec 返回的 taskId") String taskId,
+            @P("终端列数，范围 20-500") int cols,
+            @P("终端行数，范围 5-200") int rows) throws Exception {
+        String sessionId = AiToolContext.requireSessionId();
+        int normalizedCols = Math.max(20, Math.min(500, cols));
+        int normalizedRows = Math.max(5, Math.min(200, rows));
+        Map<String, Object> terminal = getCommandNode(sessionId).execCommand(
+                "resize", normalizedCols + "," + normalizedRows, taskId);
+        HashMap<String, Object> result = new HashMap<>(copyStringKeyMap(terminal));
+        result.put("taskId", taskId);
+        result.put("cols", normalizedCols);
+        result.put("rows", normalizedRows);
+        result.put("status", Boolean.FALSE.equals(result.get("resizable")) ? "fixed" : "resized");
+        return result;
+    }
+
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.CONTROL,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false, exclusive = true)
+    @Tool("关闭当前 AI 通过 exec 创建的异步终端并释放资源。若命令仍在运行会同步结束对应进程；"
+            + "若命令已经结束则只做清理。该资源回收动作直接执行，不需要用户确认。返回清理前的最后一段输出。")
     public Map<String, Object> stopTask(
             @P("exec 返回的 taskId") String taskId) throws Exception {
         String sessionId = AiToolContext.requireSessionId();
@@ -142,12 +187,6 @@ public class CommandTools {
      * <p>结果统一规整为 {@code {cmd, output, status, exitCode, timedOut}} 形状，与异步路径一致。
      */
     private Map<String, Object> execSync(String sessionId, String cmd, int timeoutSeconds) throws Exception {
-        String cacheKey = SIMPLE_COMMAND_CACHE_PREFIX + cmd;
-        Object cachedResult = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
-        if (cachedResult instanceof Map<?, ?> cachedMap) {
-            return copyStringKeyMap(cachedMap);
-        }
-
         CommandCapable commandNode = getCommandNode(sessionId);
         AbstractPuppetNode auditNode = PuppetNodeSessionUtils.getPuppetNode(sessionId);
         Map<String, Object> auditParams = commandAuditParams(sessionId, cmd, "sync", null, timeoutSeconds);
@@ -164,10 +203,6 @@ public class CommandTools {
             } else {
                 auditService.logSuccess(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams,
                         "AI命令执行完成");
-            }
-            // 仅成功完成才缓存，避免把 timeout/exception 结果固化下来
-            if (!Boolean.TRUE.equals(result.get("timedOut")) && !result.containsKey("error")) {
-                PuppetNodeSessionUtils.putAiContextValue(sessionId, cacheKey, result);
             }
             return result;
         } catch (Exception e) {
@@ -233,13 +268,20 @@ public class CommandTools {
                     "AI异步命令已启动");
         } catch (Exception e) {
             auditService.logFailure(sessionId, auditNode, "COMMAND_EXEC", "AI执行命令", cmd, auditParams, e.getMessage());
+            try {
+                stopTerminal(sessionId, taskId);
+            } catch (Exception ignored) {
+                // 保留原始写入异常；终端的空闲回收仍会处理极端清理失败。
+            }
             throw e;
         }
         HashMap<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");
         result.put("cmd", cmd);
-        result.put("hint", "命令已异步启动。使用 queryTask(taskId) 获取输出，使用 stopTask(taskId) 终止。");
+        result.put("hint", "命令已异步启动。使用 queryTask(taskId) 获取输出；遇到交互提示时使用 "
+                + "writeTask(taskId, input, appendNewline)，需要调整终端尺寸时使用 resizeTask；"
+                + "完成后直接使用 stopTask(taskId) 回收资源。");
         return result;
     }
 
@@ -275,7 +317,7 @@ public class CommandTools {
             String cacheKey = "env-vars";
             Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
             if (cached instanceof Map<?, ?> cachedMap) {
-                return copyStringKeyMap(cachedMap);
+                return normalizeCachedCommandResult(cmd, cachedMap);
             }
             // 未缓存，执行后缓存
             Map<String, Object> results = execSync(sessionId, cmd, 0);
@@ -290,7 +332,7 @@ public class CommandTools {
             String cacheKey = "java-process-args";
             Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, cacheKey);
             if (cached instanceof Map<?, ?> cachedMap) {
-                return copyStringKeyMap(cachedMap);
+                return normalizeCachedCommandResult(cmd, cachedMap);
             }
             Map<String, Object> results = execSync(sessionId, cmd, 0);
             if (results != null && !results.containsKey("error") && !"timeout".equals(results.get("status"))) {
@@ -300,6 +342,12 @@ public class CommandTools {
         }
 
         return null;
+    }
+
+    private static Map<String, Object> normalizeCachedCommandResult(String cmd, Map<?, ?> cachedMap) {
+        Map<String, Object> cached = copyStringKeyMap(cachedMap);
+        if (cached.containsKey("output") || cached.containsKey("status")) return cached;
+        return normalizeSimpleResult(cmd, cached, 0);
     }
 
     private static Map<String, Object> copyStringKeyMap(Map<?, ?> source) {
@@ -399,31 +447,33 @@ public class CommandTools {
     private String createTerminal(String sessionId) throws Exception {
         CommandCapable commandNode = getCommandNode(sessionId);
         String processId = UUID.randomUUID().toString();
-        // 首次 write 触发 puppet 端创建 shell 进程（异步）
-        commandNode.execCommand("write", "\n", processId);
-
-        // 等待 shell 就绪：轮询 read 直到收到 prompt 输出，表明 stdin 已可用
-        long waitDeadline = System.currentTimeMillis() + 5000; // 最多等 5 秒
-        while (System.currentTimeMillis() < waitDeadline) {
-            Thread.sleep(300);
-            try {
-                String output = terminalOutput(readTerminalState(sessionId, processId));
-                if (output != null && !output.isEmpty()) {
-                    // 收到 prompt（如 "sh-3.2$ " 或 "C:\>"），shell 已就绪
-                    log.debug("Terminal ready, processId={}, prompt={}", processId,
-                            output.length() > 50 ? output.substring(0, 50) : output);
-                    break;
-                }
-            } catch (Exception e) {
-                // stdin 未就绪，继续等待
-                log.debug("Waiting for terminal stdin, processId={}", processId);
+        try {
+            // Java 与 PHP 的 init 响应都在输入通道可用后返回，无需额外消费一次终端输出。
+            Map<String, Object> initialized = commandNode.execCommand("write", "init", processId);
+            if (initialized == null) {
+                throw new IllegalStateException("terminal initialization returned no state");
             }
+            if (Boolean.FALSE.equals(initialized.get("alive"))) {
+                throw new IllegalStateException("terminal initialization returned inactive state");
+            }
+            return processId;
+        } catch (Exception error) {
+            try {
+                commandNode.execCommand("stop", "", processId);
+            } catch (Exception ignored) {
+                // 保留初始化阶段的原始异常。
+            }
+            throw error;
         }
-        return processId;
     }
 
     private Map<String, Object> writeToTerminal(String sessionId, String cmd, String processId) throws Exception {
-        return getCommandNode(sessionId).execCommand("write", cmd + "\n", processId);
+        return writeRawToTerminal(sessionId, cmd + "\n", processId);
+    }
+
+    private Map<String, Object> writeRawToTerminal(String sessionId, String input,
+                                                   String processId) throws Exception {
+        return getCommandNode(sessionId).execCommand("write", input, processId);
     }
 
     private Map<String, Object> readTerminalState(String sessionId, String processId) throws Exception {
@@ -495,63 +545,4 @@ public class CommandTools {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════
-    //  OS 平台检测（供其他工具类使用）
-    // ══════════════════════════════════════════════════════════════════════════════
-
-    /**
-     * 判断 puppet 目标是否为 Windows。
-     * <p>
-     * 优先级：
-     * <ol>
-     *   <li>专用缓存 key（由首次探测或预热设置）</li>
-     *   <li>basic-info 文本匹配（由 getBasicInfo 工具缓存）</li>
-     *   <li>惰性探测：执行 uname -s，成功则判定为 Unix，失败则默认 Unix</li>
-     * </ol>
-     */
-    public boolean isWindows(String sessionId) {
-        // 1. 专用缓存
-        Object cached = PuppetNodeSessionUtils.getAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY);
-        if (cached instanceof String platform) {
-            return "windows".equals(platform);
-        }
-
-        // 2. basic-info 文本匹配
-        Object cachedBasicInfo = PuppetNodeSessionUtils.getAiContextValue(sessionId, "basic-info");
-        if (cachedBasicInfo != null) {
-            String text = cachedBasicInfo.toString().toLowerCase();
-            if (text.contains("windows")) {
-                PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "windows");
-                return true;
-            }
-            if (text.contains("linux") || text.contains("mac") || text.contains("darwin") || text.contains("unix")) {
-                PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "unix");
-                return false;
-            }
-        }
-
-        // 3. 惰性探测
-        try {
-            Map<String, Object> probe = execSync(sessionId, "uname -s", 0);
-            if (probe != null) {
-                // execSync 已统一规整为 {output, status, ...} 形状
-                Object outputObj = probe.get("output");
-                String output = outputObj == null ? "" : outputObj.toString().toLowerCase();
-                if (output.contains("linux") || output.contains("darwin") || output.contains("unix")) {
-                    PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "unix");
-                    return false;
-                }
-                if (output.contains("windows")) {
-                    PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "windows");
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            log.debug("uname 探测失败，默认按 Unix 处理，session={}", sessionId);
-        }
-
-        // 4. 默认保守
-        PuppetNodeSessionUtils.putAiContextValue(sessionId, OS_PLATFORM_CACHE_KEY, "unix");
-        return false;
-    }
 }

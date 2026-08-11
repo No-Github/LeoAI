@@ -22,10 +22,11 @@ public class CommandService extends ComponentService {
         return invokeComponent("ExecCommandComponent", params);
     }
 
-    public Map<String, Object> read(String processId) throws Exception {
+    public Map<String, Object> read(String processId, int waitMillis) throws Exception {
         HashMap<String, Object> params = new HashMap<String, Object>();
         params.put("processId", processId.getBytes("UTF-8"));
         params.put("op", 1);
+        params.put("waitMs", Integer.valueOf(Math.max(0, Math.min(2000, waitMillis))));
         return invokeComponent("ExecCommandComponent", params);
     }
 
