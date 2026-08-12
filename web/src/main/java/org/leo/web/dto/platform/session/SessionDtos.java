@@ -16,9 +16,6 @@ public final class SessionDtos {
     /** 仅含 sessionId 的通用请求。 */
     public record SessionRequest(String sessionId) {}
 
-    /** 含 sessionId + hostId 的请求。 */
-    public record HostIdRequest(String sessionId, String hostId) {}
-
     // ─── 会话管理 ─────────────────────────────────────────────────────────────
 
     public record SessionInfo(
@@ -31,7 +28,8 @@ public final class SessionDtos {
             Long   updateTime,
             Long   lastActiveTime,
             boolean cacheMode,
-            List<String> capabilities
+            List<String> capabilities,
+            String currentHostId
     ) {}
 
     public record ConnLinkItem(
@@ -50,8 +48,6 @@ public final class SessionDtos {
     // ─── HostId 管理 ──────────────────────────────────────────────────────────
 
     public record CurrentHostIdResponse(String sessionId, String currentHostId) {}
-
-    public record AllHostIdsResponse(String sessionId, List<String> allHostIds, int count) {}
 
     // ─── 侦察摘要 ─────────────────────────────────────────────────────────────
 

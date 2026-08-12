@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
+import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.service.PuppetService;
 import org.leo.service.puppetnode.PuppetNodeFactory;
 
@@ -26,7 +27,8 @@ class PuppetNodeLifecycleServiceTest {
     void createsInitialThreadThroughSameServiceAsManualCreation() {
         PuppetNodeAiThreadService aiThreadService = mock(PuppetNodeAiThreadService.class);
         PuppetNodeLifecycleService lifecycleService = new PuppetNodeLifecycleService(
-                mock(PuppetService.class), mock(PuppetNodeFactory.class), aiThreadService);
+                mock(PuppetService.class), mock(PuppetNodeFactory.class), aiThreadService,
+                mock(PuppetCacheService.class), mock(PuppetReconRepository.class));
         PuppetNodeSession session = new PuppetNodeSession();
         session.setSessionId("session-1");
         session.setCreateByUser("user-1");

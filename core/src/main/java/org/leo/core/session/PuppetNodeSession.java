@@ -16,7 +16,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -50,7 +49,6 @@ public class PuppetNodeSession {
     private String projectId;
     private Map<String, Map<String, Object>> basicInfoMap;
     private volatile String currentHostId;
-    private volatile Set<String> allHostIds = ConcurrentHashMap.newKeySet();
 
     // ── AI 对话线程管理 ───────────────────────────────────────────────────────
     /** 所有 AI 对话线程，key = threadId。 */
@@ -312,55 +310,40 @@ public class PuppetNodeSession {
 
     public String getCurrentHostId() { return currentHostId; }
 
-    public synchronized void setCurrentHostId(String currentHostId) {
-        applyCurrentHostId(currentHostId);
+    /**
+     * Bind the session to one backend instance during session creation.
+     * A session cannot be rebound because its caches and AI context are HostId scoped.
+     */
+    public synchronized void bindHostId(String currentHostId) {
+        if (currentHostId == null || currentHostId.isBlank()) {
+            throw new IllegalArgumentException("HostId 不能为空");
+        }
+        String normalized = currentHostId.trim();
+        if (this.currentHostId != null && !Objects.equals(this.currentHostId, normalized)) {
+            throw new IllegalStateException("session 已绑定其他 HostId，不能切换");
+        }
+        applyCurrentHostId(normalized);
         if (puppetNode instanceof HostScopedCapable hostScopedNode
-                && !Objects.equals(hostScopedNode.getHostId(), currentHostId)) {
-            hostScopedNode.setHostId(currentHostId);
+                && !Objects.equals(hostScopedNode.getHostId(), normalized)) {
+            hostScopedNode.setHostId(normalized);
         }
     }
 
     private synchronized void onNodeHostIdChanged(String hostId) {
+        if (currentHostId != null && !Objects.equals(currentHostId, hostId)) {
+            throw new IllegalStateException("底层节点 HostId 与 session 绑定不一致");
+        }
         applyCurrentHostId(hostId);
     }
 
     private void applyCurrentHostId(String hostId) {
         boolean changed = !Objects.equals(this.currentHostId, hostId);
         this.currentHostId = hostId;
-        if (hostId != null && !hostId.isBlank()) addHostId(hostId);
         if (!changed) return;
         if (basicInfoMap != null) basicInfoMap.clear();
         if (aiContextCache != null) aiContextCache.clear();
         lastActiveTime = System.currentTimeMillis();
     }
-
-    public Set<String> getAllHostIds() {
-        return hostIds();
-    }
-
-    public void setAllHostIds(Set<String> allHostIds) {
-        Set<String> replacement = ConcurrentHashMap.newKeySet();
-        if (allHostIds != null) replacement.addAll(allHostIds);
-        this.allHostIds = replacement;
-    }
-
-    public boolean addHostId(String hostId) {
-        if (hostId == null || hostId.isBlank()) return false;
-        return hostIds().add(hostId);
-    }
-
-    public Set<String> snapshotHostIds() { return new HashSet<>(hostIds()); }
-
-    private Set<String> hostIds() {
-        Set<String> ids = allHostIds;
-        if (ids != null) return ids;
-        synchronized (this) {
-            if (allHostIds == null) allHostIds = ConcurrentHashMap.newKeySet();
-            return allHostIds;
-        }
-    }
-
-    public void updateCurrentHostId(String hostId) { setCurrentHostId(hostId); }
 
     // ── BasicInfo ─────────────────────────────────────────────────────────────
 

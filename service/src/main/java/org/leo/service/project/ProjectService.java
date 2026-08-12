@@ -120,6 +120,26 @@ public class ProjectService {
         return project;
     }
 
+    /**
+     * 永久删除项目及其主机归属关系。主机资产本身不会被删除，历史会话也会保留，
+     * 仅解除它们与项目的关联。
+     *
+     * @return 被解除的入口主机归属数量
+     */
+    @Transactional
+    public int delete(Project project) {
+        if (project == null || project.getProjectId() == null || project.getProjectId().isBlank()) {
+            throw new IllegalArgumentException("项目参数不能为空");
+        }
+        String projectId = project.getProjectId().trim();
+        int detachedPuppets = projectMapper.deletePuppetRelations(projectId);
+        projectMapper.clearSessionProject(projectId);
+        if (projectMapper.deleteProject(projectId) != 1) {
+            throw new IllegalStateException("删除项目失败");
+        }
+        return detachedPuppets;
+    }
+
     @Transactional
     public int attachPuppets(String projectId, Collection<String> puppetIds,
                              String alias, String environment, String tags, String userId) {

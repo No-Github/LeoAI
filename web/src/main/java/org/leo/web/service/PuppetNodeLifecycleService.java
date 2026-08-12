@@ -8,12 +8,14 @@ import org.leo.core.puppet.capability.LoadedComponentCacheCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.service.PuppetService;
 import org.leo.service.puppetnode.PuppetNodeFactory;
 import org.leo.web.dto.puppetnode.PuppetInitResponse;
 import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.lang.reflect.Array;
@@ -38,25 +40,49 @@ public class PuppetNodeLifecycleService {
     private final PuppetService puppetService;
     private final PuppetNodeFactory puppetNodeFactory;
     private final PuppetNodeAiThreadService aiThreadService;
+    private final PuppetCacheService cacheService;
+    private final PuppetReconRepository reconRepository;
 
+    @Autowired
     public PuppetNodeLifecycleService(PuppetService puppetService,
                                       PuppetNodeFactory puppetNodeFactory,
-                                      PuppetNodeAiThreadService aiThreadService) {
+                                      PuppetNodeAiThreadService aiThreadService,
+                                      PuppetCacheService cacheService,
+                                      PuppetReconRepository reconRepository) {
         this.puppetService = puppetService;
         this.puppetNodeFactory = puppetNodeFactory;
         this.aiThreadService = aiThreadService;
+        this.cacheService = cacheService;
+        this.reconRepository = reconRepository;
     }
 
     public PuppetInitResponse initLiveSession(Puppet puppet, User user) throws Exception {
-        return initLiveSession(puppet, user, null);
+        return initLiveSession(puppet, user, null, null);
     }
 
     public PuppetInitResponse initLiveSession(Puppet puppet, User user, String projectId) throws Exception {
+        return initLiveSession(puppet, user, projectId, null);
+    }
+
+    public PuppetInitResponse initLiveSession(Puppet puppet, User user,
+                                              String projectId, String selectedHostId) throws Exception {
         String sessionId = UUID.randomUUID().toString();
 
-        AbstractPuppetNode node = puppetNodeFactory.createLiveNode(puppet, user);
-        boolean connectionOk = doInitConn(node, sessionId,
-                user != null ? user.getUserId() : null, projectId);
+        AbstractPuppetNode node = null;
+        boolean connectionOk = false;
+        int attempts = selectedHostId == null || selectedHostId.isBlank() ? 1 : 8;
+        for (int attempt = 0; attempt < attempts && !connectionOk; attempt++) {
+            node = puppetNodeFactory.createLiveNode(puppet, user);
+            connectionOk = doInitConn(node, sessionId,
+                    user != null ? user.getUserId() : null, projectId, selectedHostId);
+            if (!connectionOk) {
+                try {
+                    node.close();
+                } catch (Exception ex) {
+                    logger.debug("关闭未命中目标 HostId 的节点失败: {}", ex.getMessage());
+                }
+            }
+        }
         if (!connectionOk) {
             logger.warn("Puppet初始化失败，无主机回复，puppetId: {}", puppet.getPuppetId());
             throw ApiException.serverError("Puppet初始化失败，无主机回复");
@@ -70,15 +96,17 @@ public class PuppetNodeLifecycleService {
     }
 
     public PuppetInitResponse initCacheSession(Puppet puppet, User user) {
-        return initCacheSession(puppet, user, null);
+        return initCacheSession(puppet, user, null, null);
     }
 
     public PuppetInitResponse initCacheSession(Puppet puppet, User user, String projectId) {
+        return initCacheSession(puppet, user, projectId, null);
+    }
+
+    public PuppetInitResponse initCacheSession(Puppet puppet, User user, String projectId, String selectedHostId) {
         String userId = user.getUserId();
         String puppetId = puppet.getPuppetId();
-        if (!PuppetNodeSessionWorkDirUtil.hasPuppetCache(userId, puppetId)) {
-            throw ApiException.badRequest("无本地缓存，无法进入缓存模式");
-        }
+        String hostId = cacheService.requireSelectedHostId(userId, puppetId, selectedHostId);
 
         String sessionId = UUID.randomUUID().toString();
         PuppetNodeSession session = new PuppetNodeSession(sessionId, null,
@@ -86,9 +114,10 @@ public class PuppetNodeLifecycleService {
         session.setCacheMode(true);
         session.setPuppetId(puppetId);
         session.setProjectId(projectId);
+        if (hostId != null) session.bindHostId(hostId);
 
         try {
-            String savedSummary = PuppetNodeSessionWorkDirUtil.loadReconSummary(userId, puppetId);
+            String savedSummary = reconRepository.load(userId, puppetId);
             if (savedSummary != null) {
                 session.setReconSummary(savedSummary);
             }
@@ -103,7 +132,7 @@ public class PuppetNodeLifecycleService {
     }
 
     private boolean doInitConn(AbstractPuppetNode node, String sessionId,
-                               String userId, String projectId) throws Exception {
+                               String userId, String projectId, String selectedHostId) throws Exception {
         Puppet puppet = node.getPuppet();
         Map<String, Object> result = node.testConnection();
         if (!isConnectionSuccess(result)) return false;
@@ -113,14 +142,19 @@ public class PuppetNodeLifecycleService {
             logger.debug("测试连接成功但缺少 hostId，sessionId={}", sessionId);
             return false;
         }
+        if (selectedHostId != null && !selectedHostId.isBlank()
+                && !selectedHostId.trim().equals(hostId)) {
+            return false;
+        }
 
-        seedNodeContext(node, hostId, result.get("components"));
+        String boundHostId = selectedHostId != null && !selectedHostId.isBlank()
+                ? selectedHostId.trim() : hostId;
+        seedNodeContext(node, boundHostId, result.get("components"));
 
         PuppetNodeSession session = new PuppetNodeSession(sessionId, node,
                 System.currentTimeMillis(), userId);
         session.setProjectId(projectId);
-        if (hostId != null) session.setCurrentHostId(hostId);
-
+        if (boundHostId != null) session.bindHostId(boundHostId);
         loadPersistedReconSummary(session, node, userId);
         registerSessionWithInitialAiThread(
                 session, puppet != null ? puppet.getPuppetId() : null);
@@ -203,7 +237,7 @@ public class PuppetNodeLifecycleService {
                 return;
             }
             String puppetId = node.getPuppet().getPuppetId();
-            String savedSummary = PuppetNodeSessionWorkDirUtil.loadReconSummary(userId, puppetId);
+            String savedSummary = reconRepository.load(userId, puppetId);
             if (savedSummary != null) {
                 session.setReconSummary(savedSummary);
                 logger.debug("已回填侦察摘要, puppetId={}, length={}", puppetId, savedSummary.length());

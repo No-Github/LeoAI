@@ -6,13 +6,16 @@ import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
 import org.leo.dao.mapper.ProjectMapper;
 import org.leo.service.PuppetService;
+import org.mockito.InOrder;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -105,11 +108,46 @@ class ProjectServiceTest {
         assertTrue(service.canEditContent(ownedProject, user));
     }
 
+    @Test
+    void deletesRelationsAndClearsSessionReferencesBeforeDeletingProject() {
+        ProjectMapper mapper = mock(ProjectMapper.class);
+        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        Project project = projectWithId("project-1");
+        when(mapper.deletePuppetRelations("project-1")).thenReturn(3);
+        when(mapper.clearSessionProject("project-1")).thenReturn(2);
+        when(mapper.deleteProject("project-1")).thenReturn(1);
+
+        assertEquals(3, service.delete(project));
+
+        InOrder order = inOrder(mapper);
+        order.verify(mapper).deletePuppetRelations("project-1");
+        order.verify(mapper).clearSessionProject("project-1");
+        order.verify(mapper).deleteProject("project-1");
+    }
+
+    @Test
+    void reportsConcurrentOrMissingProjectDeletion() {
+        ProjectMapper mapper = mock(ProjectMapper.class);
+        ProjectService service = new ProjectService(mapper, mock(PuppetService.class));
+        when(mapper.deleteProject("project-1")).thenReturn(0);
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> service.delete(projectWithId("project-1")));
+
+        assertEquals("删除项目失败", error.getMessage());
+    }
+
     private static Project project(String owner, String teamId, String permission) {
         Project project = new Project();
         project.setOwnerUserId(owner);
         project.setTeamId(teamId);
         project.setPermission(permission);
+        return project;
+    }
+
+    private static Project projectWithId(String projectId) {
+        Project project = new Project();
+        project.setProjectId(projectId);
         return project;
     }
 

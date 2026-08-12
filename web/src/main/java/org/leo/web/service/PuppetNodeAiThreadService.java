@@ -14,6 +14,7 @@ import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetAiCheckpointRepository;
 import org.leo.web.exception.ApiException;
 import org.leo.web.util.ControllerUtil;
 import org.slf4j.Logger;
@@ -43,17 +44,20 @@ public class PuppetNodeAiThreadService {
     private final SessionWarmupService sessionWarmupService;
     private final PuppetNodeAiAgentRegistry agentRegistry;
     private final AiTurnProtocolService turnProtocolService;
+    private final PuppetAiCheckpointRepository checkpointRepository;
 
     public PuppetNodeAiThreadService(AiModelConfigService modelConfigService,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      PuppetNodeAiAgentRegistry agentRegistry,
-                                     AiTurnProtocolService turnProtocolService) {
+                                     AiTurnProtocolService turnProtocolService,
+                                     PuppetAiCheckpointRepository checkpointRepository) {
         this.modelConfigService = modelConfigService;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
         this.turnProtocolService = turnProtocolService;
+        this.checkpointRepository = checkpointRepository;
     }
 
     public ThreadResolution ensureThreadReady(
@@ -213,7 +217,7 @@ public class PuppetNodeAiThreadService {
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
         if (puppetId != null) {
             conversationStore.deleteThread(threadId);
-            PuppetNodeSessionWorkDirUtil.deleteAiThreadCheckpoints(
+            checkpointRepository.delete(
                     session.getCreateByUser(), puppetId, threadId);
         }
     }
@@ -402,7 +406,7 @@ public class PuppetNodeAiThreadService {
 
     private boolean hasThreadCheckpoint(PuppetNodeSession session, String threadId) {
         String puppetId = PuppetNodeSessionWorkDirUtil.resolvePuppetId(session);
-        return puppetId != null && PuppetNodeSessionWorkDirUtil.hasAiThreadCheckpoint(
+        return puppetId != null && checkpointRepository.exists(
                 session.getCreateByUser(), puppetId, threadId);
     }
 

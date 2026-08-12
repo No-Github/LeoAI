@@ -9,8 +9,6 @@ import org.leo.core.puppet.capability.BasicInfoCapable;
 import org.leo.core.puppet.capability.PuppetNodeCapabilityRegistry;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
-import org.leo.web.dto.puppetnode.CacheCheckResponse;
 import org.leo.web.dto.puppetnode.PuppetIdRequest;
 import org.leo.web.dto.puppetnode.SessionIdRequest;
 import org.leo.service.PuppetConnService;
@@ -18,6 +16,8 @@ import org.leo.service.project.ProjectService;
 import org.leo.web.exception.ApiException;
 import org.leo.web.security.PermissionService;
 import org.leo.web.service.PuppetNodeLifecycleService;
+import org.leo.web.service.PuppetCacheService;
+import org.leo.web.service.PuppetHostDiscoveryService;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,15 +37,21 @@ public class PuppetNodeController {
     private final PermissionService permissionService;
     private final PuppetNodeLifecycleService puppetNodeLifecycleService;
     private final ProjectService projectService;
+    private final PuppetCacheService cacheService;
+    private final PuppetHostDiscoveryService hostDiscoveryService;
 
     public PuppetNodeController(PuppetConnService puppetConnService,
                                 PermissionService permissionService,
                                 PuppetNodeLifecycleService puppetNodeLifecycleService,
-                                ProjectService projectService) {
+                                ProjectService projectService,
+                                PuppetCacheService cacheService,
+                                PuppetHostDiscoveryService hostDiscoveryService) {
         this.puppetConnService = puppetConnService;
         this.permissionService = permissionService;
         this.puppetNodeLifecycleService = puppetNodeLifecycleService;
         this.projectService = projectService;
+        this.cacheService = cacheService;
+        this.hostDiscoveryService = hostDiscoveryService;
     }
 
     /**
@@ -54,11 +60,30 @@ public class PuppetNodeController {
     @RequestMapping(value = "/init", method = RequestMethod.GET)
     public HashMap<String, Object> initPuppet(HttpServletRequest request,
                                               @RequestParam("puppetId") String puppetId,
-                                              @RequestParam(value = "projectId", required = false) String projectId) throws Exception {
+                                              @RequestParam(value = "projectId", required = false) String projectId,
+                                              @RequestParam(value = "hostId", required = false) String hostId) throws Exception {
         User user = permissionService.requireLogin(request);
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
         String projectContext = requireProjectContext(projectId, puppet.getPuppetId(), user);
-        return ApiResponse.success(puppetNodeLifecycleService.initLiveSession(puppet, user, projectContext));
+        return ApiResponse.success(puppetNodeLifecycleService.initLiveSession(puppet, user, projectContext, hostId));
+    }
+
+    /** 探测后端 HostId，不创建 session。 */
+    @RequestMapping(value = "/discover-hosts", method = RequestMethod.GET)
+    public Map<String, Object> discoverHosts(HttpServletRequest request,
+                                             @RequestParam("puppetId") String puppetId,
+                                             @RequestParam(value = "projectId", required = false) String projectId,
+                                             @RequestParam(value = "force", defaultValue = "false") boolean force) throws Exception {
+        User user = permissionService.requireLogin(request);
+        Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
+        requireProjectContext(projectId, puppet.getPuppetId(), user);
+        PuppetHostDiscoveryService.DiscoveryResult discovery = hostDiscoveryService.discover(puppet, user, force);
+        Map<String, Object> result = new HashMap<>();
+        result.put("hosts", discovery.hostIds());
+        result.put("count", discovery.hostIds().size());
+        result.put("discoveredAt", discovery.discoveredAt());
+        result.put("cached", discovery.reused());
+        return ApiResponse.success(result);
     }
 
     /**
@@ -71,11 +96,7 @@ public class PuppetNodeController {
         User user = permissionService.requireLogin(request);
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
 
-        String userId = user.getUserId();
-        boolean hasCache = PuppetNodeSessionWorkDirUtil.hasPuppetCache(userId, puppet.getPuppetId());
-        String saveTime = hasCache ? PuppetNodeSessionWorkDirUtil.getPuppetCacheSaveTime(userId, puppet.getPuppetId()) : null;
-
-        return ApiResponse.success(new CacheCheckResponse(hasCache, saveTime));
+        return ApiResponse.success(cacheService.status(user.getUserId(), puppet.getPuppetId()));
     }
 
     /**
@@ -86,11 +107,27 @@ public class PuppetNodeController {
     @RequestMapping(value = "/init-cache", method = RequestMethod.GET)
     public Map<String, Object> initCache(HttpServletRequest request,
                                          @RequestParam("puppetId") String puppetId,
-                                         @RequestParam(value = "projectId", required = false) String projectId) {
+                                         @RequestParam(value = "projectId", required = false) String projectId,
+                                         @RequestParam(value = "hostId", required = false) String hostId) {
         User user = permissionService.requireLogin(request);
         Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
         String projectContext = requireProjectContext(projectId, puppet.getPuppetId(), user);
-        return ApiResponse.success(puppetNodeLifecycleService.initCacheSession(puppet, user, projectContext));
+        return ApiResponse.success(puppetNodeLifecycleService.initCacheSession(puppet, user, projectContext, hostId));
+    }
+
+    /** 查询本地缓存中已保存的 HostId，不创建 session。 */
+    @RequestMapping(value = "/cache-hosts", method = RequestMethod.GET)
+    public Map<String, Object> cacheHosts(HttpServletRequest request,
+                                          @RequestParam("puppetId") String puppetId,
+                                          @RequestParam(value = "projectId", required = false) String projectId) {
+        User user = permissionService.requireLogin(request);
+        Puppet puppet = permissionService.requireAccessiblePuppetChain(puppetId, user);
+        requireProjectContext(projectId, puppet.getPuppetId(), user);
+        List<String> hosts = cacheService.hostIds(user.getUserId(), puppet.getPuppetId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("hosts", hosts);
+        result.put("count", hosts.size());
+        return ApiResponse.success(result);
     }
 
     /**
@@ -129,8 +166,8 @@ public class PuppetNodeController {
         // 缓存模式：直接从 puppet 级持久化目录读取，不尝试实时连接
         if (session != null && session.isCacheMode()) {
             String pId = session.getPuppetId();
-            Map<String, Object> cached = PuppetNodeSessionWorkDirUtil.loadBasicInfo(
-                    session.getCreateByUser(), pId);
+            Map<String, Object> cached = cacheService.loadBasicInfo(
+                    session.getCreateByUser(), pId, session.getCurrentHostId());
             if (cached != null) {
                 Map<String, Object> result = new HashMap<>();
                 result.put("BasicInfo", cached);
@@ -149,7 +186,7 @@ public class PuppetNodeController {
                 String hostId = session.getCurrentHostId();
                 if (hostId != null) {
                     session.setBasicInfo(hostId, basicInfo);
-                    PuppetNodeSessionWorkDirUtil.saveBasicInfo(sessionId, hostId, basicInfo);
+                    cacheService.saveBasicInfo(sessionId, hostId, basicInfo);
                 }
             }
         }

@@ -9,27 +9,33 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PuppetNodeSessionHostIdTest {
 
     @Test
-    void followsNodeRebindAndInvalidatesHostScopedCaches() {
+    void bindsOnceAndRejectsNodeRebind() {
         HostScopedNode node = new HostScopedNode();
         PuppetNodeSession session = new PuppetNodeSession();
         session.setSessionId("session-1");
         session.setPuppetNode(node);
-        session.setCurrentHostId("host-1");
+        session.bindHostId("host-1");
         session.setBasicInfo("host-1", Map.of("hostname", "old"));
         session.putAiContextValue("basic-info", Map.of("hostname", "old"));
 
-        node.setHostId("host-2");
+        assertThrows(IllegalStateException.class, () -> node.setHostId("host-2"));
 
-        assertEquals("host-2", session.getCurrentHostId());
-        assertTrue(session.getAllHostIds().containsAll(Set.of("host-1", "host-2")));
-        assertNull(session.getBasicInfo("host-1"));
-        assertNull(session.getAiContextValue("basic-info"));
+        assertEquals("host-1", session.getCurrentHostId());
+        assertEquals(Map.of("hostname", "old"), session.getBasicInfo("host-1"));
+        assertEquals(Map.of("hostname", "old"), session.getAiContextValue("basic-info"));
+    }
+
+    @Test
+    void rejectsRebindingToAnotherHostId() {
+        PuppetNodeSession session = new PuppetNodeSession();
+        session.bindHostId("host-1");
+        session.bindHostId("host-1");
+        assertThrows(IllegalStateException.class, () -> session.bindHostId("host-2"));
     }
 
     private static final class HostScopedNode extends AbstractPuppetNode implements HostScopedCapable {

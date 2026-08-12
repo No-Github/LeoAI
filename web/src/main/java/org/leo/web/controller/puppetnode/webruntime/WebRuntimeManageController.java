@@ -4,6 +4,7 @@ import org.leo.core.puppet.capability.WebRuntimeManageCapable;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetHostCacheRepository;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,6 +17,12 @@ import java.util.Map;
 @RestController
 @RequestMapping("/puppet-node/web-runtime")
 public class WebRuntimeManageController {
+
+    private final PuppetHostCacheRepository hostCacheRepository;
+
+    public WebRuntimeManageController(PuppetHostCacheRepository hostCacheRepository) {
+        this.hostCacheRepository = hostCacheRepository;
+    }
 
     @RequestMapping(value = "/inspect", method = RequestMethod.POST)
     public HashMap<String, Object> inspect(@RequestBody HashMap<String, Object> params) {
@@ -69,7 +76,7 @@ public class WebRuntimeManageController {
     private Map<String, Object> resolveBasicInfo(String sessionId) {
         PuppetNodeSession session = ControllerUtil.getPuppetNodeSession(sessionId);
         Map<String, Object> basicInfo = session != null ? session.getBasicInfo(session.getCurrentHostId()) : null;
-        if (basicInfo == null) basicInfo = PuppetNodeSessionWorkDirUtil.loadBasicInfo(sessionId);
+        if (basicInfo == null) basicInfo = hostCacheRepository.loadBasicInfo(sessionId);
         if (basicInfo == null) throw new IllegalArgumentException("会话中不存在基础信息: " + sessionId);
         return basicInfo;
     }

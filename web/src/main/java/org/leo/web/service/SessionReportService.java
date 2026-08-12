@@ -2,7 +2,8 @@ package org.leo.web.service;
 
 import org.leo.core.entity.Puppet;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetHostCacheRepository;
+import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.service.PuppetService;
 import org.leo.web.dto.platform.session.SessionDtos.ReportResponse;
 import org.leo.web.exception.ApiException;
@@ -28,10 +29,15 @@ public class SessionReportService {
             .withZone(ZoneId.systemDefault());
 
     private final PuppetService puppetService;
+    private final PuppetHostCacheRepository hostCacheRepository;
+    private final PuppetReconRepository reconRepository;
 
     @Autowired
-    public SessionReportService(PuppetService puppetService) {
+    public SessionReportService(PuppetService puppetService, PuppetHostCacheRepository hostCacheRepository,
+                                PuppetReconRepository reconRepository) {
         this.puppetService = puppetService;
+        this.hostCacheRepository = hostCacheRepository;
+        this.reconRepository = reconRepository;
     }
 
     /**
@@ -53,8 +59,8 @@ public class SessionReportService {
 
         StringBuilder sb = new StringBuilder();
         appendHeader(sb, puppetName, connLink, reportTime);
-        appendBasicInfoSection(sb, PuppetNodeSessionWorkDirUtil.loadBasicInfo(userId, puppetId));
-        appendReconSummarySection(sb, PuppetNodeSessionWorkDirUtil.loadReconSummary(userId, puppetId));
+        appendBasicInfoSection(sb, hostCacheRepository.loadBasicInfo(userId, puppetId, session.getCurrentHostId()));
+        appendReconSummarySection(sb, reconRepository.load(userId, puppetId));
 
         String filename = "recon-report-" + puppetName.replaceAll("[^\\w\\-]", "_") + ".md";
         return new ReportResponse(session.getSessionId(), sb.toString(), filename);

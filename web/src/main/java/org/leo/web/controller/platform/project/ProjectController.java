@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.leo.core.entity.Project;
 import org.leo.core.entity.Puppet;
 import org.leo.core.entity.User;
+import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.leo.core.util.ApiResponse;
 import org.leo.service.project.ProjectService;
@@ -90,6 +91,20 @@ public class ProjectController {
         User user = permissionService.requireLogin(request);
         Project project = requireManageable(body != null ? body.projectId() : null, user);
         return ApiResponse.success(projectService.archive(project));
+    }
+
+    @PostMapping("/delete")
+    public Map<String, Object> deleteProject(HttpServletRequest request,
+                                              @RequestBody ProjectIdRequest body) {
+        User user = permissionService.requireLogin(request);
+        Project project = requireManageable(body != null ? body.projectId() : null, user);
+        String projectId = project.getProjectId();
+        int detachedHostCount = projectService.delete(project);
+        int retainedSessionCount = clearProjectFromActiveSessions(projectId);
+        return ApiResponse.success(Map.of(
+                "projectId", projectId,
+                "detachedHostCount", detachedHostCount,
+                "retainedSessionCount", retainedSessionCount));
     }
 
     @GetMapping("/{projectId}/puppets")
@@ -198,5 +213,16 @@ public class ProjectController {
                 .filter(session -> session != null && projectId.equals(session.getProjectId()))
                 .filter(session -> PermissionPolicy.canAccessSession(session, user))
                 .count();
+    }
+
+    private int clearProjectFromActiveSessions(String projectId) {
+        int changed = 0;
+        for (PuppetNodeSession session : PuppetNodeSessionContainer.getAllSession().values()) {
+            if (session != null && projectId.equals(session.getProjectId())) {
+                session.setProjectId(null);
+                changed++;
+            }
+        }
+        return changed;
     }
 }

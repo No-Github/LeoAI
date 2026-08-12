@@ -3,7 +3,7 @@ package org.leo.web.service;
 import org.leo.ai.service.ReconSummaryDigestService;
 import org.leo.ai.service.ReconSummaryOrganizeService;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetReconRepository;
 import org.leo.web.dto.platform.session.SessionDtos.AutoAppendToggleResponse;
 import org.leo.web.dto.platform.session.SessionDtos.DigestGenerateResponse;
 import org.leo.web.dto.platform.session.SessionDtos.DigestResponse;
@@ -25,16 +25,19 @@ public class ReconSummaryService {
 
     private final ReconSummaryOrganizeService reconSummaryOrganizeService;
     private final ReconSummaryDigestService reconSummaryDigestService;
+    private final PuppetReconRepository repository;
 
     @Autowired
     public ReconSummaryService(ReconSummaryOrganizeService reconSummaryOrganizeService,
-                               ReconSummaryDigestService reconSummaryDigestService) {
+                               ReconSummaryDigestService reconSummaryDigestService,
+                               PuppetReconRepository repository) {
         this.reconSummaryOrganizeService = reconSummaryOrganizeService;
         this.reconSummaryDigestService = reconSummaryDigestService;
+        this.repository = repository;
     }
 
     public ReconSummaryResponse load(String sessionId, PuppetNodeSession session) {
-        String persisted = PuppetNodeSessionWorkDirUtil.loadReconSummary(sessionId);
+        String persisted = repository.load(sessionId);
         if (persisted != null) session.setReconSummary(persisted);
 
         return new ReconSummaryResponse(
@@ -47,17 +50,17 @@ public class ReconSummaryService {
                                           PuppetNodeSession session,
                                           String summary) {
         session.setReconSummary(summary == null || summary.isBlank() ? null : summary);
-        PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, session.getReconSummary());
+        repository.save(sessionId, session.getReconSummary());
         triggerDigestIfNeeded(session);
         return new ReconSummaryMutateResponse(sessionId, session.getReconSummary(), "侦察摘要已更新");
     }
 
     public ReconSummaryMutateResponse append(String sessionId, PuppetNodeSession session, String content) {
-        String updated = PuppetNodeSessionWorkDirUtil.appendReconSummary(sessionId, content);
+        String updated = repository.append(sessionId, content);
         if (updated == null) {
             session.appendReconSummary(content);
             updated = session.getReconSummary();
-            PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, updated);
+            repository.save(sessionId, updated);
         } else {
             session.setReconSummary(updated);
         }
@@ -67,7 +70,7 @@ public class ReconSummaryService {
 
     public ReconSummaryMutateResponse clear(String sessionId, PuppetNodeSession session) {
         session.setReconSummary(null);
-        PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, null);
+        repository.save(sessionId, null);
         return new ReconSummaryMutateResponse(sessionId, null, "侦察摘要已清空");
     }
 
@@ -77,7 +80,7 @@ public class ReconSummaryService {
         }
         String organized = reconSummaryOrganizeService.organize(session.getReconSummary());
         session.setReconSummary(organized);
-        PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, organized);
+        repository.save(sessionId, organized);
         if (organized.length() >= ReconSummaryDigestService.DIGEST_THRESHOLD) {
             reconSummaryDigestService.generateAndSaveAsync(session);
         }

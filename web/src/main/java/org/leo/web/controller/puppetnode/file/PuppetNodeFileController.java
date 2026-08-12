@@ -8,6 +8,7 @@ import org.leo.web.exception.ApiException;
 import org.leo.web.util.AuditLogUtil;
 import org.leo.web.util.ControllerUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetSessionFileRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -37,6 +38,11 @@ import org.leo.core.entity.User;
 @RequestMapping("/puppet-node/file")
 public class PuppetNodeFileController {
     private static final Logger logger = LoggerFactory.getLogger(PuppetNodeFileController.class);
+    private final PuppetSessionFileRepository fileRepository;
+
+    public PuppetNodeFileController(PuppetSessionFileRepository fileRepository) {
+        this.fileRepository = fileRepository;
+    }
 
 
     // 文件预览大小（1MB）
@@ -67,7 +73,7 @@ public class PuppetNodeFileController {
             String sessionId = (String) params.get("sessionId");
             if (sessionId != null && !sessionId.isBlank()) {
                 try {
-                    PuppetNodeSessionWorkDirUtil.saveFileList(sessionId, path, results);
+                    fileRepository.saveFileList(sessionId, path, results);
                 } catch (Exception ex) {
                     logger.warn("写入会话文件列表失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
                 }
@@ -236,7 +242,7 @@ public class PuppetNodeFileController {
                     String sessionId = (String) params.get("sessionId");
                     if (sessionId != null && !sessionId.isBlank()) {
                         try {
-                            PuppetNodeSessionWorkDirUtil.appendDownloadChunk(sessionId, path, 0L, chunkData);
+                            fileRepository.appendDownloadChunk(sessionId, path, 0L, chunkData);
                         } catch (Exception ex) {
                             logger.warn("预览写入会话文件目录失败, sessionId={}, path={}: {}", sessionId, path, ex.getMessage());
                         }

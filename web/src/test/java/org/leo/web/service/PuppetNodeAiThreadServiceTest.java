@@ -7,6 +7,7 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiThreadRecord;
 import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
+import org.leo.core.repository.session.PuppetAiCheckpointRepository;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -72,7 +73,8 @@ class PuppetNodeAiThreadServiceTest {
                 conversationStore,
                 sessionWarmupService,
                 mock(PuppetNodeAiAgentRegistry.class),
-                mock(AiTurnProtocolService.class));
+                mock(AiTurnProtocolService.class),
+                mock(PuppetAiCheckpointRepository.class));
         return new Fixture(service, conversationStore, sessionWarmupService);
     }
 

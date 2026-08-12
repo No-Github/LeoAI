@@ -29,6 +29,15 @@ public interface ProjectMapper {
             "status=#{status}, team_id=#{teamId}, permission=#{permission}, update_time=#{updateTime} WHERE project_id=#{projectId}")
     boolean updateProject(Project project);
 
+    @Delete("DELETE FROM project_puppets WHERE project_id=#{projectId}")
+    int deletePuppetRelations(@Param("projectId") String projectId);
+
+    @Update("UPDATE puppet_sessions SET project_id=NULL WHERE project_id=#{projectId}")
+    int clearSessionProject(@Param("projectId") String projectId);
+
+    @Delete("DELETE FROM projects WHERE project_id=#{projectId}")
+    int deleteProject(@Param("projectId") String projectId);
+
     @Insert("INSERT INTO project_puppets (project_id, puppet_id, alias, environment, tags, sort_order, added_by_user_id, create_time) " +
             "VALUES (#{projectId}, #{puppetId}, #{alias}, #{environment}, #{tags}, #{sortOrder}, #{addedByUserId}, #{createTime}) " +
             "ON CONFLICT(project_id, puppet_id) DO UPDATE SET alias=excluded.alias, environment=excluded.environment, " +

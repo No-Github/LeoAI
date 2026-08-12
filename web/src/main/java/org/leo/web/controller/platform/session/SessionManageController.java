@@ -126,7 +126,8 @@ public class SessionManageController {
                 session.getUpdateTime(),
                 session.getLastActiveTime(),
                 session.isCacheMode(),
-                session.getCapabilities());
+                session.getCapabilities(),
+                session.getCurrentHostId());
     }
 
     private List<ConnLinkItem> buildCacheModeChain(PuppetNodeSession session) {
