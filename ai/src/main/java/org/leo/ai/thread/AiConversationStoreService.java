@@ -14,6 +14,7 @@ import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.dao.mapper.AiConversationMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,7 @@ public class AiConversationStoreService {
     private final AiMessageRepository messages;
     private final AiContextCheckpointRepository checkpoints;
 
+    @Autowired
     public AiConversationStoreService(AiConversationMapper mapper,
                                       AiEventJournalRepository eventJournal,
                                       AiExecutionLeaseRepository executionLease,
