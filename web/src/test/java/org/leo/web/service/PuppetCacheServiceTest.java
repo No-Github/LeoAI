@@ -2,6 +2,7 @@ package org.leo.web.service;
 
 import org.junit.jupiter.api.Test;
 import org.leo.core.repository.session.PuppetHostCacheRepository;
+import org.leo.core.repository.session.AtomicFileStore;
 import org.leo.web.exception.ApiException;
 
 import java.util.List;
@@ -26,7 +27,7 @@ class PuppetCacheServiceTest {
     }
 
     private PuppetCacheService serviceWithHosts(List<String> hosts) {
-        return new PuppetCacheService(new PuppetHostCacheRepository()) {
+        return new PuppetCacheService(new PuppetHostCacheRepository(new AtomicFileStore())) {
             @Override
             public List<String> hostIds(String userId, String puppetId) {
                 return hosts;

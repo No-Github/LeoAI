@@ -2,14 +2,11 @@ package org.leo.core.repository.session;
 
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.springframework.stereotype.Repository;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -26,6 +23,11 @@ public class PuppetHostCacheRepository {
     private static final String BASIC_INFO_SUBDIR = "basic-info";
     private static final String HOST_DISCOVERY_JSON = "host-discovery.json";
     private static final String SAVE_TIME_KEY = "saveTime";
+    private final AtomicFileStore fileStore;
+
+    public PuppetHostCacheRepository(AtomicFileStore fileStore) {
+        this.fileStore = fileStore;
+    }
 
     public File saveBasicInfo(String sessionId, String hostId, Map<String, Object> basicInfo) {
         if (sessionId == null || sessionId.isBlank() || hostId == null || hostId.isBlank() || basicInfo == null) {
@@ -40,7 +42,7 @@ public class PuppetHostCacheRepository {
             root.putAll(basicInfo);
             root.put("hostId", hostId.trim());
             root.put(SAVE_TIME_KEY, Instant.now().toString());
-            return writeJson(new File(hostDir, encodeHostId(hostId.trim()) + ".json"), root);
+            return fileStore.writeJson(new File(hostDir, encodeHostId(hostId.trim()) + ".json"), root);
         } catch (Exception e) {
             return null;
         }
@@ -51,7 +53,7 @@ public class PuppetHostCacheRepository {
         try {
             File file = new File(new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(userId, puppetId), BASIC_INFO_SUBDIR),
                     encodeHostId(hostId.trim()) + ".json");
-            return readJsonMap(file);
+            return fileStore.readJsonMap(file);
         } catch (Exception e) {
             return null;
         }
@@ -74,7 +76,7 @@ public class PuppetHostCacheRepository {
             LinkedHashSet<String> ids = new LinkedHashSet<>();
             if (files != null) {
                 for (File file : files) {
-                    Map<String, Object> data = readJsonMap(file);
+                    Map<String, Object> data = fileStore.readJsonMap(file);
                     String id = text(data == null ? null : data.get("hostId"));
                     if (id != null) ids.add(id);
                 }
@@ -96,7 +98,7 @@ public class PuppetHostCacheRepository {
             if (files == null || files.length == 0) return null;
             File newest = files[0];
             for (File file : files) if (file.lastModified() > newest.lastModified()) newest = file;
-            Map<String, Object> data = readJsonMap(newest);
+            Map<String, Object> data = fileStore.readJsonMap(newest);
             return text(data == null ? null : data.get(SAVE_TIME_KEY));
         } catch (Exception e) {
             return null;
@@ -114,14 +116,14 @@ public class PuppetHostCacheRepository {
             data.put("hostIds", List.copyOf(new LinkedHashSet<>(normalized)));
             data.put("discoveredAt", Instant.now().toString());
             data.put("fingerprint", fingerprint == null ? "" : fingerprint);
-            writeJson(file, data);
+            fileStore.writeJson(file, data);
         } catch (Exception ignored) { }
     }
 
     public Map<String, Object> loadHostDiscovery(String userId, String puppetId, String fingerprint) {
         try {
             File file = new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(userId, puppetId), HOST_DISCOVERY_JSON);
-            Map<String, Object> data = readJsonMap(file);
+            Map<String, Object> data = fileStore.readJsonMap(file);
             String expected = fingerprint == null ? "" : fingerprint;
             if (data == null || !expected.equals(String.valueOf(data.getOrDefault("fingerprint", "")))) return null;
             Object raw = data.get("hostIds");
@@ -140,23 +142,6 @@ public class PuppetHostCacheRepository {
         PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
         if (session == null || session.resolvePuppetId() == null) throw new IllegalStateException("session 未绑定 puppetId");
         return session;
-    }
-
-    private File writeJson(File file, Map<String, Object> data) throws Exception {
-        Files.write(file.toPath(), JsonUtil.toJsonString(data).getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        return file;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> readJsonMap(File file) {
-        try {
-            if (file == null || !file.exists() || file.length() == 0) return null;
-            return (Map<String, Object>) JsonUtil.fromJsonString(
-                    Files.readString(file.toPath(), StandardCharsets.UTF_8), LinkedHashMap.class);
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private String encodeHostId(String hostId) {

@@ -6,16 +6,18 @@ import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.springframework.stereotype.Repository;
 
 import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 
 /** Persistent puppet-level reconnaissance summary storage. */
 @Repository
 public class PuppetReconRepository {
 
     private static final String RECON_SUMMARY_MD = "recon-summary.md";
+    private final AtomicFileStore fileStore;
+
+    public PuppetReconRepository(AtomicFileStore fileStore) {
+        this.fileStore = fileStore;
+    }
 
     public synchronized File save(String sessionId, String content) {
         if (sessionId == null || sessionId.isBlank()) return null;
@@ -29,10 +31,9 @@ public class PuppetReconRepository {
                 sync(session, null);
                 return null;
             }
-            Files.write(file.toPath(), normalized.getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            File saved = fileStore.writeText(file, normalized);
             sync(session, normalized);
-            return file;
+            return saved;
         } catch (Exception e) {
             return null;
         }
@@ -45,11 +46,10 @@ public class PuppetReconRepository {
             PuppetNodeSession session = requireSession(sessionId);
             File file = new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(
                     session.getCreateByUser(), session.resolvePuppetId()), RECON_SUMMARY_MD);
-            String current = read(file);
+            String current = fileStore.readText(file);
             if (current == null) current = normalize(session.getReconSummary());
             String updated = current == null ? addition : current + "\n\n" + addition;
-            Files.write(file.toPath(), updated.getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            fileStore.writeText(file, updated);
             sync(session, updated);
             return updated;
         } catch (Exception e) {
@@ -70,7 +70,7 @@ public class PuppetReconRepository {
     public String load(String userId, String puppetId) {
         if (puppetId == null || puppetId.isBlank()) return null;
         try {
-            return read(new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(userId, puppetId), RECON_SUMMARY_MD));
+            return fileStore.readText(new File(PuppetNodeSessionWorkDirUtil.getPuppetWorkDir(userId, puppetId), RECON_SUMMARY_MD));
         } catch (Exception e) {
             return null;
         }
@@ -93,11 +93,6 @@ public class PuppetReconRepository {
             if (!java.util.Objects.equals(puppetId, session.resolvePuppetId())) continue;
             session.setReconSummary(content);
         }
-    }
-
-    private String read(File file) throws IOException {
-        if (file == null || !file.exists() || file.length() == 0) return null;
-        return normalize(Files.readString(file.toPath(), StandardCharsets.UTF_8));
     }
 
     private String normalize(String content) {

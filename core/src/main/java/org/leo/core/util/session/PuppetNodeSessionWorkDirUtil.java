@@ -1,21 +1,15 @@
 package org.leo.core.util.session;
 
 import org.leo.core.config.LeoConfig;
-import org.leo.core.entity.Puppet;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.util.json.JsonUtil;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.time.Instant;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -30,7 +24,7 @@ import java.util.stream.Stream;
  * ├── workspace/                   ← 用户个人工作区，可由文件模块读写
  * ├── puppets/{puppetId}/          ← puppet 级，跨 session 共享
  * │   ├── basic-info/{hostId}.json ← 按 HostId 隔离的 OS/硬件/中间件快照
- * │   ├── web-runtime-info.json    ← Java Web Runtime 快照（last-write-wins）
+ * │   ├── web-runtime/{hostId}.snapshot.json ← 按 HostId 隔离的 Web Runtime 快照
  * │   ├── recon-summary.md         ← 侦察摘要（覆盖/追加写，跨 session 共享）
  * │   ├── recon-summary.json       ← 结构化侦察摘要（last-write-wins，跨 session 共享）
  * │   ├── ai-threads/              ← Spring AI Graph checkpoint
@@ -48,7 +42,6 @@ public final class PuppetNodeSessionWorkDirUtil {
     private static final String WORKSPACE_SUBDIR   = "workspace";
     private static final String FILE_SUBDIR        = "file";
     private static final String AI_THREADS_SUBDIR  = "ai-threads";
-    private static final String WEB_RUNTIME_INFO_JSON = "web-runtime-info.json";
     private static final Pattern PATH_SEPARATORS   = Pattern.compile("[\\\\/]+");
 
     private PuppetNodeSessionWorkDirUtil() {}
@@ -147,36 +140,6 @@ public final class PuppetNodeSessionWorkDirUtil {
         return puppetDir;
     }
 
-    // ── 写入方法 ──────────────────────────────────────────────────────────────
-
-    /**
-     * 将 Web Runtime 快照写入 puppet 工作目录。
-     *
-     * <p>采用 last-write-wins 策略直接覆盖。
-     *
-     * @param sessionId 会话 ID
-     * @param snapshot  V2 Web Runtime 快照
-     * @return 写入的文件，失败时返回 null
-     */
-    public static File saveWebRuntimeInfo(String sessionId, Map<String, Object> snapshot) {
-        if (sessionId == null || sessionId.isBlank() || snapshot == null) {
-            return null;
-        }
-        Object schemaVersion = snapshot.get("schemaVersion");
-        if (!(schemaVersion instanceof Number) || ((Number) schemaVersion).intValue() != 2) {
-            return null;
-        }
-        try {
-            File targetDir = resolvePuppetDirFromSession(sessionId);
-            Map<String, Object> structured = new LinkedHashMap<>();
-            structured.put("saveTime", Instant.now().toString());
-            structured.putAll(snapshot);
-            return writeJson(new File(targetDir, WEB_RUNTIME_INFO_JSON), structured);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     // ── AI 线程目录 ───────────────────────────────────────────────────────────
 
     /**
@@ -265,39 +228,11 @@ public final class PuppetNodeSessionWorkDirUtil {
     }
 
     /**
-     * 从 sessionId 解析 puppet 工作目录。
-     * 优先从通用 PuppetNode 取 puppetId；缓存模式下从 session.getPuppetId() 取。
-     */
-    private static File resolvePuppetDirFromSession(String sessionId) {
-        PuppetNodeSession session = PuppetNodeSessionContainer.getSession(sessionId);
-        if (session != null) {
-            if (session.getPuppetNode() != null) {
-                Puppet puppet = session.getPuppetNode().getPuppet();
-                if (puppet != null && puppet.getPuppetId() != null && !puppet.getPuppetId().isBlank()) {
-                    return getPuppetWorkDir(session.getCreateByUser(), puppet.getPuppetId());
-                }
-            }
-            String pId = session.getPuppetId();
-            if (pId != null && !pId.isBlank()) {
-                return getPuppetWorkDir(session.getCreateByUser(), pId);
-            }
-        }
-        throw new IllegalStateException("session 未绑定 puppetId: " + sessionId);
-    }
-
-    /**
      * 从 session 解析 puppetId。缓存模式和正常连接模式都支持。
      */
     public static String resolvePuppetId(PuppetNodeSession session) {
         if (session == null) return null;
         return session.resolvePuppetId();
-    }
-
-    private static File writeJson(File file, Map<String, Object> data) throws Exception {
-        String json = JsonUtil.toJsonString(data);
-        Files.write(file.toPath(), json.getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        return file;
     }
 
     private static boolean deleteDir(Path path) {

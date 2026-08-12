@@ -8,7 +8,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import org.leo.ai.agent.AiAsyncExecutionConfig;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
+import org.leo.core.repository.session.PuppetReconRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -76,14 +76,17 @@ public class AutoReconAppendService {
     private final ChatModel chatModel;
     private final ReconSummaryDigestService reconSummaryDigestService;
     private final ReconSummaryOrganizeService reconSummaryOrganizeService;
+    private final PuppetReconRepository reconRepository;
 
     @Autowired
     public AutoReconAppendService(ChatModel chatModel,
                                   ReconSummaryDigestService reconSummaryDigestService,
-                                  ReconSummaryOrganizeService reconSummaryOrganizeService) {
+                                  ReconSummaryOrganizeService reconSummaryOrganizeService,
+                                  PuppetReconRepository reconRepository) {
         this.chatModel = chatModel;
         this.reconSummaryDigestService = reconSummaryDigestService;
         this.reconSummaryOrganizeService = reconSummaryOrganizeService;
+        this.reconRepository = reconRepository;
     }
 
     /**
@@ -143,11 +146,10 @@ public class AutoReconAppendService {
                 toAppend = toAppend.substring(0, MAX_APPEND_LEN);
             }
 
-            String updated = PuppetNodeSessionWorkDirUtil.appendReconSummary(sessionId, toAppend);
+            String updated = reconRepository.append(sessionId, toAppend);
             if (updated == null) {
-                session.appendReconSummary(toAppend);
-                updated = session.getReconSummary();
-                PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, updated);
+                log.warn("AutoReconAppend: 摘要持久化失败，跳过本次追加，session={}", sessionId);
+                return;
             }
 
             int summaryLen = updated != null ? updated.length() : 0;
@@ -156,8 +158,10 @@ public class AutoReconAppendService {
             if (summaryLen > AUTO_ORGANIZE_THRESHOLD) {
                 try {
                     String organized = reconSummaryOrganizeService.organize(updated);
-                    session.setReconSummary(organized);
-                    PuppetNodeSessionWorkDirUtil.saveReconSummary(sessionId, organized);
+                    if (reconRepository.save(sessionId, organized) == null) {
+                        log.warn("AutoReconAppend: 整理后的摘要持久化失败，保留原摘要，session={}", sessionId);
+                        return;
+                    }
                     log.debug("AutoReconAppend: 摘要已达 {} 字符，自动整理压缩至 {} 字符，session={}",
                             summaryLen, organized.length(), sessionId);
                     summaryLen = organized.length();

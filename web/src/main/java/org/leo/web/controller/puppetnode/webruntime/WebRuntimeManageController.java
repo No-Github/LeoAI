@@ -1,9 +1,9 @@
 package org.leo.web.controller.puppetnode.webruntime;
 
 import org.leo.core.puppet.capability.WebRuntimeManageCapable;
+import org.leo.core.repository.session.PuppetWebRuntimeRepository;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.util.ApiResponse;
-import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.leo.core.repository.session.PuppetHostCacheRepository;
 import org.leo.web.util.ControllerUtil;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,9 +19,12 @@ import java.util.Map;
 public class WebRuntimeManageController {
 
     private final PuppetHostCacheRepository hostCacheRepository;
+    private final PuppetWebRuntimeRepository webRuntimeRepository;
 
-    public WebRuntimeManageController(PuppetHostCacheRepository hostCacheRepository) {
+    public WebRuntimeManageController(PuppetHostCacheRepository hostCacheRepository,
+                                      PuppetWebRuntimeRepository webRuntimeRepository) {
         this.hostCacheRepository = hostCacheRepository;
+        this.webRuntimeRepository = webRuntimeRepository;
     }
 
     @RequestMapping(value = "/inspect", method = RequestMethod.POST)
@@ -36,11 +39,7 @@ public class WebRuntimeManageController {
                     string(middleware.get("Version")),
                     string(basicInfo.get("WebFramework")));
             if (sessionId != null && !sessionId.isBlank() && snapshot != null) {
-                try {
-                    PuppetNodeSessionWorkDirUtil.saveWebRuntimeInfo(sessionId, snapshot);
-                } catch (Exception ignored) {
-                    // Runtime inspection remains available when the optional session snapshot write fails.
-                }
+                webRuntimeRepository.save(sessionId, snapshot);
             }
             return ApiResponse.success(snapshot);
         } catch (IllegalArgumentException e) {

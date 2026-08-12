@@ -1,12 +1,10 @@
 package org.leo.core.repository.session;
 
-import org.leo.core.util.json.JsonUtil;
 import org.leo.core.util.session.PuppetNodeSessionWorkDirUtil;
 import org.springframework.stereotype.Repository;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -19,6 +17,11 @@ import java.util.Map;
 public class PuppetSessionFileRepository {
 
     private static final String FILEINFO_JSON = "fileinfo.json";
+    private final AtomicFileStore fileStore;
+
+    public PuppetSessionFileRepository(AtomicFileStore fileStore) {
+        this.fileStore = fileStore;
+    }
 
     public File saveFileList(String sessionId, String requestedPath, Map<String, Object> results) {
         if (results == null) return null;
@@ -39,7 +42,7 @@ public class PuppetSessionFileRepository {
             structured.put("listTime", Instant.now().toString());
             structured.put("count", results.get("count"));
             structured.put("fileList", results.get("fileList"));
-            return writeJson(target.resolve(FILEINFO_JSON).toFile(), structured);
+            return fileStore.writeJson(target.resolve(FILEINFO_JSON).toFile(), structured);
         } catch (Exception e) {
             return null;
         }
@@ -62,12 +65,6 @@ public class PuppetSessionFileRepository {
         } catch (IOException e) {
             return null;
         }
-    }
-
-    private File writeJson(File file, Map<String, Object> data) throws Exception {
-        Files.write(file.toPath(), JsonUtil.toJsonString(data).getBytes(StandardCharsets.UTF_8),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        return file;
     }
 
     private String text(Object value) {
