@@ -70,6 +70,33 @@ class SkillControllerBatchToggleTest {
     }
 
     @Test
+    void singleToggleRejectsInvalidScopeAsBadRequest() {
+        HashMap<String, Object> response = controller.toggle(new HashMap<>(Map.of(
+                "scope", "invalid-scope",
+                "name", "valid-name",
+                "enabled", true)));
+
+        assertEquals(400, response.get("code"));
+    }
+
+    @Test
+    void singleToggleInvalidatesProviderIndex() throws Exception {
+        writeSkill("toggle-skill", "published", false, false);
+        LeoSkillsProvider provider = new LeoSkillsProvider(registry);
+        controller = new SkillController(registry, provider, new SkillFileService(),
+                new SkillExportService(manifestService), manifestService);
+
+        assertFalse(provider.getFormattedSkills("puppet-node", null).contains("toggle-skill"));
+        HashMap<String, Object> response = controller.toggle(new HashMap<>(Map.of(
+                "scope", "puppet-node",
+                "name", "toggle-skill",
+                "enabled", true)));
+
+        assertEquals(200, response.get("code"));
+        assertTrue(provider.getFormattedSkills("puppet-node", null).contains("toggle-skill"));
+    }
+
+    @Test
     void batchDisableCanFailClosedAnOtherwiseInvalidSkill() throws Exception {
         writeSkill("invalid-skill", "published", true, true);
 

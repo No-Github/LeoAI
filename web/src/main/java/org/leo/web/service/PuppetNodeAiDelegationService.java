@@ -1,6 +1,5 @@
 package org.leo.web.service;
 
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnOrchestrator;
@@ -22,28 +21,28 @@ import java.util.function.Consumer;
 @Service
 public class PuppetNodeAiDelegationService {
 
-    private final AiModelConfigService modelConfigService;
     private final AiConversationStoreService conversationStore;
     private final PuppetNodeAiAgentRegistry agentRegistry;
     private final PuppetNodeAiDelegationPresenter delegationPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
     private final AiExecutionLeaseService executionLeaseService;
+    private final AiModelChannelResolver channelResolver;
 
-    public PuppetNodeAiDelegationService(AiModelConfigService modelConfigService,
-                                         AiConversationStoreService conversationStore,
+    public PuppetNodeAiDelegationService(AiConversationStoreService conversationStore,
                                          PuppetNodeAiAgentRegistry agentRegistry,
                                          PuppetNodeAiDelegationPresenter delegationPresenter,
                                          AiTurnCoordinator turnCoordinator,
                                          AiTurnOrchestrator turnOrchestrator,
-                                         AiExecutionLeaseService executionLeaseService) {
-        this.modelConfigService = modelConfigService;
+                                         AiExecutionLeaseService executionLeaseService,
+                                         AiModelChannelResolver channelResolver) {
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.delegationPresenter = delegationPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
         this.executionLeaseService = executionLeaseService;
+        this.channelResolver = channelResolver;
     }
 
     public Map<String, Object> execute(PuppetNodeSession session,
@@ -128,26 +127,9 @@ public class PuppetNodeAiDelegationService {
 
     private PuppetNodeAiAgentRegistry.Runtime resolveAgent(
             PuppetNodeSession session, AiThread thread) {
-        AiModelConfig requested = resolveChannel(thread.getAiConfigId());
+        AiModelConfig requested = channelResolver.require(thread.getAiConfigId());
         if (thread.getAiConfigId() == null) thread.setAiConfigId(requested.getId());
         return agentRegistry.resolve(session, thread, requested, null);
-    }
-
-    private AiModelConfig resolveChannel(Integer configId) {
-        try {
-            AiModelConfig resolved = modelConfigService.resolve(configId);
-            if (resolved == null) {
-                if (configId != null) {
-                    throw ApiException.notFound(
-                            "AI 模型不存在或已删除，configId: " + configId);
-                }
-                throw ApiException.notFound(
-                        "未配置激活的 AI 模型，请先在设置中添加并激活一条");
-            }
-            return resolved;
-        } catch (IllegalArgumentException | IllegalStateException error) {
-            throw ApiException.notFound(error.getMessage());
-        }
     }
 
 }

@@ -1,7 +1,6 @@
 package org.leo.web.service;
 
 import jakarta.servlet.http.HttpSession;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
@@ -28,16 +27,16 @@ import java.util.UUID;
 public class PlatformAiThreadService {
 
     private static final String SESSION_ATTR_PLATFORM_AI_STATE_ID = "platformAiStateId";
-    private final AiModelConfigService modelConfigService;
+    private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
     private final PlatformAiAgentRegistry agentRegistry;
     private final AiTurnProtocolService turnProtocolService;
 
-    public PlatformAiThreadService(AiModelConfigService modelConfigService,
+    public PlatformAiThreadService(AiModelChannelResolver channelResolver,
                                    AiConversationStoreService conversationStore,
                                    PlatformAiAgentRegistry agentRegistry,
                                    AiTurnProtocolService turnProtocolService) {
-        this.modelConfigService = modelConfigService;
+        this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.turnProtocolService = turnProtocolService;
@@ -180,18 +179,7 @@ public class PlatformAiThreadService {
         List<Map<String, Object>> events = new ArrayList<>();
         for (AiSseEvent event :
                 conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("seq", event.seq());
-            item.put("timestamp", event.timestamp());
-            item.put("name", event.name());
-            item.put("data", event.data());
-            if (event.subagentInvocationId() != null) {
-                item.put("subagentInvocationId", event.subagentInvocationId());
-            }
-            if (event.turnId() != null) item.put("turnId", event.turnId());
-            if (event.itemId() != null) item.put("itemId", event.itemId());
-            if (event.runId() != null) item.put("runId", event.runId());
-            events.add(item);
+            events.add(AiEventPayloadMapper.toMap(event));
         }
 
         Map<String, Object> data = new HashMap<>();
@@ -263,23 +251,8 @@ public class PlatformAiThreadService {
         return payload;
     }
 
-    private AiModelConfig resolveChannel(Integer configId) {
-        try {
-            AiModelConfig config = modelConfigService.resolve(configId);
-            if (config == null) {
-                if (configId != null) {
-                    throw ApiException.notFound("AI 模型不存在或已删除，configId: " + configId);
-                }
-                throw ApiException.notFound("未配置激活的 AI 模型，请先在设置中添加并激活一条");
-            }
-            return config;
-        } catch (IllegalArgumentException | IllegalStateException error) {
-            throw ApiException.notFound(error.getMessage());
-        }
-    }
-
     private AiModelConfig resolveOptionalChannel(Integer configId) {
-        return configId != null ? resolveChannel(configId) : null;
+        return channelResolver.optional(configId);
     }
 
     private AiThreadRecord requireOwnedThread(User user, String threadId) {

@@ -3,7 +3,6 @@ package org.leo.web.service;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.thread.AiConversationStoreService;
@@ -62,7 +61,7 @@ class PlatformAiThreadServiceTest {
         record.setConfigId(7);
         when(conversationStore.findThread(THREAD_ID)).thenReturn(record);
         PlatformAiThreadService service = new PlatformAiThreadService(
-                mock(AiModelConfigService.class), conversationStore,
+                mock(AiModelChannelResolver.class), conversationStore,
                 agentRegistry, mock(AiTurnProtocolService.class));
         return new Fixture(service, conversationStore, agentRegistry);
     }

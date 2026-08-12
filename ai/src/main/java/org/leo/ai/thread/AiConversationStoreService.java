@@ -1,11 +1,8 @@
 package org.leo.ai.thread;
 
-import com.alibaba.fastjson.JSON;
 import org.leo.ai.channel.DynamicModelProvider;
 import org.leo.ai.runtime.AiTurnTrace;
-import org.leo.ai.runtime.AiTurnRecoveryContext;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.core.entity.AiEventRecord;
 import org.leo.core.entity.AiMessageRecord;
 import org.leo.core.entity.AiRunRecord;
 import org.leo.core.entity.AiThreadRecord;
@@ -16,14 +13,10 @@ import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiEventStreamRuntime;
 import org.leo.core.entity.AiSseEvent;
 import org.leo.core.entity.AiThreadLeaseRecord;
-import org.leo.core.entity.AiOrphanedRunRecord;
-import org.leo.core.util.json.JsonUtil;
 import org.leo.dao.mapper.AiConversationMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.dao.DataIntegrityViolationException;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,9 +34,46 @@ public class AiConversationStoreService {
     public static final String ERROR_PERSISTENCE = "persistence";
 
     private final AiConversationMapper mapper;
+    private final AiEventJournalRepository eventJournal;
+    private final AiExecutionLeaseRepository executionLease;
+    private final AiTurnTerminalRepository turnTerminal;
+    private final AiProtocolTurnRepository protocolTurn;
+    private final AiUserInputRepository userInput;
+    private final AiSubagentInvocationRepository subagentInvocations;
+    private final AiMessageRepository messages;
+    private final AiContextCheckpointRepository checkpoints;
 
+    public AiConversationStoreService(AiConversationMapper mapper,
+                                      AiEventJournalRepository eventJournal,
+                                      AiExecutionLeaseRepository executionLease,
+                                      AiTurnTerminalRepository turnTerminal,
+                                      AiProtocolTurnRepository protocolTurn,
+                                      AiUserInputRepository userInput,
+                                      AiSubagentInvocationRepository subagentInvocations,
+                                      AiMessageRepository messages,
+                                      AiContextCheckpointRepository checkpoints) {
+        this.mapper = mapper;
+        this.eventJournal = eventJournal;
+        this.executionLease = executionLease;
+        this.turnTerminal = turnTerminal;
+        this.protocolTurn = protocolTurn;
+        this.userInput = userInput;
+        this.subagentInvocations = subagentInvocations;
+        this.messages = messages;
+        this.checkpoints = checkpoints;
+    }
+
+    /** Test and non-Spring construction convenience. */
     public AiConversationStoreService(AiConversationMapper mapper) {
         this.mapper = mapper;
+        this.eventJournal = new AiEventJournalRepository(mapper);
+        this.executionLease = new AiExecutionLeaseRepository(mapper, eventJournal);
+        this.turnTerminal = new AiTurnTerminalRepository(mapper);
+        this.protocolTurn = new AiProtocolTurnRepository(mapper);
+        this.userInput = new AiUserInputRepository(mapper);
+        this.subagentInvocations = new AiSubagentInvocationRepository(mapper);
+        this.messages = new AiMessageRepository(mapper);
+        this.checkpoints = new AiContextCheckpointRepository(mapper);
     }
 
     public List<AiThreadRecord> listPuppetThreads(String userId, String puppetId) {
@@ -146,24 +176,7 @@ public class AiConversationStoreService {
     }
 
     public ConversationCheckpoint findContextCheckpoint(String threadId) {
-        AiThreadRecord thread = findThread(threadId);
-        if (thread == null || isBlank(thread.getContextSummary())
-                || isBlank(thread.getContextCheckpointJson())) {
-            return null;
-        }
-        try {
-            var metadata = JSON.parseObject(thread.getContextCheckpointJson());
-            Integer version = metadata.getInteger("version");
-            Long boundarySequence = metadata.getLong("boundarySequence");
-            String boundaryHash = metadata.getString("boundaryHash");
-            if (version == null || boundarySequence == null || isBlank(boundaryHash)) {
-                return null;
-            }
-            return new ConversationCheckpoint(
-                    thread.getContextSummary(), boundarySequence, boundaryHash, version);
-        } catch (RuntimeException ignored) {
-            return null;
-        }
+        return checkpoints.find(threadId);
     }
 
     public void updateContextCheckpoint(String threadId,
@@ -171,19 +184,11 @@ public class AiConversationStoreService {
                                         long boundarySequence,
                                         String boundaryHash,
                                         int version) {
-        if (isBlank(threadId) || isBlank(contextSummary) || isBlank(boundaryHash)) return;
-        String metadata = JsonUtil.toJsonString(Map.of(
-                "version", version,
-                "boundarySequence", boundarySequence,
-                "boundaryHash", boundaryHash));
-        mapper.updateThreadContextCheckpoint(
-                threadId, contextSummary, metadata, System.currentTimeMillis());
+        checkpoints.update(threadId, contextSummary, boundarySequence, boundaryHash, version);
     }
 
     public void clearContextCheckpoint(String threadId) {
-        if (isBlank(threadId)) return;
-        mapper.updateThreadContextCheckpoint(
-                threadId, null, null, System.currentTimeMillis());
+        checkpoints.clear(threadId);
     }
 
     public void deleteThread(String threadId) {
@@ -195,27 +200,24 @@ public class AiConversationStoreService {
     public AiTurnRecord findProtocolTurnByClientId(
             String threadId, String clientUserMessageId) {
         if (isBlank(threadId) || isBlank(clientUserMessageId)) return null;
-        return mapper.findTurnByClientMessage(
-                threadId, clientUserMessageId.trim());
+        return protocolTurn.findByClientId(threadId, clientUserMessageId);
     }
 
     public AiTurnRecord findProtocolTurn(String turnId) {
-        return isBlank(turnId) ? null : mapper.findTurnById(turnId);
+        return protocolTurn.find(turnId);
     }
 
     public AiTurnRecord findNextQueuedProtocolTurn(String threadId) {
         if (isBlank(threadId)) return null;
-        mapper.expireUserInputRequests(threadId.trim(), System.currentTimeMillis());
-        return mapper.findNextQueuedTurn(threadId);
+        return protocolTurn.findNextQueued(threadId);
     }
 
     public List<AiTurnRecord> listInProgressProtocolTurns(String threadId) {
-        return isBlank(threadId) ? List.of() : mapper.listInProgressTurns(threadId);
+        return protocolTurn.listInProgress(threadId);
     }
 
     public List<String> listDispatchableProtocolThreadIds() {
-        mapper.expireAllUserInputRequests(System.currentTimeMillis());
-        return mapper.listDispatchableThreadIds();
+        return protocolTurn.listDispatchableThreadIds();
     }
 
     /**
@@ -235,16 +237,16 @@ public class AiConversationStoreService {
                                        Object attachments,
                                        String answerToQuestionId) {
         if (turn == null || mapper.insertProtocolTurn(turn) != 1) return false;
-        appendMessage(
+        messages.append(
                 turn.getUserItemId(), turn.getThreadId(), turn.getTurnId(),
                 null, MESSAGE_PENDING, "user", userContent,
                 null, null, null, attachments);
-        appendMessage(
+        messages.append(
                 turn.getAssistantItemId(), turn.getThreadId(), turn.getTurnId(),
                 null, MESSAGE_PENDING, "assistant", "",
                 null, null, null, null);
         if (!isBlank(answerToQuestionId)) {
-            AiUserInputRequest request = findUserInputRequest(answerToQuestionId);
+            AiUserInputRequest request = userInput.find(answerToQuestionId);
             String normalizedAnswer = userContent != null ? userContent.trim() : "";
             if (request == null || !turn.getThreadId().equals(request.getThreadId())
                     || !AiUserInputRequest.STATUS_PENDING.equals(request.getStatus())) {
@@ -257,11 +259,7 @@ public class AiConversationStoreService {
                     && !request.optionValues().contains(normalizedAnswer)) {
                 throw new IllegalStateException("回答必须从问题提供的选项中选择");
             }
-            int answered = mapper.answerUserInputRequest(
-                    answerToQuestionId.trim(), turn.getThreadId(),
-                    normalizedAnswer,
-                    System.currentTimeMillis());
-            if (answered != 1) {
+            if (!userInput.answer(answerToQuestionId, turn.getThreadId(), normalizedAnswer)) {
                 throw new IllegalStateException(
                         "待回答问题不存在、已处理或已过期");
             }
@@ -272,32 +270,15 @@ public class AiConversationStoreService {
     // ── Agent 等待用户输入 ────────────────────────────────────────────────
 
     public AiUserInputRequest findUserInputRequest(String requestId) {
-        return isBlank(requestId) ? null : mapper.findUserInputRequest(requestId.trim());
+        return userInput.find(requestId);
     }
 
     public AiUserInputRequest findPendingUserInputRequest(String threadId) {
-        if (isBlank(threadId)) return null;
-        String normalized = threadId.trim();
-        mapper.expireUserInputRequests(normalized, System.currentTimeMillis());
-        return mapper.findPendingUserInputRequest(normalized);
+        return userInput.findPending(threadId);
     }
 
     public AiUserInputRequest createUserInputRequest(AiUserInputRequest request) {
-        if (request == null || isBlank(request.getThreadId())) {
-            throw new IllegalArgumentException("用户输入请求缺少 threadId");
-        }
-        AiUserInputRequest pending = findPendingUserInputRequest(request.getThreadId());
-        if (pending != null) return pending;
-        try {
-            if (mapper.insertUserInputRequest(request) != 1) {
-                throw new IllegalStateException("创建用户输入请求失败");
-            }
-        } catch (DataIntegrityViolationException conflict) {
-            AiUserInputRequest winner = findPendingUserInputRequest(request.getThreadId());
-            if (winner != null) return winner;
-            throw conflict;
-        }
-        return request;
+        return userInput.create(request);
     }
 
     /** 原子消费一次高风险操作确认，避免同一确认被并发工具调用复用。 */
@@ -305,15 +286,12 @@ public class AiConversationStoreService {
     public boolean consumeConfirmation(String requestId, String threadId,
                                        String toolName, String argumentsHash,
                                        long consumedAt) {
-        if (isBlank(requestId) || isBlank(threadId)
-                || isBlank(toolName) || isBlank(argumentsHash)) return false;
-        return mapper.consumeConfirmation(requestId.trim(), threadId.trim(),
-                toolName.trim(), argumentsHash.trim(), consumedAt) == 1;
+        return userInput.consumeConfirmation(
+                requestId, threadId, toolName, argumentsHash, consumedAt);
     }
 
     public boolean claimProtocolTurnStart(String turnId, long startedAt) {
-        return !isBlank(turnId)
-                && mapper.markProtocolTurnStarted(turnId, startedAt) == 1;
+        return protocolTurn.claimStart(turnId, startedAt);
     }
 
     @Transactional
@@ -359,25 +337,12 @@ public class AiConversationStoreService {
     public AiTurnRecord completeProtocolTurn(
             String turnId, String protocolStatus, String errorMessage,
             long completedAt, String leaseToken) {
-        if (isBlank(leaseToken)) {
-            AiTurnRecord row = new AiTurnRecord();
-            row.setTurnId(turnId);
-            row.setProtocolStatus(protocolStatus);
-            row.setErrorMessage(emptyToNull(errorMessage));
-            row.setCompletedAt(completedAt);
-            mapper.completeProtocolTurn(row);
-        } else {
-            requireFencedWrite(mapper.completeProtocolTurnFenced(
-                            turnId, protocolStatus, emptyToNull(errorMessage),
-                            completedAt, leaseToken),
-                    "协议 Turn 终结", turnId);
-        }
-        return findProtocolTurn(turnId);
+        return protocolTurn.complete(
+                turnId, protocolStatus, errorMessage, completedAt, leaseToken);
     }
 
     public AiTurnRecord requeueProtocolTurn(String turnId) {
-        if (!isBlank(turnId)) mapper.requeueProtocolTurn(turnId);
-        return findProtocolTurn(turnId);
+        return protocolTurn.requeue(turnId);
     }
 
     // ── 可重放事件日志 ───────────────────────────────────────────────────────
@@ -387,10 +352,7 @@ public class AiConversationStoreService {
      * 新事件仍沿用同一个单调游标。
      */
     public void attachEventJournal(String threadId, AiEventStreamRuntime runtime) {
-        if (isBlank(threadId) || runtime == null) return;
-        long lastSeq = mapper.findLastEventSeq(threadId);
-        runtime.configureEventJournal(lastSeq, event ->
-                appendEvent(threadId, event, runtime.getActiveLeaseToken()));
+        eventJournal.attach(threadId, runtime, this::appendEvent);
     }
 
     public void appendEvent(String threadId, AiSseEvent event) {
@@ -398,83 +360,54 @@ public class AiConversationStoreService {
     }
 
     public void appendEvent(String threadId, AiSseEvent event, String leaseToken) {
-        if (isBlank(threadId) || event == null || event.seq() <= 0L) return;
-        String eventId = UUID.randomUUID().toString();
-        int inserted = mapper.insertEvent(
-                eventId,
-                emptyToNull(event.runId()),
-                threadId,
-                emptyToNull(event.turnId()),
-                emptyToNull(event.itemId()),
-                emptyToNull(event.subagentInvocationId()),
-                event.seq(),
-                event.timestamp(),
-                event.name(),
-                JSON.toJSONString(event.data()),
-                emptyToNull(leaseToken),
-                System.currentTimeMillis());
-        if (!isBlank(leaseToken)) {
-            requireFencedWrite(inserted, "事件日志", eventId);
-        }
+        eventJournal.append(threadId, event, leaseToken);
     }
 
     public List<AiSseEvent> listEventsAfter(String threadId, long afterSeq, int limit) {
-        if (isBlank(threadId)) return List.of();
-        int safeLimit = Math.max(1, Math.min(limit > 0 ? limit : 200, 2000));
-        return mapper.listEventsAfter(threadId, Math.max(0L, afterSeq), safeLimit)
-                .stream()
-                .map(this::toSseEvent)
-                .toList();
+        return eventJournal.listAfter(threadId, afterSeq, limit);
     }
 
     public long findLastEventSeq(String threadId) {
-        return isBlank(threadId) ? 0L : mapper.findLastEventSeq(threadId);
+        return eventJournal.lastSequence(threadId);
     }
 
     public boolean hasTurnCompletedEvent(String threadId, String turnId) {
-        return isBlank(turnId)
-                || mapper.countTurnCompletedEvents(threadId, turnId) > 0;
+        return eventJournal.hasTurnCompleted(threadId, turnId);
     }
 
     public long findLatestTurnStartSeq(String threadId) {
-        return isBlank(threadId) ? 0L : mapper.findLatestTurnStartSeq(threadId);
+        return eventJournal.latestTurnStartSequence(threadId);
     }
 
     public boolean hasLatestTurnCompletedEvent(String threadId) {
-        return isBlank(threadId)
-                || mapper.hasLatestTurnCompletedEvent(threadId) > 0;
+        return eventJournal.hasLatestTurnCompleted(threadId);
     }
 
     // ── 跨实例执行租约与孤儿 Run 收口 ───────────────────────────────────────
 
     public boolean acquireThreadLease(AiThreadLeaseRecord lease) {
-        return lease != null && mapper.acquireThreadLease(lease) == 1;
+        return executionLease.acquire(lease);
     }
 
     public boolean renewThreadLease(AiThreadLeaseRecord lease) {
-        return lease != null && mapper.renewThreadLease(lease) == 1;
+        return executionLease.renew(lease);
     }
 
     public boolean releaseThreadLease(AiThreadLeaseRecord lease) {
-        return lease != null && mapper.releaseThreadLease(lease) == 1;
+        return executionLease.release(lease);
     }
 
     public List<AiThreadLeaseRecord> listExpiredThreadLeases(long now) {
-        return mapper.listExpiredThreadLeases(now);
+        return executionLease.listExpired(now);
     }
 
     public List<String> listThreadsWithStuckRunningTurns(long now) {
-        return mapper.listThreadsWithStuckRunningTurns(now);
+        return executionLease.listStuckThreads(now);
     }
 
     public boolean claimExpiredThreadLease(AiThreadLeaseRecord expired,
                                            AiThreadLeaseRecord recovery) {
-        if (expired == null || recovery == null) return false;
-        return mapper.claimExpiredThreadLease(
-                expired.getThreadId(), expired.getLeaseToken(),
-                recovery.getOwnerId(), recovery.getLeaseToken(),
-                recovery.getAcquiredAt(), recovery.getHeartbeatAt(),
-                recovery.getExpiresAt()) == 1;
+        return executionLease.claimExpired(expired, recovery);
     }
 
     /**
@@ -482,127 +415,25 @@ public class AiConversationStoreService {
      */
     @Transactional
     public List<AiSseEvent> recoverOrphanedRuns(String threadId, long finishedAt) {
-        if (isBlank(threadId)) return List.of();
-        String message = "执行实例心跳超时，任务已自动收口";
-        List<AiSseEvent> completedEvents = new ArrayList<>();
-        for (AiOrphanedRunRecord run : mapper.listRunningRuns(threadId)) {
-            if (mapper.failOrphanedRun(run.getRunId(), finishedAt, message) != 1) {
-                continue;
-            }
-            persistOrphanedRecoveryContext(run);
-            mapper.discardRunMessages(run.getRunId());
-            mapper.discardOrphanedTurn(run.getTurnId(), finishedAt);
-            mapper.failOrphanedThread(threadId, finishedAt);
-            if (hasTurnCompletedEvent(threadId, run.getTurnId())) continue;
-
-            Map<String, Object> error = new LinkedHashMap<>();
-            error.put("message", message);
-            error.put("category", "orphaned");
-            Map<String, Object> turn = new LinkedHashMap<>();
-            turn.put("id", run.getTurnId());
-            turn.put("threadId", threadId);
-            turn.put("status", "failed");
-            turn.put("error", error);
-
-            AiSseEvent event = new AiSseEvent(
-                    mapper.findLastEventSeq(threadId) + 1L,
-                    finishedAt,
-                    "turn/completed",
-                    Map.of("turn", turn),
-                    null,
-                    run.getTurnId(),
-                    run.getAssistantMessageId(),
-                    run.getRunId());
-            appendEvent(threadId, event);
-            completedEvents.add(event);
-        }
-        return completedEvents;
-    }
-
-    private void persistOrphanedRecoveryContext(AiOrphanedRunRecord run) {
-        if (run == null || isBlank(run.getAssistantMessageId())) return;
-        List<AiSseEvent> events = mapper.listEventsByRun(run.getRunId()).stream()
-                .map(this::toSseEvent)
-                .toList();
-        String output = AiTurnRecoveryContext.build(events, null);
-        if (output.isBlank()) return;
-        AiMessageRecord assistant = new AiMessageRecord();
-        assistant.setMessageId(run.getAssistantMessageId());
-        assistant.setStatus(MESSAGE_DISCARDED);
-        assistant.setContent(output);
-        mapper.updateMessage(assistant);
-    }
-
-    private AiSseEvent toSseEvent(AiEventRecord row) {
-        Object data = row.getDataJson() != null
-                ? JSON.parse(row.getDataJson()) : null;
-        return new AiSseEvent(
-                row.getEventSeq() != null ? row.getEventSeq() : 0L,
-                row.getTimestamp() != null ? row.getTimestamp() : 0L,
-                row.getName(), data, row.getSubagentInvocationId(),
-                row.getTurnId(), row.getItemId(), row.getRunId());
+        return executionLease.recoverOrphanedRuns(threadId, finishedAt);
     }
 
     // ── 子 Agent 派发记录 ───────────────────────────────────────────────────
 
     /** 写入一条 pending 派发记录，调用方需要先填好 invocationId / parentThreadId / task。 */
     public void insertSubagentInvocation(org.leo.core.entity.AiSubagentInvocation row) {
-        if (row.getStatus() == null) {
-            row.setStatus(org.leo.core.entity.AiSubagentInvocation.STATUS_PENDING);
-        }
-        if (row.getCreatedAt() == null) {
-            row.setCreatedAt(System.currentTimeMillis());
-        }
-        mapper.insertSubagentInvocation(row);
+        subagentInvocations.insert(row);
     }
 
     /** 更新派发状态：running / completed / failed / cancelled，以及 summary、childThreadId。 */
     public void updateSubagentInvocation(org.leo.core.entity.AiSubagentInvocation row) {
-        if (row.getInvocationId() == null) {
-            throw new IllegalArgumentException("invocationId 不能为空");
-        }
-        if (row.getStatus() != null
-                && !org.leo.core.entity.AiSubagentInvocation.STATUS_PENDING.equals(row.getStatus())
-                && !org.leo.core.entity.AiSubagentInvocation.STATUS_RUNNING.equals(row.getStatus())
-                && row.getCompletedAt() == null) {
-            row.setCompletedAt(System.currentTimeMillis());
-        }
-        mapper.updateSubagentInvocation(row);
+        subagentInvocations.update(row);
     }
 
     public List<org.leo.core.entity.AiSubagentInvocation> listSubagentInvocations(String parentThreadId) {
-        if (parentThreadId == null || parentThreadId.isBlank()) {
-            return java.util.Collections.emptyList();
-        }
-        return mapper.listSubagentInvocations(parentThreadId);
+        return subagentInvocations.listByParentThread(parentThreadId);
     }
 
-    private String appendMessage(String requestedMessageId,
-                                 String threadId, String turnId, String runId, String status,
-                                 String role, String content,
-                                 List<Object> nodes,
-                                 Map<String, Object> review,
-                                 Object planSnapshot,
-                                 Object attachments) {
-        long now = System.currentTimeMillis();
-        AiMessageRecord row = new AiMessageRecord();
-        row.setMessageId(!isBlank(requestedMessageId)
-                ? requestedMessageId.trim() : UUID.randomUUID().toString());
-        row.setThreadId(threadId);
-        row.setTurnId(turnId);
-        row.setRunId(runId);
-        row.setStatus(status);
-        row.setRole(role);
-        row.setContent(content);
-        row.setTimestamp(now);
-        row.setAttachmentsJson(toJsonOrNull(attachments));
-        row.setNodesJson(toJsonOrNull(nodes));
-        row.setReviewJson(toJsonOrNull(review));
-        row.setPlanJson(toJsonOrNull(planSnapshot));
-        mapper.insertMessage(row);
-        mapper.refreshMessageCount(threadId, now);
-        return row.getMessageId();
-    }
 
     /** 原子创建 Turn，并关联预留 Item、运行记录、追踪信息和执行租约。 */
     @Transactional
@@ -672,11 +503,11 @@ public class AiConversationStoreService {
             userMessageId = reservedTurn.getUserItemId();
             assistantMessageId = reservedTurn.getAssistantItemId();
         } else {
-            userMessageId = appendMessage(
+            userMessageId = messages.append(
                     requestedUserItemId,
                     threadId, turnId, runId, MESSAGE_PENDING,
                     "user", userContent, null, null, null, attachments);
-            assistantMessageId = appendMessage(
+            assistantMessageId = messages.append(
                     requestedAssistantItemId,
                     threadId, turnId, runId, MESSAGE_PENDING,
                     "assistant", "", null, null, null, null);
@@ -709,13 +540,7 @@ public class AiConversationStoreService {
     public void completeTurn(PersistedTurn turn, String output,
                              List<Object> nodes, Map<String, Object> review,
                              Object planSnapshot, int toolCallCount) {
-        if (turn == null) return;
-        updateAssistantMessage(
-                turn, MESSAGE_COMMITTED, output, nodes, review, planSnapshot);
-        updateTurnMessageStatus(turn, MESSAGE_COMMITTED);
-        finishTurn(turn, MESSAGE_COMMITTED);
-        finishRun(turn.runId(), AiRunStatus.COMPLETED, turn.startedAt(),
-                output, null, null, null, toolCallCount, turn.leaseToken());
+        turnTerminal.complete(turn, output, nodes, review, planSnapshot, toolCallCount);
     }
 
     /**
@@ -743,64 +568,15 @@ public class AiConversationStoreService {
                             String partialOutput,
                             List<Object> partialNodes,
                             Object planSnapshot) {
-        if (turn == null) return;
-        updateAssistantMessage(
-                turn, MESSAGE_DISCARDED, partialOutput,
-                partialNodes, null, planSnapshot);
-        updateTurnMessageStatus(turn, MESSAGE_DISCARDED);
-        finishTurn(turn, MESSAGE_DISCARDED);
-        finishRun(turn.runId(), runStatus, turn.startedAt(), null,
-                errorCategory, errorMessage, rawErrorMessage, toolCallCount,
-                turn.leaseToken());
-    }
-
-    private void updateAssistantMessage(PersistedTurn turn,
-                                        String status,
-                                        String content,
-                                        List<Object> nodes,
-                                        Map<String, Object> review,
-                                        Object planSnapshot) {
-        AiMessageRecord assistant = new AiMessageRecord();
-        assistant.setMessageId(turn.assistantMessageId());
-        assistant.setStatus(status);
-        assistant.setContent(content != null ? content : "");
-        assistant.setNodesJson(toJsonOrNull(nodes));
-        assistant.setReviewJson(toJsonOrNull(review));
-        assistant.setPlanJson(toJsonOrNull(planSnapshot));
-        if (isBlank(turn.leaseToken())) {
-            mapper.updateMessage(assistant);
-            return;
-        }
-        requireFencedWrite(mapper.updateMessageFenced(
-                        assistant.getMessageId(), assistant.getStatus(),
-                        assistant.getContent(), assistant.getNodesJson(),
-                        assistant.getReviewJson(), assistant.getPlanJson(),
-                        turn.leaseToken(), System.currentTimeMillis()),
-                "Assistant 消息", assistant.getMessageId());
-    }
-
-    private void updateTurnMessageStatus(PersistedTurn turn, String status) {
-        if (isBlank(turn.leaseToken())) {
-            mapper.updateTurnMessageStatus(turn.threadId(), turn.turnId(), status);
-            return;
-        }
-        requireFencedRows(mapper.updateTurnMessageStatusFenced(
-                        turn.threadId(), turn.turnId(), status,
-                        turn.leaseToken(), System.currentTimeMillis()),
-                "Turn 消息状态", turn.turnId());
-    }
-
-    private void finishTurn(PersistedTurn turn, String status) {
-        int updated = mapper.finishTurn(
-                turn.turnId(), status, System.currentTimeMillis(),
-                emptyToNull(turn.leaseToken()));
-        requireTerminalWrite(updated, turn.leaseToken(), "Turn", turn.turnId());
+        turnTerminal.discard(turn, runStatus, errorCategory, errorMessage,
+                rawErrorMessage, toolCallCount, partialOutput, partialNodes,
+                planSnapshot);
     }
 
     public List<Map<String, Object>> listMessages(String threadId, int offset, int limit) {
         int safeOffset = Math.max(0, offset);
         int safeLimit = limit < 0 ? Integer.MAX_VALUE : Math.max(1, Math.min(limit, 200));
-        return toMessageMaps(mapper.listMessages(threadId, safeOffset, safeLimit));
+        return messages.list(threadId, safeOffset, safeLimit);
     }
 
     public List<ConversationMessage> committedMessages(String threadId, int limit) {
@@ -858,47 +634,11 @@ public class AiConversationStoreService {
         return null;
     }
 
-    private void finishRun(String runId, String status, long startedAt, String output,
-                           String errorCategory, String errorMessage,
-                           String rawErrorMessage, int toolCallCount,
-                           String leaseToken) {
-        AiRunRecord row = new AiRunRecord();
-        row.setRunId(runId);
-        row.setStatus(status);
-        long finishedAt = System.currentTimeMillis();
-        row.setFinishedAt(finishedAt);
-        row.setDurationMs(Math.max(0L, finishedAt - startedAt));
-        row.setOutput(output);
-        row.setErrorCategory(errorCategory);
-        row.setErrorMessage(errorMessage);
-        row.setRawErrorMessage(rawErrorMessage);
-        row.setToolCallCount(toolCallCount);
-        row.setLeaseToken(emptyToNull(leaseToken));
-        int updated = mapper.finishRun(row);
-        requireTerminalWrite(updated, leaseToken, "Run", runId);
-    }
-
     private static void requireFencedWrite(int updated, String target, String id) {
         if (updated != 1) {
             throw new IllegalStateException(
                     "执行租约已失效，拒绝写入过期" + target + ": " + id);
         }
-    }
-
-    private static void requireFencedRows(int updated, String target, String id) {
-        if (updated < 1) {
-            throw new IllegalStateException(
-                    "执行租约已失效，拒绝写入过期" + target + ": " + id);
-        }
-    }
-
-    private static void requireTerminalWrite(
-            int updated, String leaseToken, String target, String id) {
-        if (updated == 1) return;
-        String reason = isBlank(leaseToken)
-                ? "终态已由其他执行者确定"
-                : "执行租约已失效或终态已由其他执行者确定";
-        throw new IllegalStateException(reason + "，拒绝重复终结" + target + ": " + id);
     }
 
     private static void applyConfig(AiThreadRecord row, AiModelConfig config) {
@@ -912,64 +652,6 @@ public class AiConversationStoreService {
         row.setConfigBaseUrl(config.getBaseUrl());
         row.setConfigCompletionsPath(config.getCompletionsPath());
         row.setConfigMaxOutputTokens(config.getMaxOutputTokens());
-    }
-
-    private static List<Map<String, Object>> toMessageMaps(List<AiMessageRecord> records) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (AiMessageRecord record : records) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("messageId", record.getMessageId());
-            item.put("turnId", record.getTurnId());
-            item.put("runId", record.getRunId());
-            item.put("runStatus", record.getRunStatus());
-            item.put("protocolStatus", record.getProtocolStatus());
-            item.put("dispatchStatus", record.getDispatchStatus());
-            item.put("protocolErrorMessage",
-                    record.getProtocolErrorMessage());
-            item.put("answerToQuestionId", record.getAnswerToQuestionId());
-            item.put("sequence", record.getMessageSeq());
-            item.put("status", record.getStatus());
-            item.put("role", record.getRole());
-            item.put("content", record.getContent());
-            item.put("timestamp", record.getTimestamp());
-            putJson(item, "attachments", record.getAttachmentsJson());
-            putJson(item, "nodes", record.getNodesJson());
-            putJson(item, "review", record.getReviewJson());
-            putJson(item, "plan", record.getPlanJson());
-            result.add(item);
-        }
-        return result;
-    }
-
-    private static void putJson(Map<String, Object> target, String key, String json) {
-        Object parsed = fromJson(json);
-        if (parsed != null) {
-            target.put(key, parsed);
-        }
-    }
-
-    private static String toJsonOrNull(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof List<?> list && list.isEmpty()) {
-            return null;
-        }
-        if (value instanceof Map<?, ?> map && map.isEmpty()) {
-            return null;
-        }
-        return JsonUtil.toJsonString(value);
-    }
-
-    private static Object fromJson(String json) {
-        if (isBlank(json)) {
-            return null;
-        }
-        try {
-            return JSON.parse(json);
-        } catch (Exception ignored) {
-            return null;
-        }
     }
 
     private static boolean isBlank(String value) {

@@ -40,6 +40,7 @@ public class PuppetNodeAiThreadService {
     private static final Logger logger =
             LoggerFactory.getLogger(PuppetNodeAiThreadService.class);
     private final AiModelConfigService modelConfigService;
+    private final AiModelChannelResolver channelResolver;
     private final AiConversationStoreService conversationStore;
     private final SessionWarmupService sessionWarmupService;
     private final PuppetNodeAiAgentRegistry agentRegistry;
@@ -47,12 +48,14 @@ public class PuppetNodeAiThreadService {
     private final PuppetAiCheckpointRepository checkpointRepository;
 
     public PuppetNodeAiThreadService(AiModelConfigService modelConfigService,
+                                     AiModelChannelResolver channelResolver,
                                      AiConversationStoreService conversationStore,
                                      SessionWarmupService sessionWarmupService,
                                      PuppetNodeAiAgentRegistry agentRegistry,
                                      AiTurnProtocolService turnProtocolService,
                                      PuppetAiCheckpointRepository checkpointRepository) {
         this.modelConfigService = modelConfigService;
+        this.channelResolver = channelResolver;
         this.conversationStore = conversationStore;
         this.sessionWarmupService = sessionWarmupService;
         this.agentRegistry = agentRegistry;
@@ -256,18 +259,7 @@ public class PuppetNodeAiThreadService {
         List<Map<String, Object>> events = new ArrayList<>();
         for (AiSseEvent event :
                 conversationStore.listEventsAfter(threadId, afterSeq, limit)) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("seq", event.seq());
-            item.put("timestamp", event.timestamp());
-            item.put("name", event.name());
-            item.put("data", event.data());
-            if (event.subagentInvocationId() != null) {
-                item.put("subagentInvocationId", event.subagentInvocationId());
-            }
-            if (event.turnId() != null) item.put("turnId", event.turnId());
-            if (event.itemId() != null) item.put("itemId", event.itemId());
-            if (event.runId() != null) item.put("runId", event.runId());
-            events.add(item);
+            events.add(AiEventPayloadMapper.toMap(event));
         }
         Map<String, Object> data = new HashMap<>();
         data.put("events", events);
@@ -410,25 +402,8 @@ public class PuppetNodeAiThreadService {
                 session.getCreateByUser(), puppetId, threadId);
     }
 
-    private AiModelConfig resolveChannel(Integer configId) {
-        try {
-            AiModelConfig resolved = modelConfigService.resolve(configId);
-            if (resolved == null) {
-                if (configId != null) {
-                    throw ApiException.notFound(
-                            "AI 模型不存在或已删除，configId: " + configId);
-                }
-                throw ApiException.notFound(
-                        "未配置激活的 AI 模型，请先在设置中添加并激活一条");
-            }
-            return resolved;
-        } catch (IllegalArgumentException | IllegalStateException error) {
-            throw ApiException.notFound(error.getMessage());
-        }
-    }
-
     private AiModelConfig resolveOptionalChannel(Integer configId) {
-        return configId != null ? resolveChannel(configId) : null;
+        return channelResolver.optional(configId);
     }
 
     private String validateConfigId(Integer configId) {

@@ -1,6 +1,5 @@
 package org.leo.web.service;
 
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.runtime.AiTurnCommand;
 import org.leo.ai.runtime.AiTurnCoordinator;
 import org.leo.ai.runtime.AiTurnOutcome;
@@ -15,7 +14,6 @@ import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.session.AiThread;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.core.session.PuppetNodeSession;
-import org.leo.web.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -30,28 +28,28 @@ import java.util.concurrent.CompletableFuture;
 public class PuppetNodeAiTurnService {
 
     private static final Logger logger = LoggerFactory.getLogger(PuppetNodeAiTurnService.class);
-    private final AiModelConfigService modelConfigService;
     private final AiConversationStoreService conversationStore;
     private final PuppetNodeAiAgentRegistry agentRegistry;
     private final AiSseTurnPresenter sseTurnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
-    private final AiExecutionLeaseService executionLeaseService;
+    private final AiExecutionClaimService executionClaimService;
+    private final AiModelChannelResolver channelResolver;
 
-    public PuppetNodeAiTurnService(AiModelConfigService modelConfigService,
-                                   AiConversationStoreService conversationStore,
+    public PuppetNodeAiTurnService(AiConversationStoreService conversationStore,
                                    PuppetNodeAiAgentRegistry agentRegistry,
                                    AiSseTurnPresenter sseTurnPresenter,
                                    AiTurnCoordinator turnCoordinator,
                                    AiTurnOrchestrator turnOrchestrator,
-                                   AiExecutionLeaseService executionLeaseService) {
-        this.modelConfigService = modelConfigService;
+                                   AiExecutionClaimService executionClaimService,
+                                   AiModelChannelResolver channelResolver) {
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.sseTurnPresenter = sseTurnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
-        this.executionLeaseService = executionLeaseService;
+        this.executionClaimService = executionClaimService;
+        this.channelResolver = channelResolver;
     }
 
     public boolean tryClaimExecution(AiThread thread) {
@@ -61,22 +59,14 @@ public class PuppetNodeAiTurnService {
                     thread, thread::isExecuting, 5_000L);
         }
         if (!localClaimed) return false;
-        try {
-            String leaseToken = executionLeaseService.tryAcquireToken(
-                    thread.getThreadId(),
-                    () -> thread.stop("执行租约已转移"));
-            if (leaseToken != null) {
-                thread.bindActiveLeaseToken(leaseToken);
-                return true;
-            }
-        } catch (RuntimeException error) {
-            turnCoordinator.releaseClaim(thread);
-            logger.warn("获取 Puppet AI 执行租约失败, threadId={}: {}",
-                    thread.getThreadId(), error.getMessage());
-            return false;
-        }
-        turnCoordinator.releaseClaim(thread);
-        return false;
+        String leaseToken = executionClaimService.tryAcquireAfterClaim(
+                thread, thread.getThreadId(),
+                () -> thread.stop("执行租约已转移"),
+                error -> logger.warn("获取 Puppet AI 执行租约失败, threadId={}: {}",
+                        thread.getThreadId(), error.getMessage()));
+        if (leaseToken == null) return false;
+        thread.bindActiveLeaseToken(leaseToken);
+        return true;
     }
 
     public void failDetachedExecution(AiThread thread) {
@@ -85,7 +75,7 @@ public class PuppetNodeAiTurnService {
 
     public void releaseExecutionLease(AiThread thread) {
         if (thread != null) {
-            executionLeaseService.release(thread.getThreadId());
+            executionClaimService.release(thread.getThreadId());
             thread.bindActiveLeaseToken(null);
         }
     }
@@ -170,28 +160,12 @@ public class PuppetNodeAiTurnService {
 
     private PuppetNodeAiAgentRegistry.Runtime resolveAgent(
             PuppetNodeSession session, AiThread thread, String reasoningEffort) {
-        AiModelConfig requested = resolveChannel(thread != null ? thread.getAiConfigId() : null);
+        AiModelConfig requested = channelResolver.require(
+                thread != null ? thread.getAiConfigId() : null);
         if (thread != null && thread.getAiConfigId() == null) {
             thread.setAiConfigId(requested.getId());
         }
         return agentRegistry.resolve(session, thread, requested, reasoningEffort);
-    }
-
-    private AiModelConfig resolveChannel(Integer configId) {
-        try {
-            AiModelConfig resolved = modelConfigService.resolve(configId);
-            if (resolved == null) {
-                if (configId != null) {
-                    throw ApiException.notFound(
-                            "AI 模型不存在或已删除，configId: " + configId);
-                }
-                throw ApiException.notFound(
-                        "未配置激活的 AI 模型，请先在设置中添加并激活一条");
-            }
-            return resolved;
-        } catch (IllegalArgumentException | IllegalStateException error) {
-            throw ApiException.notFound(error.getMessage());
-        }
     }
 
     private void emitCurrentPlanAtTurnStart(AiThread thread) {

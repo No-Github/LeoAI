@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.lang.management.ManagementFactory;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -105,17 +106,11 @@ public class AiExecutionLeaseService {
         for (AiThreadLeaseRecord expired : store.listExpiredThreadLeases(now)) {
             AiThreadLeaseRecord recovery = lease(
                     expired.getThreadId(), UUID.randomUUID().toString(), now);
-            if (!store.claimExpiredThreadLease(expired, recovery)) continue;
-            try {
-                int recovered = store.recoverOrphanedRuns(
-                        expired.getThreadId(), now).size();
-                if (recovered > 0) {
-                    logger.warn("已收口 {} 个孤儿 AI Run, threadId={}, previousOwner={}",
-                            recovered, expired.getThreadId(), expired.getOwnerId());
-                }
-            } finally {
-                store.releaseThreadLease(recovery);
-            }
+            recoverWithLease(expired.getThreadId(), now, recovery,
+                    () -> store.claimExpiredThreadLease(expired, recovery),
+                    recovered -> logger.warn(
+                            "已收口 {} 个孤儿 AI Run, threadId={}, previousOwner={}",
+                            recovered, expired.getThreadId(), expired.getOwnerId()));
         }
     }
 
@@ -129,16 +124,24 @@ public class AiExecutionLeaseService {
             if (localLeases.containsKey(threadId)) continue;
             AiThreadLeaseRecord recovery = lease(
                     threadId, UUID.randomUUID().toString(), now);
-            if (!store.acquireThreadLease(recovery)) continue;
-            try {
-                int recovered = store.recoverOrphanedRuns(threadId, now).size();
-                if (recovered > 0) {
-                    logger.warn("已收口 {} 个无租约孤儿 AI Run, threadId={}",
-                            recovered, threadId);
-                }
-            } finally {
-                store.releaseThreadLease(recovery);
-            }
+            recoverWithLease(threadId, now, recovery,
+                    () -> store.acquireThreadLease(recovery),
+                    recovered -> logger.warn(
+                            "已收口 {} 个无租约孤儿 AI Run, threadId={}",
+                            recovered, threadId));
+        }
+    }
+
+    private void recoverWithLease(String threadId, long now,
+                                  AiThreadLeaseRecord recovery,
+                                  BooleanSupplier claim,
+                                  java.util.function.IntConsumer onRecovered) {
+        if (!claim.getAsBoolean()) return;
+        try {
+            int recovered = store.recoverOrphanedRuns(threadId, now).size();
+            if (recovered > 0) onRecovered.accept(recovered);
+        } finally {
+            store.releaseThreadLease(recovery);
         }
     }
 

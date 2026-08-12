@@ -1,7 +1,6 @@
 package org.leo.web.service;
 
 import org.leo.ai.audit.AiAuditLogStore;
-import org.leo.ai.channel.AiModelConfigService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.core.ai.AiRunStatus;
 import org.leo.ai.runtime.AiTurnCoordinator;
@@ -14,7 +13,6 @@ import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiChatAuditEntry;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiModelConfig;
-import org.leo.web.exception.ApiException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.slf4j.Logger;
@@ -26,31 +24,31 @@ import java.util.concurrent.CompletableFuture;
 public class PlatformAiTurnService {
 
     private static final Logger logger = LoggerFactory.getLogger(PlatformAiTurnService.class);
-    private final AiModelConfigService modelConfigService;
     private final AiAuditLogStore auditLogStore;
     private final AiConversationStoreService conversationStore;
     private final PlatformAiAgentRegistry agentRegistry;
     private final AiSseTurnPresenter sseTurnPresenter;
     private final AiTurnCoordinator turnCoordinator;
     private final AiTurnOrchestrator turnOrchestrator;
-    private final AiExecutionLeaseService executionLeaseService;
+    private final AiExecutionClaimService executionClaimService;
+    private final AiModelChannelResolver channelResolver;
 
-    public PlatformAiTurnService(AiModelConfigService modelConfigService,
-                                 AiAuditLogStore auditLogStore,
+    public PlatformAiTurnService(AiAuditLogStore auditLogStore,
                                  AiConversationStoreService conversationStore,
                                  PlatformAiAgentRegistry agentRegistry,
                                  AiSseTurnPresenter sseTurnPresenter,
                                  AiTurnCoordinator turnCoordinator,
                                  AiTurnOrchestrator turnOrchestrator,
-                                 AiExecutionLeaseService executionLeaseService) {
-        this.modelConfigService = modelConfigService;
+                                 AiExecutionClaimService executionClaimService,
+                                 AiModelChannelResolver channelResolver) {
         this.auditLogStore = auditLogStore;
         this.conversationStore = conversationStore;
         this.agentRegistry = agentRegistry;
         this.sseTurnPresenter = sseTurnPresenter;
         this.turnCoordinator = turnCoordinator;
         this.turnOrchestrator = turnOrchestrator;
-        this.executionLeaseService = executionLeaseService;
+        this.executionClaimService = executionClaimService;
+        this.channelResolver = channelResolver;
     }
 
     public AiChatAuditEntry appendChatAudit(AiExecutionPolicy policy, String message) {
@@ -71,22 +69,14 @@ public class PlatformAiTurnService {
                     state, state::isExecuting, 5_000L);
         }
         if (!localClaimed) return false;
-        try {
-            String leaseToken = executionLeaseService.tryAcquireToken(
-                    state.getStateId(),
-                    () -> state.stopGeneration("执行租约已转移"));
-            if (leaseToken != null) {
-                state.bindActiveLeaseToken(leaseToken);
-                return true;
-            }
-        } catch (RuntimeException error) {
-            turnCoordinator.releaseClaim(state);
-            logger.warn("获取平台 AI 执行租约失败, threadId={}: {}",
-                    state.getStateId(), error.getMessage());
-            return false;
-        }
-        turnCoordinator.releaseClaim(state);
-        return false;
+        String leaseToken = executionClaimService.tryAcquireAfterClaim(
+                state, state.getStateId(),
+                () -> state.stopGeneration("执行租约已转移"),
+                error -> logger.warn("获取平台 AI 执行租约失败, threadId={}: {}",
+                        state.getStateId(), error.getMessage()));
+        if (leaseToken == null) return false;
+        state.bindActiveLeaseToken(leaseToken);
+        return true;
     }
 
     public void failDetachedExecution(PlatformAiState state) {
@@ -95,7 +85,7 @@ public class PlatformAiTurnService {
 
     public void releaseExecutionLease(PlatformAiState state) {
         if (state != null) {
-            executionLeaseService.release(state.getStateId());
+            executionClaimService.release(state.getStateId());
             state.bindActiveLeaseToken(null);
         }
     }
@@ -182,24 +172,10 @@ public class PlatformAiTurnService {
         }
     }
 
-    private AiModelConfig resolveChannel(Integer configId) {
-        try {
-            AiModelConfig config = modelConfigService.resolve(configId);
-            if (config == null) {
-                if (configId != null) {
-                    throw ApiException.notFound("AI 模型不存在或已删除，configId: " + configId);
-                }
-                throw ApiException.notFound("未配置激活的 AI 模型，请先在设置中添加并激活一条");
-            }
-            return config;
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            throw ApiException.notFound(e.getMessage());
-        }
-    }
-
     private PlatformAiAgentRegistry.Runtime threadAgent(
             PlatformAiState state, String reasoningEffort) {
-        AiModelConfig requested = resolveChannel(state != null ? state.getAiConfigId() : null);
+        AiModelConfig requested = channelResolver.require(
+                state != null ? state.getAiConfigId() : null);
         if (state != null && state.getAiConfigId() == null) {
             state.setAiConfigId(requested.getId());
         }

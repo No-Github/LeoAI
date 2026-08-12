@@ -69,7 +69,8 @@ class PuppetNodeAiThreadServiceTest {
         AiConversationStoreService conversationStore = mock(AiConversationStoreService.class);
         SessionWarmupService sessionWarmupService = mock(SessionWarmupService.class);
         PuppetNodeAiThreadService service = new PuppetNodeAiThreadService(
-                mock(AiModelConfigService.class),
+                mock(org.leo.ai.channel.AiModelConfigService.class),
+                mock(AiModelChannelResolver.class),
                 conversationStore,
                 sessionWarmupService,
                 mock(PuppetNodeAiAgentRegistry.class),
