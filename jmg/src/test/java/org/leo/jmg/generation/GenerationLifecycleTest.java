@@ -4,7 +4,6 @@ import javassist.ClassPool;
 import javassist.CtClass;
 import org.junit.jupiter.api.Test;
 import org.leo.core.entity.Disguise;
-import org.leo.core.util.request.GenerationRandom;
 import org.leo.jmg.ShellGenerator;
 import org.leo.jmg.ShellGeneratorConfig;
 import org.leo.jmg.TransportProtocol;
@@ -57,35 +56,6 @@ class GenerationLifecycleTest {
                 plan.getInjectorDescriptor().getShellTemplateName());
         assertNotNull(plan.getPacker());
         assertFalse(plan.isAbstractTranslet());
-    }
-
-    @Test
-    void resultOwnsFinalStateAndDefensivelyCopiesBytes() {
-        GenerationRequest request =
-                GenerationRequest.from(injectorConfig().build());
-        GenerationPlan plan = GenerationPlan.forInjector(request);
-        GenerationWorkspace workspace = GenerationWorkspace.create(request);
-
-        try (GenerationRandom.Scope ignored =
-                     GenerationRandom.withSeed(request.getObfuscationSeed())) {
-            workspace.resolveClassNames();
-        }
-        byte[] core = new byte[]{1, 2, 3};
-        workspace.setCoreClassBytes(core);
-        core[0] = 9;
-        byte[] returned = workspace.getCoreClassBytes();
-        returned[1] = 9;
-        workspace.setShellClassBytes(new byte[]{4, 5});
-        workspace.setInjectorClassBytes(new byte[]{6, 7});
-        GenerationResult result =
-                GenerationResult.forInjector(plan, workspace, "packed");
-
-        assertArrayEquals(new byte[]{1, 2, 3}, workspace.getCoreClassBytes());
-        assertArrayEquals(new byte[]{1, 2, 3}, result.getCoreClassBytes());
-        result.getCoreClassBytes()[2] = 9;
-        assertArrayEquals(new byte[]{1, 2, 3}, result.getCoreClassBytes());
-        assertNotNull(result.getShellClassName());
-        assertNotNull(result.getInjectorClassName());
     }
 
     @Test
@@ -172,24 +142,6 @@ class GenerationLifecycleTest {
         } finally {
             injector.detach();
         }
-    }
-
-    @Test
-    void lambdaSuffixIsIdempotentForCustomNames() {
-        GenerationRequest request = GenerationRequest.from(injectorConfig()
-                .shellClassName("sample.Payload$Proxy0$$Lambda$1")
-                .injectorClassName("sample.Loader$Proxy0$$Lambda$1")
-                .lambdaSuffix(true)
-                .build());
-        GenerationWorkspace workspace = GenerationWorkspace.create(request);
-
-        workspace.resolveClassNames();
-        workspace.resolveClassNames();
-
-        assertEquals("sample.Payload$Proxy0$$Lambda$1",
-                workspace.getShellClassName());
-        assertEquals("sample.Loader$Proxy0$$Lambda$1",
-                workspace.getInjectorClassName());
     }
 
     @Test

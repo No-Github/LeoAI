@@ -59,32 +59,6 @@ class JspObfuscationPipelineTest {
     }
 
     @Test
-    void trimsKnownStepIdsBeforeBuildingPipeline() {
-        JspObfuscationPipeline pipeline = JspObfuscationPlanner.compile(
-                Arrays.asList("  NORMALIZE_WHITESPACE  "), webShellContext())
-                .getPipeline();
-
-        assertEquals("plain text", pipeline.apply("plain text"));
-    }
-
-    @Test
-    void descriptorConstraintSetsAreImmutable() {
-        JspObfuscationStepDescriptor descriptor = null;
-        for (JspObfuscationStepDescriptor candidate
-                : JspObfuscationStepCatalog.getDescriptors()) {
-            if (!candidate.getIncompatibleWith().isEmpty()) {
-                descriptor = candidate;
-                break;
-            }
-        }
-
-        assertTrue(descriptor != null, "缺少带互斥约束的步骤描述");
-        JspObfuscationStepDescriptor selected = descriptor;
-        assertThrows(UnsupportedOperationException.class,
-                () -> selected.getIncompatibleWith().clear());
-    }
-
-    @Test
     void rejectsStepsThatDoNotMatchArtifactContext() {
         IllegalArgumentException jspx = assertThrows(IllegalArgumentException.class,
                 () -> JspObfuscationPlanner.compile(

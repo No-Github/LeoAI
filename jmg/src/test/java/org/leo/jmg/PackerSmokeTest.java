@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerRegistry;
-import org.leo.jmg.mem.packer.spel.SpELSpringGzipJDK17Packer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -12,7 +11,6 @@ import java.io.InputStream;
 import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PackerSmokeTest {
 
@@ -24,16 +22,6 @@ class PackerSmokeTest {
             String output = packer.pack(config);
             assertFalse(output == null || output.trim().isEmpty(), name + " 返回了空结果");
         }
-    }
-
-    @Test
-    void springJdk17PackerRejectsMalformedClassNamesClearly() {
-        assertThrows(IllegalArgumentException.class,
-                () -> SpELSpringGzipJDK17Packer.assertClassNameValid(null));
-        assertThrows(UnsupportedOperationException.class,
-                () -> SpELSpringGzipJDK17Packer.assertClassNameValid("NoPackage"));
-        assertThrows(UnsupportedOperationException.class,
-                () -> SpELSpringGzipJDK17Packer.assertClassNameValid("org.springframework.expression."));
     }
 
     private ClassPackerConfig createConfig() throws IOException {

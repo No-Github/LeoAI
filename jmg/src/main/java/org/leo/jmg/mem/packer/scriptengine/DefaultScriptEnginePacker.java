@@ -29,9 +29,13 @@ public class DefaultScriptEnginePacker implements Packer {
                 LiteralObfuscator.javascriptCharCodes(script)));
     }
 
+    /**
+     * 压缩 JavaScript，并统一使用单引号，避免各模板和 payload 分块重新引入双引号。
+     */
     public static String scriptToSingleLine(String script) {
         return script.replace("\n", "")
                 .replaceAll("(?m)^[ \t]+|[ \t]+$", "")
-                .replaceAll("[ \t]{2,}", " ");
+                .replaceAll("[ \t]{2,}", " ")
+                .replace('"', '\'');
     }
 }

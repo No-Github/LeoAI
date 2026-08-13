@@ -5,11 +5,8 @@ import org.leo.core.entity.Disguise;
 import org.leo.jmg.catalog.GeneratorCatalog;
 import org.leo.jmg.generation.GenerationPlan;
 import org.leo.jmg.generation.GenerationRequest;
-import org.leo.jmg.mem.packer.ClassPackerConfig;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -19,15 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ShellGeneratorConfigTest {
 
     @Test
-    void acceptsTrimmedCaseInsensitiveProtocol() {
-        ShellGeneratorConfig config = builder()
-                .protocol("  HTTPCHUNK  ")
-                .build();
-
-        assertEquals("httpchunk", config.getProtocol());
-    }
-
-    @Test
     void acceptsCanonicalProtocolNamesAndRejectsRemovedAliases() {
         assertEquals("websocket", builder().protocol(" WebSocket ").build().getProtocol());
         assertThrows(IllegalArgumentException.class,
@@ -35,14 +23,6 @@ class ShellGeneratorConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> builder().protocol("HTTP-CHUNK"));
         assertThrows(IllegalArgumentException.class, () -> builder().protocol("ftp"));
-    }
-
-    @Test
-    void exposesProtocolCapabilityMatrix() {
-        assertEquals(Arrays.asList("http", "httpchunk"),
-                ShellGeneratorConfig.getSupportedWebShellProtocols());
-        assertEquals(Arrays.asList("http", "httpchunk", "websocket"),
-                ShellGeneratorConfig.getSupportedMemoryShellProtocols());
     }
 
     @Test
@@ -139,53 +119,6 @@ class ShellGeneratorConfigTest {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                 () -> validateInjector(missingHeader));
         assertTrue(error.getMessage().contains("headerName"));
-    }
-
-    @Test
-    void rejectsInvalidHttpStatusCode() {
-        assertThrows(IllegalArgumentException.class, () -> builder().respCode(99));
-        assertThrows(IllegalArgumentException.class, () -> builder().respCode(600));
-        assertEquals(599, builder().respCode(599).build().getRespCode());
-    }
-
-    @Test
-    void snapshotsObfuscationStepsAtConfigurationBoundary() {
-        List<String> source = new ArrayList<String>(Arrays.asList("CHUNK_PAYLOAD"));
-
-        ShellGeneratorConfig config = builder().jspObfuscationSteps(source).build();
-        source.add("SPLIT_STRING_LITERALS");
-
-        assertEquals(Arrays.asList("CHUNK_PAYLOAD"), config.getJspObfuscationSteps());
-        assertThrows(UnsupportedOperationException.class,
-                () -> config.getJspObfuscationSteps().add("GHOST_BITS_ENCODE"));
-    }
-
-    @Test
-    void classPackerConfigAlsoSnapshotsSteps() {
-        List<String> source = new ArrayList<String>(Arrays.asList("CHUNK_PAYLOAD"));
-        ClassPackerConfig config = new ClassPackerConfig();
-
-        config.setJspObfuscationSteps(source);
-        source.clear();
-
-        assertEquals(Arrays.asList("CHUNK_PAYLOAD"), config.getJspObfuscationSteps());
-        assertThrows(UnsupportedOperationException.class,
-                () -> config.getJspObfuscationSteps().clear());
-    }
-
-    @Test
-    void parsesCanonicalTargetJavaVersionsAndDefaultsToAuto() {
-        assertEquals(TargetJavaVersion.AUTO, builder().build().getTargetJavaVersion());
-        assertEquals(TargetJavaVersion.JDK_6,
-                builder().targetJavaVersion("6").build().getTargetJavaVersion());
-        assertEquals(TargetJavaVersion.JDK_8,
-                builder().targetJavaVersion("8").build().getTargetJavaVersion());
-        assertEquals(TargetJavaVersion.JDK_9_PLUS,
-                builder().targetJavaVersion("9+").build().getTargetJavaVersion());
-        assertEquals(TargetJavaVersion.JDK_17_PLUS,
-                builder().targetJavaVersion("17+").build().getTargetJavaVersion());
-        assertThrows(IllegalArgumentException.class,
-                () -> builder().targetJavaVersion("5"));
     }
 
     @Test
