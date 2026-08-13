@@ -16,6 +16,7 @@ public final class GenerationResult {
     private final String coreClassName;
     private final String shellClassName;
     private final String injectorClassName;
+    private final String urlPattern;
     private final byte[] coreClassBytes;
     private final byte[] shellClassBytes;
     private final byte[] injectorClassBytes;
@@ -29,6 +30,7 @@ public final class GenerationResult {
                              String content,
                              String shellClassName,
                              String injectorClassName,
+                             String urlPattern,
                              byte[] coreClassBytes,
                              byte[] shellClassBytes,
                              byte[] injectorClassBytes,
@@ -45,6 +47,7 @@ public final class GenerationResult {
         this.coreClassName = request.getCoreClassName();
         this.shellClassName = shellClassName;
         this.injectorClassName = injectorClassName;
+        this.urlPattern = urlPattern;
         this.coreClassBytes = copyRequired(coreClassBytes, "coreClassBytes");
         boolean injector = plan.getArtifactKind() == GenerationPlan.ArtifactKind.INJECTOR;
         this.shellClassBytes = injector
@@ -69,7 +72,7 @@ public final class GenerationResult {
             throw new IllegalArgumentException("WebShell 结果需要 JSP 或 JSPX 生成计划");
         }
         return new GenerationResult(
-                plan, content, null, null, coreClassBytes, null, null, false);
+                plan, content, null, null, plan.getRequest().getUrlPattern(), coreClassBytes, null, null, false);
     }
 
     public static GenerationResult forInjector(GenerationPlan plan,
@@ -87,6 +90,7 @@ public final class GenerationResult {
                 content,
                 workspace.getShellClassName(),
                 workspace.getInjectorClassName(),
+                workspace.getEffectiveUrlPattern(),
                 workspace.getCoreClassBytes(),
                 workspace.getShellClassBytes(),
                 workspace.getInjectorClassBytes(),
@@ -111,6 +115,10 @@ public final class GenerationResult {
 
     public String getInjectorClassName() {
         return injectorClassName;
+    }
+
+    public String getUrlPattern() {
+        return urlPattern;
     }
 
     public byte[] getCoreClassBytes() {

@@ -25,7 +25,10 @@ public enum ServerType {
     BES("BES"),
     INFORSUITE("InforSuite"),
     TONGWEB("TongWeb"),
-    STRUTS2("Struts2");
+    STRUTS2("Struts2"),
+    SPRING_WEBFLUX("SpringWebFlux"),
+    XXL_JOB("XXL-JOB"),
+    DUBBO("Dubbo");
 
     private final String value;
 

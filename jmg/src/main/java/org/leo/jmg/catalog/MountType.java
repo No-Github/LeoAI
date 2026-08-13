@@ -16,6 +16,11 @@ public enum MountType {
     WEBSOCKET("websocket", "WebSocket Endpoint"),
     INTERCEPTOR("interceptor", "MVC Interceptor"),
     CONTROLLER("controller", "MVC Controller Handler"),
+    WEB_FILTER("web-filter", "WebFlux WebFilter"),
+    HANDLER_METHOD("handler-method", "WebFlux HandlerMethod"),
+    HANDLER_FUNCTION("handler-function", "WebFlux HandlerFunction"),
+    NETTY_HANDLER("netty-handler", "Netty ChannelHandler"),
+    DUBBO_SERVICE("dubbo-service", "Dubbo Service"),
     CUSTOMIZER("customizer", "容器 Customizer"),
     ACTION("action", "Action 映射"),
     HANDLER("handler", "容器 Handler"),
@@ -43,6 +48,9 @@ public enum MountType {
                 || this == SERVLET
                 || this == WEBSOCKET
                 || this == CONTROLLER
+                || this == HANDLER_METHOD
+                || this == HANDLER_FUNCTION
+                || this == DUBBO_SERVICE
                 || this == ACTION;
     }
 
@@ -55,6 +63,11 @@ public enum MountType {
         if (name.contains("agentservletcontext")) return AGENT_SERVLET_CONTEXT;
         if (name.contains("agentframeworkservlet")) return AGENT_FRAMEWORK_SERVLET;
         if (name.contains("agenthandler")) return AGENT_HANDLER;
+        if (name.contains("dubboservice")) return DUBBO_SERVICE;
+        if (name.contains("handlerfunction")) return HANDLER_FUNCTION;
+        if (name.contains("handlermethod")) return HANDLER_METHOD;
+        if (name.contains("nettyhandler")) return NETTY_HANDLER;
+        if (name.contains("webfilter")) return WEB_FILTER;
         if (name.contains("filter")) return FILTER;
         if (name.contains("listener")) return LISTENER;
         if (name.contains("servlet")) return SERVLET;

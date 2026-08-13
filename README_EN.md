@@ -166,12 +166,13 @@ The exact PHP feature set depends on the target environment: database operations
 ### Shell Generator
 
 #### Memory Shell Generation
-- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket, HTTP UpgradeProtocol
-- Supported middleware: Tomcat, Jetty5, Jetty, JBoss/JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin2, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, and Struts2 (21 total)
+- Supported types: Filter, Servlet, Listener, Valve, Interceptor, Controller, WebSocket, HTTP UpgradeProtocol, WebFlux WebFilter/HandlerMethod/HandlerFunction, Netty Handler, and Dubbo Service
+- Supported middleware: Tomcat, Jetty5, Jetty, JBoss/JBossAS, JBossEAP6, JBossEAP7, Wildfly, Undertow, Resin2, Resin, Glassfish, Payara, WebLogic, WebSphere, SpringWebMVC, Apusic, BES, InforSuite, TongWeb, Struts2, SpringWebFlux, XXL-JOB, and Dubbo (24 total)
 - TongWeb Valve runtime contracts are selected by major version: 6 → `com.tongweb.web.thor`, 7 → `com.tongweb.catalina`, and 8 → `com.tongweb.server`; the UI and API require `serverVersion`
 - Agent mounts cover FilterChain and ContextValve for Tomcat/JBoss/GlassFish/Payara/InforSuite/TongWeb, Jetty Handler, Undertow ServletHandler, Resin FilterChain, WebLogic ServletContext, WebSphere FilterManager, Spring MVC FrameworkServlet, Apusic, and BES. Jetty 7–11 also provides an ordinary root Handler mount. Tomcat WebSocket includes a reverse-proxy-compatible mount that supplies Upgrade headers through a single-class JDK Proxy Valve. Tomcat 8.5–11 also exposes a connector-level `UpgradeInjector`; generated metadata reports the `Connection: Upgrade` and dynamic `Upgrade: <shellClassName>` activation headers while retaining header gates, custom response codes, HTTP Chunk, and Lambda class-name suffixes.
 - `AgentJarBase64` emits a `premain`/`agentmain` manifest for `-javaagent` and Attach API loading
-- Packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, JarBase64, AgentJarBase64, and more (46 total)
+- XXL-JOB 2.2–2.5 uses `XxlJob`/`XxlJobJson` request bodies, while 2.0–2.1 uses `XxlJobHessian`; the capability catalog validates the Packer against `serverVersion`
+- Packers: OGNL, SpEL, EL, Groovy, Freemarker, MVEL, BeanShell, Velocity, Thymeleaf, JEXL, Jinjava, JXPath, Rhino, Aviator, ScriptEngine, BCEL, Translet, XmlDecoder, H2, Base64, Hex, JarBase64, AgentJarBase64, XXL-JOB JSON/Hessian, and more (49 total)
 - Build strategies: Lambda-shaped class suffixes, Injector static initialization, optional class shrinking, and automatic JDK 9+ module compatibility. Capability metadata hides URL configuration for global mounts and disables static initialization for Agent mounts. Packers receive Core, Shell, and Injector class entries together.
 
 #### WebShell Generation

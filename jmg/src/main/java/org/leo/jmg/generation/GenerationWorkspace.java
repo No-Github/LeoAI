@@ -14,6 +14,7 @@ public final class GenerationWorkspace {
     private byte[] coreClassBytes;
     private byte[] shellClassBytes;
     private byte[] injectorClassBytes;
+    private String effectiveUrlPattern;
     private boolean abstractTranslet;
     private final boolean lambdaSuffix;
 
@@ -22,6 +23,7 @@ public final class GenerationWorkspace {
         this.injectorClassName = request.getRequestedInjectorClassName();
         this.abstractTranslet = request.isAbstractTransletRequested();
         this.lambdaSuffix = request.isLambdaSuffix();
+        this.effectiveUrlPattern = request.getUrlPattern();
     }
 
     public static GenerationWorkspace create(GenerationRequest request) {
@@ -50,6 +52,14 @@ public final class GenerationWorkspace {
 
     public String getInjectorClassName() {
         return injectorClassName;
+    }
+
+    public String getEffectiveUrlPattern() {
+        return effectiveUrlPattern;
+    }
+
+    public void setEffectiveUrlPattern(String effectiveUrlPattern) {
+        this.effectiveUrlPattern = effectiveUrlPattern;
     }
 
     public byte[] getCoreClassBytes() {

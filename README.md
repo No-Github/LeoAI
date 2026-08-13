@@ -184,12 +184,13 @@ PHP 目标的具体能力取决于其扩展与系统函数：数据库需要相�
 ### Shell 生成器
 
 #### 内存马生成
-- 支持类型：Filter、Servlet、Listener、Valve、Interceptor、Controller、WebSocket、HTTP UpgradeProtocol
-- 支持中间件：Tomcat、Jetty5、Jetty、JBoss/JBossAS、JBossEAP6、JBossEAP7、Wildfly、Undertow、Resin2、Resin、Glassfish、Payara、WebLogic、WebSphere、SpringWebMVC、Apusic、BES、InforSuite、TongWeb、Struts2（共 21 种）
+- 支持类型：Filter、Servlet、Listener、Valve、Interceptor、Controller、WebSocket、HTTP UpgradeProtocol、WebFlux WebFilter/HandlerMethod/HandlerFunction、Netty Handler、Dubbo Service
+- 支持中间件：Tomcat、Jetty5、Jetty、JBoss/JBossAS、JBossEAP6、JBossEAP7、Wildfly、Undertow、Resin2、Resin、Glassfish、Payara、WebLogic、WebSphere、SpringWebMVC、Apusic、BES、InforSuite、TongWeb、Struts2、SpringWebFlux、XXL-JOB、Dubbo（共 24 种）
 - TongWeb Valve 按主版本适配运行时契约：6 → `com.tongweb.web.thor`、7 → `com.tongweb.catalina`、8 → `com.tongweb.server`；界面与 API 会要求选择 `serverVersion`
 - Agent 挂载已覆盖 Tomcat/JBoss/GlassFish/Payara/InforSuite/TongWeb 的 FilterChain 与 ContextValve、Jetty Handler、Undertow ServletHandler、Resin FilterChain、WebLogic ServletContext、WebSphere FilterManager、Spring MVC FrameworkServlet、Apusic 和 BES；Jetty 7–11 另提供普通根 Handler 挂载；Tomcat WebSocket 提供反向代理兼容挂载，并以单类 JDK Proxy Valve 补齐 Upgrade 请求；Tomcat 8.5–11 还提供 Connector 级 `UpgradeInjector`，生成结果会给出 `Connection: Upgrade` 与动态 `Upgrade: <shellClassName>` 激活头；保留 Header 门禁、自定义响应码、HTTP Chunk、Lambda 类名后缀等构建能力
 - `AgentJarBase64` 产物含 `premain`/`agentmain` 清单，可用于 `-javaagent` 与 Attach API
-- Packer：OGNL、SpEL、EL、Groovy、Freemarker、MVEL、BeanShell、Velocity、Thymeleaf、JEXL、Jinjava、JXPath、Rhino、Aviator、ScriptEngine、BCEL、Translet、XmlDecoder、H2、Base64、Hex、JarBase64、AgentJarBase64 等（共 46 种）
+- XXL-JOB 2.2–2.5 使用 `XxlJob`/`XxlJobJson` 请求体，2.0–2.1 使用 `XxlJobHessian`；能力目录会按 `serverVersion` 校验 Packer
+- Packer：OGNL、SpEL、EL、Groovy、Freemarker、MVEL、BeanShell、Velocity、Thymeleaf、JEXL、Jinjava、JXPath、Rhino、Aviator、ScriptEngine、BCEL、Translet、XmlDecoder、H2、Base64、Hex、JarBase64、AgentJarBase64、XXL-JOB JSON/Hessian 等（共 49 种）
 - 构建策略：Lambda 风格类名后缀、Injector 静态初始化、Class 瘦身、JDK 9+ 自动模块兼容；能力元数据会隐藏全局挂载点的 URL 配置，并对 Agent 挂载关闭静态初始化；Packer 可同时取得 Core、Shell、Injector 三阶段类条目
 
 #### WebShell 生成

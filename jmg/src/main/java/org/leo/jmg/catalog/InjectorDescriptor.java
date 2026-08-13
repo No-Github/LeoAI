@@ -112,6 +112,19 @@ public final class InjectorDescriptor {
         return false;
     }
 
+    public List<String> getSupportedPackers(String serverVersion) {
+        if (serverType == ServerType.XXL_JOB) {
+            if ("2.0-2.1".equals(serverVersion)) {
+                return Collections.singletonList("XxlJobHessian");
+            }
+            if ("2.2-2.5".equals(serverVersion)) {
+                return Collections.unmodifiableList(
+                        Arrays.asList("XxlJob", "XxlJobJson"));
+            }
+        }
+        return supportedPackers;
+    }
+
     public boolean supportsStaticInitialize() {
         return supportsStaticInitialize;
     }

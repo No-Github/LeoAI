@@ -72,7 +72,7 @@ public final class ShellGenerationService {
         metadata.put("coreClassName", result.getCoreClassName());
         metadata.put("injectorClassName", result.getInjectorClassName());
         metadata.put("shellClassName", result.getShellClassName());
-        metadata.put("urlPattern", command.getUrlPattern());
+        metadata.put("urlPattern", result.getUrlPattern());
         metadata.put("isAbstractTranslet", result.isAbstractTranslet());
         metadata.put("byPassJavaModuleRequested", command.isBypassJavaModule());
         metadata.put("byPassJavaModule", command.isBypassJavaModuleEffective());

