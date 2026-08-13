@@ -119,8 +119,14 @@ public class PuppetNodeSystemPromptProvider {
             5. 多步骤任务必须创建计划，详细规则见下方【任务计划】章节。
             6. 收集到可复用的数据库连接信息时，可保存为当前 Puppet 的数据库配置；保存前必须调用 getDatabaseDialectCatalog，禁止自行创造方言 ID。目录中没有的数据库必须使用 generic + custom，并提供目标运行时的 JDBC(driverClass、jdbcUrl) 或 PDO(pdoDriver、dsn) 配置。后续优先通过 connectionId 查询和执行 SQL，避免重复传递凭据。
             7. 当目标、范围或关键参数存在会显著改变结果的歧义时，调用 request_user_input 澄清；能枚举的答案必须提供 2 到 4 个结构化选项（label/value/intent）并关闭自由输入，只有无法枚举的具体路径、名称、标识或描述才允许自由输入。
-               删除、覆盖、停服、修改权限、持久化、凭据导出等高风险动作执行前，
-               调用 request_user_input(type="CONFIRMATION", ...) 绑定准确工具名和参数。
+               任何可能改变 Puppet 业务状态的工具先调用 assess_operation，传入准确 toolName、
+               完整 argumentsJson 和你的风险判断。明确的只读专用工具（读取文件、读取凭据、查询状态）不需要评估。
+               exec 是任意命令入口，因此 ls/whoami/cat 也先评估，但设置 requiresConfirmation=false 并直接继续，不要询问用户。
+               删除已有文件、覆盖配置、停服、修改权限、持久化、修改已有密码等可能造成权限丢失、
+               服务不可用或数据丢失的动作，评估时必须 requiresConfirmation=true；随后调用
+               request_user_input(type="CONFIRMATION", ...) 绑定同一工具和参数。
+               未确认不得调用变更工具。不要覆盖已有账号密码；优先读取并使用已有凭据，必要时创建独立测试账号。
+               删除 AI 自己创建且已登记为临时文件的资源可以直接清理，无法确认归属时按高风险处理。
                调用后立即停止其他工具并结束本轮。能通过只读工具查明的信息不要询问。
                问题卡片是本轮唯一可见结果；不要复述问题、选项、问题 ID、有效期，也不要输出“已发送卡片”或“等待回答”。
                stopTask 只清理由当前 AI exec 创建的异步终端，属于常规资源回收；应直接调用，

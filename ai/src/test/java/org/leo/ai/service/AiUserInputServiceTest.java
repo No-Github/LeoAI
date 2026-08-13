@@ -3,6 +3,12 @@ package org.leo.ai.service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolCatalog;
+import org.leo.ai.agent.AiToolKind;
+import org.leo.ai.agent.AiToolOperation;
+import org.leo.ai.agent.AiToolPolicy;
+import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.service.tool.ToolService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.core.ai.AiRunStatus;
@@ -121,6 +127,36 @@ class AiUserInputServiceTest {
         assertThrows(RuntimeException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
                 true, "危险动作", "deleteUser", "{\"userId\":\"user-1\"}", "HIGH", 60L));
+    }
+
+    @Test
+    void confirmationRejectsReadOnlyOrInternalTools() {
+        PlatformAiStateStore.create(STATE_ID);
+        AiToolContext.setFromMemoryId(STATE_ID);
+        AiToolCatalog catalog = new AiToolCatalog();
+        ToolService.findTools(new ReadOnlyTools()).forEach(tool -> catalog.register(new ReadOnlyTools(), tool));
+        ToolService.findTools(new InternalTools()).forEach(tool -> catalog.register(new InternalTools(), tool));
+        AiUserInputService service = new AiUserInputService(
+                mock(AiConversationStoreService.class), catalog);
+
+        assertThrows(RuntimeException.class, () -> service.request(
+                "CONFIRMATION", "确认读取吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "读取", "readOnly", "{}", "HIGH", 60L));
+        assertThrows(RuntimeException.class, () -> service.request(
+                "CONFIRMATION", "确认控制吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "内部控制", "internal", "{}", "HIGH", 60L));
+    }
+
+    private static class ReadOnlyTools {
+        @Tool
+        @AiToolPolicy(kind = AiToolKind.QUERY, operation = AiToolOperation.READ_ONLY)
+        public String readOnly() { return "ok"; }
+    }
+
+    private static class InternalTools {
+        @Tool
+        @AiToolPolicy(kind = AiToolKind.CONTROL, operation = AiToolOperation.WRITE, business = false)
+        public String internal() { return "ok"; }
     }
 
     @Test

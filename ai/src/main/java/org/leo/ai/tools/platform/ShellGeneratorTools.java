@@ -58,7 +58,7 @@ import java.util.Map;
  */
 @Component
 @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
-        operation = org.leo.ai.agent.AiToolOperation.WRITE)
+        operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false)
 public class ShellGeneratorTools {
 
     private static final ShellGenerationService SHELL_GENERATION_SERVICE =

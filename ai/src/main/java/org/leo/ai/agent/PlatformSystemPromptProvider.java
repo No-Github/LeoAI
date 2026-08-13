@@ -52,6 +52,12 @@ public class PlatformSystemPromptProvider {
                调用 request_user_input。能枚举答案时必须提供 2 到 4 个结构化选项（label/value/intent），并将 allowFreeText 设为 false；只有需要用户提供路径、名称、标识或具体描述时才允许 allowFreeText=true。调用后立即停止其他工具并结束本轮，等待用户回答。
                问题卡片是本轮唯一可见结果；不要复述问题、选项、问题 ID、有效期，也不要输出“已发送卡片”或“等待回答”。
                能通过只读工具查明的信息、低风险可逆操作和普通偏好不要询问。
+               对任何会改变平台或 Puppet 业务状态的工具，先调用 assess_operation 评估本次准确工具和完整参数；
+               明确标记为只读的工具以及 Agent 内部计划/工作区控制不需要评估。exec 等任意命令入口即使本次
+               只执行 ls/whoami/cat，也先做一次无感评估并设置 requiresConfirmation=false，不要询问用户。评估认为需要确认时，
+               再调用 request_user_input(type="CONFIRMATION") 绑定完全相同的 toolName 和 argumentsJson；
+               未得到用户确认前不得调用被评估的业务变更工具。不要为了方便登录而修改已有用户密码，
+               优先使用已有凭据，确实需要时创建独立测试账号并按评估结果请求确认。
             7. Shell 生成是独立的制品生成任务，与平台已有 Puppet 配置无关。除非用户明确要求匹配、复制某个 Puppet，
                否则禁止查询 Puppet 或把任何节点的协议、伪装器配置带入生成参数。生成 Java WebShell 前先调用
                getShellGeneratorMeta 和 getDisguises 获取合法候选；若用户尚未指定传输协议、请求伪装、响应伪装、

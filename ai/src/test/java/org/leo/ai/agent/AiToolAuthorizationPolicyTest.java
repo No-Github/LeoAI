@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.service.AiUserInputService;
+import org.leo.ai.service.AiOperationAssessmentService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiUserInputRequest;
@@ -121,8 +122,16 @@ class AiToolAuthorizationPolicyTest {
                 eq("question-1"), eq(PLATFORM_STATE_ID), eq("deleteRecord"),
                 eq(confirmation.getArgumentsHash()), anyLong()))
                 .thenReturn(true, false);
+        AiToolCatalog catalog = new AiToolCatalog();
+        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
+        register(catalog, new DestructiveTools());
+        AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
+        AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        assessments.assess(PLATFORM_STATE_ID, "deleteRecord", "{\"id\":1}",
+                "HIGH", true, "删除数据", "数据不可恢复", null);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
-                users, new AiToolExecutionBoundary(), null, store);
+                users, new AiToolExecutionBoundary(), null, store,
+                catalog, new AgentRuntimeResolver(), null, assessments);
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
@@ -137,7 +146,7 @@ class AiToolAuthorizationPolicyTest {
 
         assertFalse(first.isError());
         assertTrue(second.isError());
-        assertTrue(second.resultText().contains("USER_CONFIRMATION_REQUIRED"));
+        assertTrue(second.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
     }
 
     @Test
@@ -151,8 +160,16 @@ class AiToolAuthorizationPolicyTest {
         AiConversationStoreService store = mock(AiConversationStoreService.class);
         when(store.findUserInputRequest("question-1"))
                 .thenReturn(confirmation("deleteRecord", "{\"id\":1}"));
+        AiToolCatalog catalog = new AiToolCatalog();
+        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
+        register(catalog, new DestructiveTools());
+        AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
+        AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        assessments.assess(PLATFORM_STATE_ID, "deleteRecord", "{\"id\":1}",
+                "HIGH", true, "删除数据", "数据不可恢复", null);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
-                users, new AiToolExecutionBoundary(), null, store);
+                users, new AiToolExecutionBoundary(), null, store,
+                catalog, new AgentRuntimeResolver(), null, assessments);
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
@@ -163,7 +180,41 @@ class AiToolAuthorizationPolicyTest {
                 new AiToolErrorHandler()::handleExecution);
 
         assertTrue(result.isError());
-        assertTrue(result.resultText().contains("USER_CONFIRMATION_REQUIRED"));
+        assertTrue(result.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
+    }
+
+    @Test
+    void businessMutationRequiresMatchingAgentAssessment() {
+        UserService users = mock(UserService.class);
+        User normal = user("user-1", "normal");
+        when(users.getUserById("user-1")).thenReturn(normal);
+        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        state.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        AiToolCatalog catalog = new AiToolCatalog();
+        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
+        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
+                users, new AiToolExecutionBoundary(), null, null,
+                catalog, new AgentRuntimeResolver(), null, assessments);
+        AiServiceTool tool = providedTools(policy.toolProvider(
+                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                new MutationTools()), PLATFORM_STATE_ID).get("mutate");
+        AiToolErrorHandler errors = new AiToolErrorHandler();
+
+        ToolExecutionResult rejected = ToolService.executeWithErrorHandling(
+                request("mutate", "{\"value\":\"one\"}"), tool.toolExecutor(),
+                context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
+        assertTrue(rejected.isError());
+        assertTrue(rejected.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
+
+        AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
+        AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        assessments.assess(PLATFORM_STATE_ID, "mutate", "{\"value\":\"one\"}",
+                "LOW", false, "只修改当前任务的可逆状态", null, null);
+        ToolExecutionResult accepted = ToolService.executeWithErrorHandling(
+                request("mutate", "{\"value\":\"one\"}"), tool.toolExecutor(),
+                context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
+        assertFalse(accepted.isError());
+        assertTrue(accepted.resultText().contains("one"));
     }
 
     private static Map<String, AiServiceTool> providedTools(
@@ -174,6 +225,10 @@ class AiToolAuthorizationPolicyTest {
                 .build();
         return provider.provideTools(request).aiServiceTools().stream()
                 .collect(Collectors.toMap(AiServiceTool::name, Function.identity()));
+    }
+
+    private static void register(AiToolCatalog catalog, Object source) {
+        ToolService.findTools(source).forEach(tool -> catalog.register(source, tool));
     }
 
     private static InvocationContext context(String memoryId) {
@@ -226,6 +281,15 @@ class AiToolAuthorizationPolicyTest {
                 operation = AiToolOperation.DESTRUCTIVE)
         public String deleteRecord(int id) {
             return "deleted-" + id;
+        }
+    }
+
+    private static class MutationTools {
+        @Tool
+        @AiToolPolicy(kind = AiToolKind.COMMAND,
+                operation = AiToolOperation.WRITE)
+        public String mutate(String value) {
+            return value;
         }
     }
 

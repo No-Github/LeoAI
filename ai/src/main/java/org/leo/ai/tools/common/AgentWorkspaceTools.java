@@ -56,7 +56,8 @@ public class AgentWorkspaceTools {
     }
 
     @Tool("新建或小范围覆写当前 Agent 工作空间 UTF-8 文件。覆盖现有文件必须传 workspaceReadText 返回的 sha256；单次大内容请改用脚本或补丁。")
-    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE)
+    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE,
+            business = false)
     public Map<String, Object> workspaceWriteText(
             @P("相对工作空间文件路径") String path,
             @P("完整 UTF-8 内容") String content,
@@ -66,7 +67,8 @@ public class AgentWorkspaceTools {
     }
 
     @Tool("给当前 Agent 工作空间中的现有 UTF-8 文件应用单文件 unified diff。必须提供读取时的 sha256，以防并发覆盖。")
-    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE)
+    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE,
+            business = false)
     public Map<String, Object> workspaceApplyPatch(
             @P("相对工作空间文件路径") String path,
             @P("包含 @@ hunk 的单文件 unified diff") String patch,
@@ -76,7 +78,8 @@ public class AgentWorkspaceTools {
     }
 
     @Tool("将当前 Agent 工作空间中的文件复制到 output 目录作为最终制品，返回用户文件空间路径。")
-    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE)
+    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE,
+            business = false)
     public Map<String, Object> workspacePromote(
             @P("源文件相对路径") String sourcePath,
             @P("output 下的相对路径；留空沿用文件名") String outputPath) {
@@ -84,9 +87,10 @@ public class AgentWorkspaceTools {
         return service.promote(workspace, sourcePath, outputPath);
     }
 
-    @Tool("把当前 Agent 工作空间路径移入可恢复回收区。删除普通文件必须提供当前 sha256；执行前必须得到用户确认。")
+    @Tool("把当前 Agent 隔离工作空间路径移入可恢复回收区。删除普通文件必须提供当前 sha256；"
+            + "这是可恢复的内部清理，不影响 Puppet 业务状态，不需要用户确认。")
     @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.DESTRUCTIVE,
-            exclusive = true)
+            exclusive = true, business = false)
     public Map<String, Object> workspaceDelete(
             @P("相对工作空间路径") String path,
             @P("普通文件当前 sha256；目录传空字符串") String expectedSha256) {

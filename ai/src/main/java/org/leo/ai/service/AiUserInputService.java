@@ -2,6 +2,9 @@ package org.leo.ai.service;
 
 import com.alibaba.fastjson.JSON;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolCatalog;
+import org.leo.ai.agent.AiToolDescriptor;
+import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolException;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
@@ -12,6 +15,7 @@ import org.leo.core.session.AiThread;
 import org.leo.core.session.PuppetNodeSession;
 import org.leo.core.session.PuppetNodeSessionContainer;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -31,9 +35,16 @@ public class AiUserInputService {
     private static final long MAX_EXPIRES_MS = 7L * DEFAULT_EXPIRES_MS;
 
     private final AiConversationStoreService store;
+    private final AiToolCatalog toolCatalog;
 
     public AiUserInputService(AiConversationStoreService store) {
+        this(store, new AiToolCatalog());
+    }
+
+    @Autowired
+    public AiUserInputService(AiConversationStoreService store, AiToolCatalog toolCatalog) {
         this.store = store;
+        this.toolCatalog = toolCatalog;
     }
 
     public Map<String, Object> request(String requestedType,
@@ -71,6 +82,13 @@ public class AiUserInputService {
                         "CONFIRMATION_ACTION_REQUIRED",
                         "操作确认必须绑定 toolName 和 argumentsJson。",
                         "传入计划执行的准确工具名与完整参数 JSON；参数改变后必须重新确认。");
+            }
+            AiToolDescriptor descriptor = toolCatalog.get(normalizedToolName);
+            if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) {
+                throw AiToolException.modelCorrectable(
+                        "CONFIRMATION_ACTION_NOT_BUSINESS_MUTATION",
+                        "确认请求只能绑定会改变平台或 Puppet 状态的业务工具。",
+                        "只读工具和内部控制工具无需确认；请直接调用对应工具。");
             }
             if (!hasAffirmativeOption(normalizedOptions)
                     || !hasRejectOption(normalizedOptions)) {

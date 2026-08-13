@@ -8,11 +8,9 @@ import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderResult;
 import dev.langchain4j.service.tool.ToolService;
-import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.core.session.PuppetNodeSession;
@@ -46,21 +44,21 @@ public class AiToolAuthorizationPolicy {
     private final UserService userService;
     private final AiToolExecutionBoundary executionBoundary;
     private final AiToolResultArchiveTools archiveTools;
-    private final AiConversationStoreService conversationStore;
     private final AiToolCatalog toolCatalog;
     private final AgentRuntimeResolver runtimeResolver;
     private final AiToolExposurePolicy exposurePolicy;
+    private final AiOperationGate operationGate;
 
     public AiToolAuthorizationPolicy(UserService userService) {
         this(userService, new AiToolExecutionBoundary(), null, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
         this(userService, executionBoundary, archiveTools, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
@@ -68,10 +66,9 @@ public class AiToolAuthorizationPolicy {
                                      AiToolResultArchiveTools archiveTools,
                                      AiConversationStoreService conversationStore) {
         this(userService, executionBoundary, archiveTools, conversationStore,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
-    @Autowired
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
@@ -79,15 +76,43 @@ public class AiToolAuthorizationPolicy {
                                      AiToolCatalog toolCatalog,
                                      AgentRuntimeResolver runtimeResolver,
                                      AiToolExposurePolicy exposurePolicy) {
+        this(userService, executionBoundary, archiveTools, conversationStore,
+                toolCatalog, runtimeResolver, exposurePolicy, (AiOperationGate) null);
+    }
+
+    /** Production wiring uses the already constructed singleton gate. */
+    @Autowired
+    public AiToolAuthorizationPolicy(UserService userService,
+                                     AiToolExecutionBoundary executionBoundary,
+                                     AiToolResultArchiveTools archiveTools,
+                                     AiConversationStoreService conversationStore,
+                                     AiToolCatalog toolCatalog,
+                                     AgentRuntimeResolver runtimeResolver,
+                                     AiToolExposurePolicy exposurePolicy,
+                                     AiOperationGate operationGate) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
-        this.conversationStore = conversationStore;
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
         this.exposurePolicy = exposurePolicy;
+        this.operationGate = operationGate;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
+    }
+
+    /** Test compatibility constructor; production code must inject AiOperationGate. */
+    public AiToolAuthorizationPolicy(UserService userService,
+                                     AiToolExecutionBoundary executionBoundary,
+                                     AiToolResultArchiveTools archiveTools,
+                                     AiConversationStoreService conversationStore,
+                                     AiToolCatalog toolCatalog,
+                                     AgentRuntimeResolver runtimeResolver,
+                                     AiToolExposurePolicy exposurePolicy,
+                                     org.leo.ai.service.AiOperationAssessmentService assessments) {
+        this(userService, executionBoundary, archiveTools, conversationStore, toolCatalog,
+                runtimeResolver, exposurePolicy,
+                assessments == null ? null : new AiOperationGate(assessments, conversationStore));
     }
 
     public ToolProvider toolProvider(AgentScope scope, Object... toolObjects) {
@@ -211,37 +236,15 @@ public class AiToolAuthorizationPolicy {
 
     private void authorizeOperation(Object memoryId, AiToolDescriptor descriptor,
                                     ToolExecutionRequest request) {
-        if (descriptor.operation() != AiToolOperation.DESTRUCTIVE) return;
-        String toolName = descriptor.name();
-        String confirmationId = AiToolContext.getConfirmationRequestId();
-        String threadId = AiToolContext.getThreadId();
-        if (threadId == null || threadId.isBlank()) threadId = String.valueOf(memoryId);
-        if (conversationStore == null || confirmationId == null || confirmationId.isBlank()) {
-            throw confirmationRequired(toolName);
+        if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) return;
+        if (operationGate == null) {
+            throw AiToolException.userActionRequired(
+                    "OPERATION_GATE_UNAVAILABLE",
+                    "业务操作门禁尚未初始化，暂不能执行变更工具。",
+                    "稍后重试；不要绕过操作评估和确认流程。");
         }
-        AiUserInputRequest confirmation = conversationStore.findUserInputRequest(confirmationId);
-        String argumentsHash = AiUserInputService.confirmationArgumentsHash(
-                request != null && request.arguments() != null ? request.arguments() : "{}");
-        if (confirmation == null
-                || !threadId.equals(confirmation.getThreadId())
-                || !AiUserInputRequest.TYPE_CONFIRMATION.equals(confirmation.getRequestType())
-                || !AiUserInputRequest.STATUS_ANSWERED.equals(confirmation.getStatus())
-                || !AiUserInputService.isAffirmativeAnswer(confirmation.getAnswer())
-                || !toolName.equals(confirmation.getToolName())
-                || !java.util.Objects.equals(argumentsHash, confirmation.getArgumentsHash())
-                || !conversationStore.consumeConfirmation(
-                        confirmationId, threadId, toolName, argumentsHash,
-                        System.currentTimeMillis())) {
-            throw confirmationRequired(toolName);
-        }
-    }
-
-    private AiToolException confirmationRequired(String toolName) {
-        return AiToolException.userActionRequired(
-                "USER_CONFIRMATION_REQUIRED",
-                "执行高风险工具 " + toolName + " 前需要用户明确确认。",
-                "调用 request_user_input(type=CONFIRMATION) 绑定准确工具名和完整参数，"
-                        + "等待用户选择确认后再执行；不要自行假设用户同意。");
+        operationGate.authorize(memoryId, descriptor, request,
+                AiToolContext.getConfirmationRequestId());
     }
 
     private String resolveConfirmationRequestId(AgentScope scope, Object memoryId) {

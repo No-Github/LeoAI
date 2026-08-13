@@ -65,6 +65,8 @@ public class FileTools {
     // ── 分块传输 ─────────────────────────────────────────────────────────────
 
     @Tool("启动或续传文件下载任务（puppet 侧→平台侧）。threads 默认 4（最大 16），chunkSize 默认 1048576。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false)
     public Map<String, Object> startDownloadTask(
             @P("puppet 侧待下载文件的绝对路径") String filePath,
             @P(value = "下载线程数，默认4，最大16", required = false, defaultValue = "4") Integer threads,
@@ -103,6 +105,8 @@ public class FileTools {
 
     @Tool("启动或续传文件采集任务，将 puppet 侧普通文件下载后导入当前 Agent 任务工作空间。"
             + "workspacePath 必须是当前工作空间中的新相对路径。返回 taskId；未完成时使用 queryRemoteFileStage 查询。")
+    @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false)
     public Map<String, Object> stageRemoteFileToWorkspace(
             @P("puppet 侧文件绝对路径") String filePath,
             @P("当前 Agent 工作空间中的目标相对路径，如 input/browser/history.sqlite") String workspacePath,
@@ -146,7 +150,7 @@ public class FileTools {
     @Tool("查询远端文件采集任务；下载完成时自动把文件原子导入当前 Agent 工作空间。"
             + "workspacePath 是当前工作空间中的新目标相对路径。")
     @org.leo.ai.agent.AiToolPolicy(kind = org.leo.ai.agent.AiToolKind.ARTIFACT,
-            operation = org.leo.ai.agent.AiToolOperation.WRITE)
+            operation = org.leo.ai.agent.AiToolOperation.WRITE, business = false)
     public Map<String, Object> queryRemoteFileStage(
             @P("stageRemoteFileToWorkspace 返回的 taskId") String taskId,
             @P("启动采集时使用的工作空间目标相对路径") String workspacePath) throws Exception {

@@ -24,7 +24,7 @@ import java.util.Set;
 public class AiToolExposurePolicy {
 
     private static final Set<String> CORE_TOOLS = Set.of(
-            "activate_skill", "request_user_input", "get_tool_result_archive",
+            "activate_skill", "request_user_input", "assess_operation", "get_tool_result_archive",
             "createPlan", "updatePlanStep", "completePlan",
             "workspaceList", "workspaceReadText", "workspaceSearch",
             "workspaceWriteText", "workspaceApplyPatch", "workspacePromote", "workspaceDelete",
