@@ -34,7 +34,8 @@ public interface AiConversationMapper {
     AiOperationAssessment findPendingOperationAssessment(@Param("userId") String userId,
                                                           @Param("threadId") String threadId,
                                                           @Param("toolName") String toolName,
-                                                          @Param("argumentsHash") String argumentsHash);
+                                                          @Param("argumentsHash") String argumentsHash,
+                                                          @Param("now") long now);
 
     @Update("UPDATE ai_operation_assessments SET status = 'EXPIRED' WHERE status = 'PENDING' "
             + "AND expires_at IS NOT NULL AND expires_at <= #{now}")

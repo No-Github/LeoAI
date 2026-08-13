@@ -14,8 +14,9 @@ public class AiOperationAssessmentRepository {
 
     public AiOperationAssessment findPending(String userId, String threadId,
                                              String toolName, String argumentsHash) {
-        mapper.expireOperationAssessments(System.currentTimeMillis());
-        return mapper.findPendingOperationAssessment(userId, threadId, toolName, argumentsHash);
+        long now = System.currentTimeMillis();
+        mapper.expireOperationAssessments(now);
+        return mapper.findPendingOperationAssessment(userId, threadId, toolName, argumentsHash, now);
     }
 
     public AiOperationAssessment create(AiOperationAssessment assessment) {
