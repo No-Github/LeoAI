@@ -14,7 +14,7 @@ import static org.leo.jmg.mem.packer.scriptengine.DefaultScriptEnginePacker.scri
 @PackerMeta(
         name = "ScriptEngineNoSquareBrackets",
         group = "ScriptEngine",
-        order = 2,
+        order = 3,
         requiredCapabilities = PackerCapability.JAVASCRIPT_ENGINE,
         requiredClasses = "javax.script.ScriptEngineManager"
 )
