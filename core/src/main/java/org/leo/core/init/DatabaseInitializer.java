@@ -74,6 +74,10 @@ public class DatabaseInitializer implements CommandLineRunner {
             ensureUserInputRequestTable(connection);
             ensureColumn(connection, "ai_user_input_requests",
                     "confirmation_consumed_at", "INTEGER");
+            // 旧版本已存在评估表但没有保存规范化参数；默认空对象仅用于完成结构迁移，
+            // 其旧哈希不会匹配新的实际调用，待处理评估会要求模型重新评估。
+            ensureColumn(connection, "ai_operation_assessments", "arguments_json",
+                    "TEXT NOT NULL DEFAULT '{}' ");
             requireColumns(connection, "puppets",
                     Set.of("puppet_id", "create_by_user_id", "team_id", "permission"));
             normalizePuppetTeamOwnership(connection);
@@ -107,6 +111,11 @@ public class DatabaseInitializer implements CommandLineRunner {
                             "allow_free_text", "action_summary", "tool_name",
                             "arguments_hash", "risk", "status", "answer",
                             "created_at", "answered_at", "confirmation_consumed_at", "expires_at"));
+            requireColumns(connection, "ai_operation_assessments",
+                    Set.of("assessment_id", "user_id", "thread_id", "tool_name",
+                            "arguments_json", "arguments_hash", "risk_level",
+                            "requires_confirmation", "reason", "impact", "rollback",
+                            "status", "created_at", "expires_at", "consumed_at"));
         } catch (SQLException error) {
             throw new IllegalStateException("校验 AI 对话数据库结构失败", error);
         }

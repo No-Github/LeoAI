@@ -130,6 +130,27 @@ class DatabaseInitializerFreshStartTest {
     }
 
     @Test
+    void addsMissingOperationAssessmentArgumentsColumn() throws Exception {
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("missing-assessment-arguments.db"));
+        try (Connection connection = dataSource.getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("sql/schema.sql"));
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("ALTER TABLE ai_operation_assessments DROP COLUMN arguments_json");
+            }
+        }
+
+        new DatabaseInitializer(dataSource).run();
+
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            assertEquals(1, scalar(statement,
+                    "SELECT COUNT(*) FROM pragma_table_info('ai_operation_assessments') "
+                            + "WHERE name='arguments_json'"));
+        }
+    }
+
+    @Test
     void rejectsIncompleteAiSchema() throws Exception {
         SQLiteDataSource dataSource = new SQLiteDataSource();
         dataSource.setUrl("jdbc:sqlite:" + tempDir.resolve("incomplete-schema.db"));

@@ -555,3 +555,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_ai_user_input_pending_thread
 
 CREATE INDEX IF NOT EXISTS idx_ai_user_input_thread_time
     ON ai_user_input_requests(thread_id, created_at);
+
+-- 17. Agent 业务操作语义评估：与确认请求分开持久化，但同样绑定用户、线程和参数哈希
+CREATE TABLE IF NOT EXISTS ai_operation_assessments (
+    assessment_id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL,
+    thread_id VARCHAR(64) NOT NULL,
+    tool_name VARCHAR(128) NOT NULL,
+    arguments_json TEXT NOT NULL,
+    arguments_hash VARCHAR(128) NOT NULL,
+    risk_level VARCHAR(32) NOT NULL,
+    requires_confirmation INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    impact TEXT,
+    rollback TEXT,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'CONSUMED', 'EXPIRED')),
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    consumed_at INTEGER,
+    FOREIGN KEY (thread_id) REFERENCES ai_threads(thread_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_operation_assessment_lookup
+    ON ai_operation_assessments(user_id, thread_id, tool_name, arguments_hash, status);

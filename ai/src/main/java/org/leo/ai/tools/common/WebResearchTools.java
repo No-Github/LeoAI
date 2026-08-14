@@ -48,7 +48,8 @@ public class WebResearchTools {
     }
 
     @Tool("抓取公开网页正文并保存到当前 Agent 工作空间，适合后续分段搜索、读取和分析；外部内容仍保持未信任标记。")
-    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE)
+    @AiToolPolicy(kind = AiToolKind.ARTIFACT, operation = AiToolOperation.WRITE,
+            business = false)
     public Map<String, Object> webFetchToWorkspace(
             @P("公开 http/https URL") String url,
             @P("工作空间目标相对路径，例如 input/page.txt") String path) {

@@ -15,11 +15,37 @@ import org.leo.core.entity.AiTurnRecord;
 import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.AiThreadLeaseRecord;
 import org.leo.core.entity.AiOrphanedRunRecord;
+import org.leo.core.entity.AiOperationAssessment;
 
 import java.util.List;
 
 @Mapper
 public interface AiConversationMapper {
+
+    @Insert("INSERT INTO ai_operation_assessments (assessment_id, user_id, thread_id, tool_name, arguments_json, arguments_hash, "
+            + "risk_level, requires_confirmation, reason, impact, rollback, status, created_at, expires_at, consumed_at) "
+            + "VALUES (#{assessmentId}, #{userId}, #{threadId}, #{toolName}, #{argumentsJson}, #{argumentsHash}, #{riskLevel}, "
+            + "#{requiresConfirmation}, #{reason}, #{impact}, #{rollback}, #{status}, #{createdAt}, #{expiresAt}, #{consumedAt})")
+    int insertOperationAssessment(AiOperationAssessment row);
+
+    @Select("SELECT * FROM ai_operation_assessments WHERE user_id = #{userId} AND thread_id = #{threadId} "
+            + "AND tool_name = #{toolName} AND arguments_hash = #{argumentsHash} AND status = 'PENDING' "
+            + "AND (expires_at IS NULL OR expires_at > #{now}) ORDER BY created_at DESC LIMIT 1")
+    AiOperationAssessment findPendingOperationAssessment(@Param("userId") String userId,
+                                                          @Param("threadId") String threadId,
+                                                          @Param("toolName") String toolName,
+                                                          @Param("argumentsHash") String argumentsHash,
+                                                          @Param("now") long now);
+
+    @Update("UPDATE ai_operation_assessments SET status = 'EXPIRED' WHERE status = 'PENDING' "
+            + "AND expires_at IS NOT NULL AND expires_at <= #{now}")
+    int expireOperationAssessments(@Param("now") long now);
+
+    @Update("UPDATE ai_operation_assessments SET status = 'CONSUMED', consumed_at = #{consumedAt} "
+            + "WHERE assessment_id = #{assessmentId} AND status = 'PENDING' "
+            + "AND (expires_at IS NULL OR expires_at > #{consumedAt})")
+    int consumeOperationAssessment(@Param("assessmentId") String assessmentId,
+                                   @Param("consumedAt") long consumedAt);
 
     @Select("SELECT * FROM ai_threads WHERE scope = #{scope} AND user_id = #{userId} AND puppet_id = #{puppetId} "
             + "AND parent_thread_id IS NULL ORDER BY last_active_at DESC")

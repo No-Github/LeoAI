@@ -57,7 +57,8 @@ public class PuppetNodeToolBundle {
                 webRuntimeTools, javaPluginTools,
                 httpRequestTools, scriptTools, sqlTools, resourceTools,
                 agentWorkspaceTools, agentWorkspaceCommandTools,
-                webResearchTools, planTools, userInputTools, skillActivationTools);
+                webResearchTools, planTools, userInputTools,
+                skillActivationTools);
     }
 
     public List<Object> tools() {

@@ -98,6 +98,7 @@ public class AiRuntimeState implements AiEventStreamRuntime {
     @Override public void bindActiveRunId(String runId) { activeRunId = runId; }
     public String getActiveConfirmationRequestId() { return activeConfirmationRequestId; }
     public void bindActiveConfirmationRequestId(String requestId) { activeConfirmationRequestId = requestId; }
+    public void clearActiveConfirmationRequestId() { activeConfirmationRequestId = null; }
     @Override public String getActiveLeaseToken() { return activeLeaseToken; }
     @Override public void bindActiveLeaseToken(String leaseToken) { activeLeaseToken = leaseToken; }
     @Override public String getStopReason() { return stopReason; }

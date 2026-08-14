@@ -222,7 +222,8 @@ class AiAgentToolBoundaryBehaviorTest {
     }
 
     @AiToolPolicy(kind = AiToolKind.COMMAND,
-            operation = AiToolOperation.WRITE)
+            operation = AiToolOperation.WRITE,
+            business = false)
     private static final class BoundaryTools {
         private final AtomicInteger writeCalls = new AtomicInteger();
 

@@ -1,6 +1,8 @@
 package org.leo.ai.runtime;
 
 import org.leo.ai.thread.AiConversationStoreService;
+import org.leo.core.entity.AiPlan;
+import org.leo.core.entity.AiPlanStatus;
 import org.leo.core.entity.AiRuntimeStats;
 import org.leo.core.entity.AiSseEvent;
 import org.slf4j.Logger;
@@ -151,12 +153,13 @@ public class AiTurnOrchestrator {
                                  Object planSnapshot,
                                  CompletableFuture<TerminalResult> completion)
             throws Exception {
+        failActivePlan(planSnapshot, failure);
         lifecycle.beforeDiscard(failure);
         transaction.trace().checkpoint(
                 AiTurnTrace.Checkpoint.PERSISTENCE_STARTED);
         AiTurnTransaction.FailedTurn failed = modelStarted
                 ? transaction.discard(failure, eventLog, planSnapshot)
-                : transaction.discardBeforeModel(failure);
+                : transaction.discardBeforeModel(failure, planSnapshot);
         transaction.trace().checkpoint(
                 AiTurnTrace.Checkpoint.PERSISTENCE_COMPLETED);
         runAfterPersistence(
@@ -177,6 +180,30 @@ public class AiTurnOrchestrator {
                             failed.message());
                     completeResult(completion, transaction);
                 });
+    }
+
+    /**
+     * Turn 失败时收口仍处于活动状态的计划，避免失败记录留下悬挂的
+     * PLANNING/IN_PROGRESS 计划。成功路径仍要求 Agent 显式调用 completePlan。
+     */
+    private void failActivePlan(Object planSnapshot, AiTurnFailure failure) {
+        if (!(planSnapshot instanceof AiPlan plan)
+                || plan.getStatus() == null
+                || plan.getStatus() == AiPlanStatus.COMPLETED
+                || plan.getStatus() == AiPlanStatus.FAILED) {
+            return;
+        }
+        String reason = failure != null && failure.cause() != null
+                ? failure.cause().getMessage() : null;
+        if (reason == null || reason.isBlank()) {
+            reason = failure != null && failure.cancellationReason() != null
+                    ? failure.cancellationReason() : "AI Turn 未完成，计划已自动失败";
+        }
+        try {
+            plan.fail("Turn 失败：" + reason);
+        } catch (RuntimeException error) {
+            logger.warn("自动收口 AI 计划失败: {}", error.getMessage(), error);
+        }
     }
 
     /**

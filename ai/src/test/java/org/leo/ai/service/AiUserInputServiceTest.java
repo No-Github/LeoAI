@@ -3,6 +3,12 @@ package org.leo.ai.service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolCatalog;
+import org.leo.ai.agent.AiToolKind;
+import org.leo.ai.agent.AiToolOperation;
+import org.leo.ai.agent.AiToolPolicy;
+import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.service.tool.ToolService;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.core.ai.AiRunStatus;
@@ -21,6 +27,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 class AiUserInputServiceTest {
 
@@ -55,7 +63,7 @@ class AiUserInputServiceTest {
         assertEquals(List.of(Map.of(
                 "label", "当前节点", "value", "current_node", "intent", "SCOPE_CURRENT"), Map.of(
                 "label", "全部节点", "value", "all_nodes", "intent", "SCOPE_ALL")), request.get("options"));
-        assertEquals(false, request.get("allowFreeText"));
+        assertEquals(true, request.get("allowFreeText"));
         verify(store).createUserInputRequest(any(AiUserInputRequest.class));
     }
 
@@ -76,6 +84,31 @@ class AiUserInputServiceTest {
         assertEquals("deleteUser", request.get("toolName"));
         assertNotNull(request.get("argumentsHash"));
         assertEquals(64, String.valueOf(request.get("argumentsHash")).length());
+    }
+
+    @Test
+    void confirmationCardIncludesAssessmentRiskAndImpact() {
+        AiConversationStoreService store = mock(AiConversationStoreService.class);
+        when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        PlatformAiState state = PlatformAiStateStore.create(STATE_ID);
+        state.bindActiveTurnId("turn-1");
+        state.bindActiveItemId("item-1");
+        AiToolContext.setFromMemoryId(STATE_ID);
+
+        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> request = (Map<String, Object>) service.request(
+                "CONFIRMATION", "确认删除用户吗？", options("确认删除", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "操作：删除已有用户 user-1\n风险：CRITICAL\n"
+                        + "可能后果：用户将无法登录\n回滚：恢复原密码",
+                "deleteUser", "{\"userId\":\"user-1\"}",
+                "CRITICAL", 60L).get("request");
+
+        String summary = String.valueOf(request.get("actionSummary"));
+        assertTrue(summary.contains("风险：CRITICAL"));
+        assertTrue(summary.contains("可能后果：用户将无法登录"));
+        assertTrue(summary.contains("回滚：恢复原密码"));
     }
 
     @Test
@@ -121,6 +154,36 @@ class AiUserInputServiceTest {
         assertThrows(RuntimeException.class, () -> service.request(
                 "CONFIRMATION", "确认执行吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
                 true, "危险动作", "deleteUser", "{\"userId\":\"user-1\"}", "HIGH", 60L));
+    }
+
+    @Test
+    void confirmationRejectsReadOnlyOrInternalTools() {
+        PlatformAiStateStore.create(STATE_ID);
+        AiToolContext.setFromMemoryId(STATE_ID);
+        AiToolCatalog catalog = new AiToolCatalog();
+        ToolService.findTools(new ReadOnlyTools()).forEach(tool -> catalog.register(new ReadOnlyTools(), tool));
+        ToolService.findTools(new InternalTools()).forEach(tool -> catalog.register(new InternalTools(), tool));
+        AiUserInputService service = new AiUserInputService(
+                mock(AiConversationStoreService.class), catalog);
+
+        assertThrows(RuntimeException.class, () -> service.request(
+                "CONFIRMATION", "确认读取吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "读取", "readOnly", "{}", "HIGH", 60L));
+        assertThrows(RuntimeException.class, () -> service.request(
+                "CONFIRMATION", "确认控制吗？", options("确认", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "内部控制", "internal", "{}", "HIGH", 60L));
+    }
+
+    private static class ReadOnlyTools {
+        @Tool
+        @AiToolPolicy(kind = AiToolKind.QUERY, operation = AiToolOperation.READ_ONLY)
+        public String readOnly() { return "ok"; }
+    }
+
+    private static class InternalTools {
+        @Tool
+        @AiToolPolicy(kind = AiToolKind.CONTROL, operation = AiToolOperation.WRITE, business = false)
+        public String internal() { return "ok"; }
     }
 
     @Test

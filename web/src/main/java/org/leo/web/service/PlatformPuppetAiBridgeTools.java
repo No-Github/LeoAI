@@ -34,7 +34,8 @@ import java.util.UUID;
 @Component
 @org.leo.ai.agent.AiToolPolicy(
         kind = org.leo.ai.agent.AiToolKind.DELEGATION,
-        operation = org.leo.ai.agent.AiToolOperation.WRITE)
+        operation = org.leo.ai.agent.AiToolOperation.WRITE,
+        business = false)
 public class PlatformPuppetAiBridgeTools {
 
     private static final int MAX_SUMMARY_CHARS = 12_000;

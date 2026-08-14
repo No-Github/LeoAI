@@ -8,11 +8,9 @@ import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderResult;
 import dev.langchain4j.service.tool.ToolService;
-import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.ai.AiRuntimeState;
 import org.leo.core.entity.AiExecutionPolicy;
-import org.leo.core.entity.AiUserInputRequest;
 import org.leo.core.entity.User;
 import org.leo.core.security.AccessPolicy;
 import org.leo.core.session.PuppetNodeSession;
@@ -46,21 +44,21 @@ public class AiToolAuthorizationPolicy {
     private final UserService userService;
     private final AiToolExecutionBoundary executionBoundary;
     private final AiToolResultArchiveTools archiveTools;
-    private final AiConversationStoreService conversationStore;
     private final AiToolCatalog toolCatalog;
     private final AgentRuntimeResolver runtimeResolver;
     private final AiToolExposurePolicy exposurePolicy;
+    private final AiOperationGate operationGate;
 
     public AiToolAuthorizationPolicy(UserService userService) {
         this(userService, new AiToolExecutionBoundary(), null, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools) {
         this(userService, executionBoundary, archiveTools, null,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
     public AiToolAuthorizationPolicy(UserService userService,
@@ -68,10 +66,9 @@ public class AiToolAuthorizationPolicy {
                                      AiToolResultArchiveTools archiveTools,
                                      AiConversationStoreService conversationStore) {
         this(userService, executionBoundary, archiveTools, conversationStore,
-                new AiToolCatalog(), new AgentRuntimeResolver(), null);
+                new AiToolCatalog(), new AgentRuntimeResolver(), null, (AiOperationGate) null);
     }
 
-    @Autowired
     public AiToolAuthorizationPolicy(UserService userService,
                                      AiToolExecutionBoundary executionBoundary,
                                      AiToolResultArchiveTools archiveTools,
@@ -79,12 +76,26 @@ public class AiToolAuthorizationPolicy {
                                      AiToolCatalog toolCatalog,
                                      AgentRuntimeResolver runtimeResolver,
                                      AiToolExposurePolicy exposurePolicy) {
+        this(userService, executionBoundary, archiveTools, conversationStore,
+                toolCatalog, runtimeResolver, exposurePolicy, (AiOperationGate) null);
+    }
+
+    /** Production wiring uses the already constructed singleton gate. */
+    @Autowired
+    public AiToolAuthorizationPolicy(UserService userService,
+                                     AiToolExecutionBoundary executionBoundary,
+                                     AiToolResultArchiveTools archiveTools,
+                                     AiConversationStoreService conversationStore,
+                                     AiToolCatalog toolCatalog,
+                                     AgentRuntimeResolver runtimeResolver,
+                                     AiToolExposurePolicy exposurePolicy,
+                                     AiOperationGate operationGate) {
         this.userService = userService;
         this.executionBoundary = executionBoundary;
-        this.conversationStore = conversationStore;
         this.toolCatalog = toolCatalog;
         this.runtimeResolver = runtimeResolver;
         this.exposurePolicy = exposurePolicy;
+        this.operationGate = operationGate;
         this.archiveTools = archiveTools != null
                 ? archiveTools
                 : new AiToolResultArchiveTools(executionBoundary.archive());
@@ -152,6 +163,7 @@ public class AiToolAuthorizationPolicy {
                                AiServiceTool tool,
                                AiToolAccess.Level access,
                                AiToolDescriptor descriptor) {
+        AiServiceTool exposedTool = withRiskInstruction(tool, descriptor);
         ToolExecutor delegate = tool.toolExecutor();
         ToolExecutor securedExecutor = new ToolExecutor() {
             @Override
@@ -195,10 +207,14 @@ public class AiToolAuthorizationPolicy {
                                 "当前任务正在等待用户回答，不能继续执行其他工具。",
                                 "停止工具调用并等待用户回答；不要自行假设用户意图。");
                     }
-                    authorizeOperation(memoryId, descriptor, request);
+                    String consumedConfirmationRequestId =
+                            authorizeOperation(scope, memoryId, descriptor, request);
                     AiToolContext.setToolDescriptor(descriptor);
                     ToolExecutionResult result = executionBoundary.execute(
                             scope, descriptor, delegate, request, context);
+                    if (consumedConfirmationRequestId != null && !result.isError()) {
+                        clearConfirmation(scope, memoryId);
+                    }
                     if (descriptor.terminal() && !result.isError() && runtime != null) {
                         runtime.markTerminalControl(descriptor.name());
                     }
@@ -206,42 +222,51 @@ public class AiToolAuthorizationPolicy {
                 }
             }
         };
-        return tool.toBuilder().toolExecutor(securedExecutor).build();
+        return exposedTool.toBuilder().toolExecutor(securedExecutor).build();
     }
 
-    private void authorizeOperation(Object memoryId, AiToolDescriptor descriptor,
-                                    ToolExecutionRequest request) {
-        if (descriptor.operation() != AiToolOperation.DESTRUCTIVE) return;
-        String toolName = descriptor.name();
-        String confirmationId = AiToolContext.getConfirmationRequestId();
-        String threadId = AiToolContext.getThreadId();
-        if (threadId == null || threadId.isBlank()) threadId = String.valueOf(memoryId);
-        if (conversationStore == null || confirmationId == null || confirmationId.isBlank()) {
-            throw confirmationRequired(toolName);
+    /**
+     * 把执行前风险判断约束放进具体工具定义，让模型在选择工具时就规划确认，
+     * 而不是执行失败后才被动学习调用顺序。
+     */
+    private AiServiceTool withRiskInstruction(
+            AiServiceTool tool, AiToolDescriptor descriptor) {
+        if (descriptor.operation() == AiToolOperation.READ_ONLY
+                || !descriptor.business()) {
+            return tool;
         }
-        AiUserInputRequest confirmation = conversationStore.findUserInputRequest(confirmationId);
-        String argumentsHash = AiUserInputService.confirmationArgumentsHash(
-                request != null && request.arguments() != null ? request.arguments() : "{}");
-        if (confirmation == null
-                || !threadId.equals(confirmation.getThreadId())
-                || !AiUserInputRequest.TYPE_CONFIRMATION.equals(confirmation.getRequestType())
-                || !AiUserInputRequest.STATUS_ANSWERED.equals(confirmation.getStatus())
-                || !AiUserInputService.isAffirmativeAnswer(confirmation.getAnswer())
-                || !toolName.equals(confirmation.getToolName())
-                || !java.util.Objects.equals(argumentsHash, confirmation.getArgumentsHash())
-                || !conversationStore.consumeConfirmation(
-                        confirmationId, threadId, toolName, argumentsHash,
-                        System.currentTimeMillis())) {
-            throw confirmationRequired(toolName);
-        }
+        String instruction = "【执行前安全判断】调用本工具前，先在当前决策中判断本次具体参数的风险；"
+                + "可能导致权限丢失、服务不可用、数据丢失或业务中断时，必须先调用 "
+                + "request_user_input(type=CONFIRMATION) 并等待用户明确同意，再调用本工具；"
+                + "低风险操作无需询问用户，可直接执行。不要把目标工具与确认请求放在同一批并发调用中。";
+        String description = tool.toolSpecification().description();
+        var specification = tool.toolSpecification().toBuilder()
+                .description(instruction + (description == null || description.isBlank()
+                        ? "" : "\n" + description))
+                .build();
+        return tool.toBuilder().toolSpecification(specification).build();
     }
 
-    private AiToolException confirmationRequired(String toolName) {
-        return AiToolException.userActionRequired(
-                "USER_CONFIRMATION_REQUIRED",
-                "执行高风险工具 " + toolName + " 前需要用户明确确认。",
-                "调用 request_user_input(type=CONFIRMATION) 绑定准确工具名和完整参数，"
-                        + "等待用户选择确认后再执行；不要自行假设用户同意。");
+    private String authorizeOperation(AgentScope scope, Object memoryId,
+                                      AiToolDescriptor descriptor,
+                                      ToolExecutionRequest request) {
+        if (descriptor.operation() == AiToolOperation.READ_ONLY || !descriptor.business()) return null;
+        if (operationGate == null) {
+            throw AiToolException.userActionRequired(
+                    "OPERATION_GATE_UNAVAILABLE",
+                    "业务操作门禁尚未初始化，暂不能执行变更工具。",
+                    "稍后重试；不要绕过变更确认流程。");
+        }
+        String confirmationRequestId = AiToolContext.getConfirmationRequestId();
+        operationGate.authorize(memoryId, descriptor, request, confirmationRequestId);
+        return confirmationRequestId == null || confirmationRequestId.isBlank()
+                ? null : confirmationRequestId;
+    }
+
+    private void clearConfirmation(AgentScope scope, Object memoryId) {
+        AiRuntimeState runtime = runtimeResolver.resolve(scope, memoryId);
+        if (runtime != null) runtime.clearActiveConfirmationRequestId();
+        AiToolContext.setConfirmationRequestId(null);
     }
 
     private String resolveConfirmationRequestId(AgentScope scope, Object memoryId) {
