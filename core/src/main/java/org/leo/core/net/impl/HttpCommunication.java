@@ -252,6 +252,7 @@ public class HttpCommunication implements Communication, java.io.Closeable {
         Response response = null;
         try {
             response = httpClient.newCall(request).execute();
+            // HTTP 状态码由上层协议决定；即使是 401/404，也必须把响应体交给 disguise 解码器。
             storeResponseCookies(request.url(), response.headers());
             ResponseBody responseBody = response.body();
             if (responseBody == null) {

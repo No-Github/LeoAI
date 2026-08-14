@@ -13,10 +13,33 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class HttpCommunicationCookieTest {
+
+    @Test
+    void passesResponseBodyToDecoderRegardlessOfHttpStatus() throws Exception {
+        byte[] body = "encoded-rpc-response".getBytes(StandardCharsets.UTF_8);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/unauthorized", exchange -> {
+            exchange.sendResponseHeaders(401, body.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+
+        server.start();
+        try {
+            String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/unauthorized";
+            HttpCommunication communication = new HttpCommunication(endpoint, "POST", null, Proxy.NO_PROXY);
+
+            assertArrayEquals(body, communication.sendRequest(new byte[0]));
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void learnsSetCookieWithPathScope() throws Exception {
