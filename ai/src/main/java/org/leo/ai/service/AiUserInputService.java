@@ -60,22 +60,25 @@ public class AiUserInputService {
         String type = normalizeType(requestedType);
         String normalizedPrompt = requiredText(prompt, "问题内容不能为空", 2_000);
         List<AiUserInputOption> normalizedOptions = normalizeOptions(options);
-        boolean freeText = Boolean.TRUE.equals(allowFreeText);
-        if (AiUserInputRequest.TYPE_CONFIRMATION.equals(type) && freeText) {
+        // 澄清问题始终提供自定义回答入口；确认问题仍只能使用明确选项。
+        boolean requestedFreeText = Boolean.TRUE.equals(allowFreeText);
+        boolean freeText = AiUserInputRequest.TYPE_CLARIFICATION.equals(type);
+        if (AiUserInputRequest.TYPE_CONFIRMATION.equals(type) && requestedFreeText) {
             throw AiToolException.modelCorrectable(
                     "CONFIRMATION_FREE_TEXT_FORBIDDEN",
                     "操作确认不允许自由输入。",
-                    "将 allowFreeText 设为 false，并提供明确的 CONFIRM 与 REJECT 选项。");
+                    "确认问题只能提供明确的 CONFIRM 与 REJECT 选项，不要启用自由输入。");
         }
         if (!freeText && normalizedOptions.isEmpty()) {
             throw AiToolException.modelCorrectable(
                     "USER_INPUT_OPTIONS_REQUIRED",
                     "不允许自由输入时必须提供至少一个选项。",
-                    "提供 1 到 4 个带 label、value、intent 的清晰选项；只有确实无法枚举时才允许 allowFreeText=true。");
+                    "提供 1 到 4 个带 label、value、intent 的清晰选项；澄清问题同时保留自定义回答入口。");
         }
 
         String normalizedToolName = emptyToNull(toolName);
         String argumentsHash = null;
+        String normalizedActionSummary = trim(actionSummary, 2_000);
         if (AiUserInputRequest.TYPE_CONFIRMATION.equals(type)) {
             if (normalizedToolName == null || argumentsJson == null || argumentsJson.isBlank()) {
                 throw AiToolException.modelCorrectable(
@@ -96,6 +99,12 @@ public class AiUserInputService {
                         "CONFIRMATION_OPTIONS_REQUIRED",
                         "操作确认必须同时提供明确的同意和拒绝选项。",
                         "例如提供“确认执行”和“取消”两个选项，且不要只依赖自由输入。");
+            }
+            if (normalizedActionSummary == null || normalizedActionSummary.isBlank()) {
+                throw AiToolException.modelCorrectable(
+                        "CONFIRMATION_RISK_DETAILS_REQUIRED",
+                        "高风险确认必须说明操作风险、可能后果和回滚方式。",
+                        "在 actionSummary 中写明“操作、风险、可能后果、回滚”四项内容后重新请求确认。");
             }
             argumentsHash = confirmationArgumentsHash(argumentsJson);
         }
@@ -118,7 +127,7 @@ public class AiUserInputService {
         request.setOptionsJson(normalizedOptions.isEmpty()
                 ? null : JSON.toJSONString(normalizedOptions));
         request.setAllowFreeText(freeText);
-        request.setActionSummary(trim(actionSummary, 2_000));
+        request.setActionSummary(normalizedActionSummary);
         request.setToolName(normalizedToolName);
         request.setArgumentsHash(argumentsHash);
         request.setRisk(normalizeRisk(risk, type));
@@ -318,15 +327,38 @@ public class AiUserInputService {
 
     /** 对确认参数做 JSON 规范化后再计算哈希，避免键顺序/空白差异绕过绑定。 */
     public static String confirmationArgumentsHash(String value) {
+        String canonical = canonicalArgumentsJson(value);
         try {
-            Object parsed = JSON.parse(value);
-            String canonical = canonicalJson(parsed);
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(canonical.getBytes(StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(digest);
         } catch (Exception error) {
-            throw new IllegalStateException("计算确认参数哈希失败", error);
+            throw AiToolException.systemRetryable(
+                    "OPERATION_ARGUMENTS_HASH_FAILED",
+                    "计算操作参数哈希失败。", error);
         }
+    }
+
+    /** 返回供后续工具调用原样复用的规范化 JSON。 */
+    public static String canonicalArgumentsJson(String value) {
+        Object parsed;
+        try {
+            parsed = JSON.parse(value);
+        } catch (RuntimeException error) {
+            throw AiToolException.modelCorrectable(
+                    "INVALID_OPERATION_ARGUMENTS_JSON",
+                    "argumentsJson 不是合法 JSON：" + compactJsonError(error),
+                    "重新生成完整 JSON。命令、正则或路径中的反斜杠必须在 JSON 字符串中正确转义；"
+                            + "不要复用当前损坏的 argumentsJson。 ");
+        }
+        return canonicalJson(parsed);
+    }
+
+    private static String compactJsonError(RuntimeException error) {
+        String message = error.getMessage();
+        if (message == null || message.isBlank()) return "字符串或转义不完整";
+        String normalized = message.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 200 ? normalized : normalized.substring(0, 200);
     }
 
     @SuppressWarnings("unchecked")

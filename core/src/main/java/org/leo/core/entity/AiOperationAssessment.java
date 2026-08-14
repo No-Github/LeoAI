@@ -6,6 +6,7 @@ public class AiOperationAssessment {
     private String userId;
     private String threadId;
     private String toolName;
+    private String argumentsJson;
     private String argumentsHash;
     private String riskLevel;
     private Boolean requiresConfirmation;
@@ -25,6 +26,8 @@ public class AiOperationAssessment {
     public void setThreadId(String value) { threadId = value; }
     public String getToolName() { return toolName; }
     public void setToolName(String value) { toolName = value; }
+    public String getArgumentsJson() { return argumentsJson; }
+    public void setArgumentsJson(String value) { argumentsJson = value; }
     public String getArgumentsHash() { return argumentsHash; }
     public void setArgumentsHash(String value) { argumentsHash = value; }
     public String getRiskLevel() { return riskLevel; }

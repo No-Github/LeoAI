@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.leo.ai.platform.PlatformAiState;
 import org.leo.ai.platform.PlatformAiStateStore;
 import org.leo.ai.service.AiUserInputService;
-import org.leo.ai.service.AiOperationAssessmentService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiExecutionPolicy;
 import org.leo.core.entity.AiUserInputRequest;
@@ -123,15 +122,12 @@ class AiToolAuthorizationPolicyTest {
                 eq(confirmation.getArgumentsHash()), anyLong()))
                 .thenReturn(true, false);
         AiToolCatalog catalog = new AiToolCatalog();
-        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
         register(catalog, new DestructiveTools());
         AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
         AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        assessments.assess(PLATFORM_STATE_ID, "deleteRecord", "{\"id\":1}",
-                "HIGH", true, "删除数据", "数据不可恢复", null);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, new AiToolExecutionBoundary(), null, store,
-                catalog, new AgentRuntimeResolver(), null, assessments);
+                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(store));
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
@@ -145,8 +141,8 @@ class AiToolAuthorizationPolicyTest {
                 context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
 
         assertFalse(first.isError());
-        assertTrue(second.isError());
-        assertTrue(second.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
+        // 确认是一次性授权；消费后运行时清除绑定，后续调用由 Agent 重新判断风险。
+        assertFalse(second.isError());
     }
 
     @Test
@@ -161,15 +157,12 @@ class AiToolAuthorizationPolicyTest {
         when(store.findUserInputRequest("question-1"))
                 .thenReturn(confirmation("deleteRecord", "{\"id\":1}"));
         AiToolCatalog catalog = new AiToolCatalog();
-        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
         register(catalog, new DestructiveTools());
         AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
         AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        assessments.assess(PLATFORM_STATE_ID, "deleteRecord", "{\"id\":1}",
-                "HIGH", true, "删除数据", "数据不可恢复", null);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, new AiToolExecutionBoundary(), null, store,
-                catalog, new AgentRuntimeResolver(), null, assessments);
+                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(store));
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new DestructiveTools()), PLATFORM_STATE_ID).get("deleteRecord");
@@ -180,41 +173,54 @@ class AiToolAuthorizationPolicyTest {
                 new AiToolErrorHandler()::handleExecution);
 
         assertTrue(result.isError());
-        assertTrue(result.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
+        assertTrue(result.resultText().contains("USER_CONFIRMATION_REQUIRED"));
     }
 
     @Test
-    void businessMutationRequiresMatchingAgentAssessment() {
+    void lowRiskBusinessMutationRunsWithoutSeparateAssessmentTool() {
         UserService users = mock(UserService.class);
         User normal = user("user-1", "normal");
         when(users.getUserById("user-1")).thenReturn(normal);
         PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
         state.setExecutionPolicy(AiExecutionPolicy.from(normal));
         AiToolCatalog catalog = new AiToolCatalog();
-        AiOperationAssessmentService assessments = new AiOperationAssessmentService(catalog);
         AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(
                 users, new AiToolExecutionBoundary(), null, null,
-                catalog, new AgentRuntimeResolver(), null, assessments);
+                catalog, new AgentRuntimeResolver(), null, new AiOperationGate(null));
         AiServiceTool tool = providedTools(policy.toolProvider(
                 AiToolAuthorizationPolicy.AgentScope.PLATFORM,
                 new MutationTools()), PLATFORM_STATE_ID).get("mutate");
         AiToolErrorHandler errors = new AiToolErrorHandler();
 
-        ToolExecutionResult rejected = ToolService.executeWithErrorHandling(
+        ToolExecutionResult first = ToolService.executeWithErrorHandling(
                 request("mutate", "{\"value\":\"one\"}"), tool.toolExecutor(),
                 context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
-        assertTrue(rejected.isError());
-        assertTrue(rejected.resultText().contains("OPERATION_ASSESSMENT_REQUIRED"));
+        assertFalse(first.isError());
 
-        AiToolContext.setFromMemoryId(PLATFORM_STATE_ID);
-        AiToolContext.setExecutionPolicy(AiExecutionPolicy.from(normal));
-        assessments.assess(PLATFORM_STATE_ID, "mutate", "{\"value\":\"one\"}",
-                "LOW", false, "只修改当前任务的可逆状态", null, null);
         ToolExecutionResult accepted = ToolService.executeWithErrorHandling(
                 request("mutate", "{\"value\":\"one\"}"), tool.toolExecutor(),
                 context(PLATFORM_STATE_ID), errors::handleArguments, errors::handleExecution);
         assertFalse(accepted.isError());
         assertTrue(accepted.resultText().contains("one"));
+    }
+
+    @Test
+    void exposesRiskPreconditionInControlledToolDescription() {
+        UserService users = mock(UserService.class);
+        User normal = user("user-1", "normal");
+        when(users.getUserById("user-1")).thenReturn(normal);
+        PlatformAiState state = PlatformAiStateStore.create(PLATFORM_STATE_ID);
+        state.setExecutionPolicy(AiExecutionPolicy.from(normal));
+        AiToolAuthorizationPolicy policy = new AiToolAuthorizationPolicy(users);
+
+        Map<String, AiServiceTool> tools = providedTools(policy.toolProvider(
+                AiToolAuthorizationPolicy.AgentScope.PLATFORM,
+                new MutationTools()), PLATFORM_STATE_ID);
+
+        String description = tools.get("mutate").toolSpecification().description();
+        assertTrue(description.contains("当前决策中判断本次具体参数的风险"));
+        assertTrue(description.contains("request_user_input(type=CONFIRMATION)"));
+        assertTrue(description.contains("低风险操作无需询问用户"));
     }
 
     private static Map<String, AiServiceTool> providedTools(

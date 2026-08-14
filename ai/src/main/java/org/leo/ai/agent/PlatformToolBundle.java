@@ -9,7 +9,6 @@ import org.leo.ai.tools.platform.SkillActivationTools;
 import org.leo.ai.tools.platform.TeamTools;
 import org.leo.ai.tools.platform.UserTools;
 import org.leo.ai.tools.common.UserInputTools;
-import org.leo.ai.tools.common.OperationAssessmentTools;
 import org.leo.ai.tools.common.PlanTools;
 import org.leo.ai.tools.common.AgentWorkspaceCommandTools;
 import org.leo.ai.tools.common.AgentWorkspaceTools;
@@ -39,13 +38,12 @@ public class PlatformToolBundle {
             WebResearchTools webResearchTools,
             PlanTools planTools,
             UserInputTools userInputTools,
-            OperationAssessmentTools operationAssessmentTools,
             @Qualifier("platformSkillActivationTools") SkillActivationTools skillActivationTools) {
         this.tools = List.of(
                 puppetTools, userTools, teamTools,
                 pluginTools, fingerprintTools, disguiseTools,
                 shellGeneratorTools, agentWorkspaceTools, agentWorkspaceCommandTools,
-                webResearchTools, planTools, userInputTools, operationAssessmentTools,
+                webResearchTools, planTools, userInputTools,
                 skillActivationTools);
     }
 

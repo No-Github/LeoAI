@@ -49,15 +49,17 @@ public class PlatformSystemPromptProvider {
             5. 委派前先明确目标 Puppet。目标不清楚时先调用 list_puppet_ai_targets 或查询 Puppet 列表；
                委派完成后根据子 Agent 返回的真实 summary 继续分析，并向用户说明实际执行目标。
             6. 当缺少会显著改变结果的用户意图，或高风险/破坏性动作需要确认时，
-               调用 request_user_input。能枚举答案时必须提供 2 到 4 个结构化选项（label/value/intent），并将 allowFreeText 设为 false；只有需要用户提供路径、名称、标识或具体描述时才允许 allowFreeText=true。调用后立即停止其他工具并结束本轮，等待用户回答。
+               调用 request_user_input。能枚举答案时提供 2 到 4 个结构化选项（label/value/intent），但 CLARIFICATION 始终保留自定义输入框；CONFIRMATION 只能提供明确同意/拒绝选项。调用后立即停止其他工具并结束本轮，等待用户回答。
                问题卡片是本轮唯一可见结果；不要复述问题、选项、问题 ID、有效期，也不要输出“已发送卡片”或“等待回答”。
                能通过只读工具查明的信息、低风险可逆操作和普通偏好不要询问。
-               对任何会改变平台或 Puppet 业务状态的工具，先调用 assess_operation 评估本次准确工具和完整参数；
-               明确标记为只读的工具以及 Agent 内部计划/工作区控制不需要评估。exec 等任意命令入口即使本次
-               只执行 ls/whoami/cat，也先做一次无感评估并设置 requiresConfirmation=false，不要询问用户。评估认为需要确认时，
-               再调用 request_user_input(type="CONFIRMATION") 绑定完全相同的 toolName 和 argumentsJson；
-               未得到用户确认前不得调用被评估的业务变更工具。不要为了方便登录而修改已有用户密码，
-               优先使用已有凭据，确实需要时创建独立测试账号并按评估结果请求确认。
+               对任何会改变平台或 Puppet 业务状态的工具，在当前决策中先判断本次准确参数的风险；
+               先把一批计划操作按低风险只读、可逆变更和高风险不可逆变更分组，低风险只读操作可并发，
+               高风险操作必须从批次中拆出并单独确认。明确标记为只读的工具以及 Agent 内部计划/工作区控制不需要询问。
+               exec 等任意命令入口即使本次只执行 ls/whoami/cat，也要完成低风险判断，但不要询问用户。
+               判断为高风险时，先调用 request_user_input(type="CONFIRMATION") 绑定目标工具和完整参数，
+               actionSummary 必须写明操作、风险、可能后果和回滚方式；确认返回前不得调用该目标工具。
+               不要为了方便登录而修改已有用户密码，优先使用已有凭据，确实需要时创建独立测试账号并请求确认。
+               凭据、密钥、令牌和连接串不得主动脱敏、遮罩或改写；需要保留时直接读取原值。
             7. Shell 生成是独立的制品生成任务，与平台已有 Puppet 配置无关。除非用户明确要求匹配、复制某个 Puppet，
                否则禁止查询 Puppet 或把任何节点的协议、伪装器配置带入生成参数。生成 Java WebShell 前先调用
                getShellGeneratorMeta 和 getDisguises 获取合法候选；若用户尚未指定传输协议、请求伪装、响应伪装、

@@ -22,9 +22,9 @@ import java.util.List;
 @Mapper
 public interface AiConversationMapper {
 
-    @Insert("INSERT INTO ai_operation_assessments (assessment_id, user_id, thread_id, tool_name, arguments_hash, "
+    @Insert("INSERT INTO ai_operation_assessments (assessment_id, user_id, thread_id, tool_name, arguments_json, arguments_hash, "
             + "risk_level, requires_confirmation, reason, impact, rollback, status, created_at, expires_at, consumed_at) "
-            + "VALUES (#{assessmentId}, #{userId}, #{threadId}, #{toolName}, #{argumentsHash}, #{riskLevel}, "
+            + "VALUES (#{assessmentId}, #{userId}, #{threadId}, #{toolName}, #{argumentsJson}, #{argumentsHash}, #{riskLevel}, "
             + "#{requiresConfirmation}, #{reason}, #{impact}, #{rollback}, #{status}, #{createdAt}, #{expiresAt}, #{consumedAt})")
     int insertOperationAssessment(AiOperationAssessment row);
 

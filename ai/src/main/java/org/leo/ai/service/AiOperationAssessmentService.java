@@ -56,7 +56,8 @@ public class AiOperationAssessmentService {
         }
         String threadKey = effectiveThreadKey(memoryId);
         String userId = AiToolContext.getExecutionPolicy().getUserId();
-        String hash = AiUserInputService.confirmationArgumentsHash(normalizedArguments);
+        String canonicalArguments = AiUserInputService.canonicalArgumentsJson(normalizedArguments);
+        String hash = AiUserInputService.confirmationArgumentsHash(canonicalArguments);
         boolean confirm = Boolean.TRUE.equals(requiresConfirmation);
         String normalizedRisk = normalizeRisk(riskLevel, confirm);
         if (("HIGH".equals(normalizedRisk) || "CRITICAL".equals(normalizedRisk)) && !confirm) {
@@ -67,7 +68,7 @@ public class AiOperationAssessmentService {
         }
         Assessment assessment = new Assessment(
                 "assessment-" + java.util.UUID.randomUUID(),
-                normalizedTool, hash, normalizedRisk, confirm,
+                normalizedTool, canonicalArguments, hash, normalizedRisk, confirm,
                 limit(reason, 2_000), limit(impact, 2_000), limit(rollback, 2_000),
                 System.currentTimeMillis() + TTL_MS);
         if (repository != null) {
@@ -127,6 +128,7 @@ public class AiOperationAssessmentService {
         row.setUserId(userId);
         row.setThreadId(threadId);
         row.setToolName(value.toolName());
+        row.setArgumentsJson(value.argumentsJson());
         row.setArgumentsHash(value.argumentsHash());
         row.setRiskLevel(value.riskLevel());
         row.setRequiresConfirmation(value.requiresConfirmation());
@@ -140,7 +142,7 @@ public class AiOperationAssessmentService {
     }
 
     private Assessment fromEntity(AiOperationAssessment row) {
-        return new Assessment(row.getAssessmentId(), row.getToolName(), row.getArgumentsHash(),
+        return new Assessment(row.getAssessmentId(), row.getToolName(), row.getArgumentsJson(), row.getArgumentsHash(),
                 row.getRiskLevel(), Boolean.TRUE.equals(row.getRequiresConfirmation()),
                 row.getReason(), row.getImpact(), row.getRollback(), row.getExpiresAt());
     }
@@ -172,7 +174,7 @@ public class AiOperationAssessmentService {
         return normalized.length() <= max ? normalized : normalized.substring(0, max);
     }
 
-    public record Assessment(String key, String toolName, String argumentsHash,
+    public record Assessment(String key, String toolName, String argumentsJson, String argumentsHash,
                              String riskLevel, boolean requiresConfirmation,
                              String reason, String impact, String rollback,
                              long expiresAt) {
@@ -181,6 +183,7 @@ public class AiOperationAssessmentService {
                     "assessed", true,
                     "toolName", toolName,
                     "argumentsHash", argumentsHash,
+                    "argumentsJson", argumentsJson,
                     "riskLevel", riskLevel,
                     "requiresConfirmation", requiresConfirmation,
                     "reason", reason == null ? "" : reason,

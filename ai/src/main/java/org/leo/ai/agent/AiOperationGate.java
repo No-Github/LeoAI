@@ -1,25 +1,21 @@
 package org.leo.ai.agent;
 
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
-import org.leo.ai.service.AiOperationAssessmentService;
 import org.leo.ai.service.AiUserInputService;
 import org.leo.ai.thread.AiConversationStoreService;
 import org.leo.core.entity.AiUserInputRequest;
 import org.springframework.stereotype.Component;
 
 /**
- * Single execution gate for assessed business mutations and user confirmation.
+ * Single execution gate for business mutations and user confirmation.
  * Tool authorization owns identity; this class owns the operation protocol only.
  */
 @Component
 public class AiOperationGate {
 
-    private final AiOperationAssessmentService assessments;
     private final AiConversationStoreService conversations;
 
-    public AiOperationGate(AiOperationAssessmentService assessments,
-                           AiConversationStoreService conversations) {
-        this.assessments = assessments;
+    public AiOperationGate(AiConversationStoreService conversations) {
         this.conversations = conversations;
     }
 
@@ -29,23 +25,15 @@ public class AiOperationGate {
         String toolName = descriptor.name();
         String arguments = request != null && request.arguments() != null
                 ? request.arguments() : "{}";
-        AiOperationAssessmentService.Assessment assessment =
-                assessments.find(memoryId, toolName, arguments);
-        if (assessment == null) throw assessmentRequired(toolName);
-        if (!assessment.requiresConfirmation()) {
-            consumeAssessment(assessment);
-            return;
-        }
-
         String threadId = AiToolContext.getThreadId();
         if (threadId == null || threadId.isBlank()) threadId = String.valueOf(memoryId);
+        // 没有确认请求表示 AI 已判断为低风险，直接执行；高风险流程必须先创建确认卡片。
+        if (confirmationRequestId == null || confirmationRequestId.isBlank()) return;
         String hash = AiUserInputService.confirmationArgumentsHash(arguments);
-        if (conversations == null || confirmationRequestId == null
-                || confirmationRequestId.isBlank()) {
+        if (conversations == null) {
             throw confirmationRequired(toolName);
         }
-        AiUserInputRequest confirmation = confirmationRequestId == null
-                ? null : conversations.findUserInputRequest(confirmationRequestId);
+        AiUserInputRequest confirmation = conversations.findUserInputRequest(confirmationRequestId);
         if (confirmation == null
                 || !threadId.equals(confirmation.getThreadId())
                 || !AiUserInputRequest.TYPE_CONFIRMATION.equals(confirmation.getRequestType())
@@ -57,24 +45,6 @@ public class AiOperationGate {
                         toolName, hash, System.currentTimeMillis())) {
             throw confirmationRequired(toolName);
         }
-        consumeAssessment(assessment);
-    }
-
-    private void consumeAssessment(AiOperationAssessmentService.Assessment assessment) {
-        if (!assessments.consume(assessment)) {
-            throw AiToolException.modelCorrectable(
-                    "OPERATION_ASSESSMENT_ALREADY_USED",
-                    "本次操作评估已被使用或已过期。",
-                    "重新评估当前准确参数并再次请求用户确认。");
-        }
-    }
-
-    private AiToolException assessmentRequired(String toolName) {
-        return AiToolException.modelCorrectable(
-                "OPERATION_ASSESSMENT_REQUIRED",
-                "业务变更工具 " + toolName + " 必须先调用 assess_operation 评估本次具体操作。",
-                "先调用 assess_operation，传入准确 toolName、完整 argumentsJson、riskLevel、"
-                        + "requiresConfirmation 和风险原因；读取类操作不要调用该工具。");
     }
 
     private AiToolException confirmationRequired(String toolName) {

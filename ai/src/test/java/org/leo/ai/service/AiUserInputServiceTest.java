@@ -27,6 +27,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 class AiUserInputServiceTest {
 
@@ -61,7 +63,7 @@ class AiUserInputServiceTest {
         assertEquals(List.of(Map.of(
                 "label", "当前节点", "value", "current_node", "intent", "SCOPE_CURRENT"), Map.of(
                 "label", "全部节点", "value", "all_nodes", "intent", "SCOPE_ALL")), request.get("options"));
-        assertEquals(false, request.get("allowFreeText"));
+        assertEquals(true, request.get("allowFreeText"));
         verify(store).createUserInputRequest(any(AiUserInputRequest.class));
     }
 
@@ -82,6 +84,31 @@ class AiUserInputServiceTest {
         assertEquals("deleteUser", request.get("toolName"));
         assertNotNull(request.get("argumentsHash"));
         assertEquals(64, String.valueOf(request.get("argumentsHash")).length());
+    }
+
+    @Test
+    void confirmationCardIncludesAssessmentRiskAndImpact() {
+        AiConversationStoreService store = mock(AiConversationStoreService.class);
+        when(store.createUserInputRequest(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        PlatformAiState state = PlatformAiStateStore.create(STATE_ID);
+        state.bindActiveTurnId("turn-1");
+        state.bindActiveItemId("item-1");
+        AiToolContext.setFromMemoryId(STATE_ID);
+
+        AiUserInputService service = new AiUserInputService(store, new AiToolCatalog());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> request = (Map<String, Object>) service.request(
+                "CONFIRMATION", "确认删除用户吗？", options("确认删除", "confirm", "CONFIRM", "取消", "cancel", "REJECT"),
+                false, "操作：删除已有用户 user-1\n风险：CRITICAL\n"
+                        + "可能后果：用户将无法登录\n回滚：恢复原密码",
+                "deleteUser", "{\"userId\":\"user-1\"}",
+                "CRITICAL", 60L).get("request");
+
+        String summary = String.valueOf(request.get("actionSummary"));
+        assertTrue(summary.contains("风险：CRITICAL"));
+        assertTrue(summary.contains("可能后果：用户将无法登录"));
+        assertTrue(summary.contains("回滚：恢复原密码"));
     }
 
     @Test

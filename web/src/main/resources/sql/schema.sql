@@ -562,6 +562,7 @@ CREATE TABLE IF NOT EXISTS ai_operation_assessments (
     user_id VARCHAR(64) NOT NULL,
     thread_id VARCHAR(64) NOT NULL,
     tool_name VARCHAR(128) NOT NULL,
+    arguments_json TEXT NOT NULL,
     arguments_hash VARCHAR(128) NOT NULL,
     risk_level VARCHAR(32) NOT NULL,
     requires_confirmation INTEGER NOT NULL DEFAULT 0,

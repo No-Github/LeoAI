@@ -1,14 +1,22 @@
 package org.leo.ai.service;
 
+import com.alibaba.fastjson.JSON;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.invocation.InvocationContext;
+import dev.langchain4j.service.tool.AiServiceTool;
+import dev.langchain4j.service.tool.ToolExecutionResult;
 import dev.langchain4j.service.tool.ToolService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.leo.ai.agent.AiToolCatalog;
 import org.leo.ai.agent.AiToolContext;
+import org.leo.ai.agent.AiToolException;
+import org.leo.ai.agent.AiToolErrorHandler;
 import org.leo.ai.agent.AiToolKind;
 import org.leo.ai.agent.AiToolOperation;
 import org.leo.ai.agent.AiToolPolicy;
+import org.leo.ai.tools.common.OperationAssessmentTools;
 import org.leo.core.entity.AiExecutionPolicy;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class AiOperationAssessmentServiceTest {
 
@@ -73,6 +82,48 @@ class AiOperationAssessmentServiceTest {
         assertThrows(RuntimeException.class, () -> service.assess(
                 "platform-thread", "exec", "{\"cmd\":\"rm -f data\"}",
                 "CRITICAL", false, "不可逆删除", "数据丢失", null));
+    }
+
+    @Test
+    void reportsMalformedNestedArgumentsJsonAsModelCorrectable() {
+        AiToolCatalog catalog = catalog(new MutationTools());
+        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog);
+        bindContext();
+
+        AiToolException error = assertThrows(AiToolException.class, () -> service.assess(
+                "platform-thread", "exec", "{\"cmd\":\"grep -vE '\\. |#'\"}",
+                "LOW", false, "只读命令", null, null));
+
+        assertEquals("INVALID_OPERATION_ARGUMENTS_JSON", error.code());
+        assertEquals(AiToolException.Recovery.MODEL, error.recovery());
+    }
+
+    @Test
+    void malformedNestedArgumentsJsonReturnsRetryableToolResult() {
+        AiToolCatalog catalog = catalog(new MutationTools());
+        AiOperationAssessmentService service = new AiOperationAssessmentService(catalog);
+        bindContext();
+        AiServiceTool tool = ToolService.findTools(new OperationAssessmentTools(service)).get(0);
+        String outerArguments = JSON.toJSONString(java.util.Map.of(
+                "toolName", "exec",
+                "argumentsJson", "{\"cmd\":\"grep -vE '\\. |#'\"}",
+                "riskLevel", "LOW",
+                "requiresConfirmation", false,
+                "reason", "只读命令",
+                "impact", "无",
+                "rollback", "不适用"));
+        AiToolErrorHandler errors = new AiToolErrorHandler();
+
+        ToolExecutionResult result = ToolService.executeWithErrorHandling(
+                ToolExecutionRequest.builder().id("call-assess").name("assess_operation")
+                        .arguments(outerArguments).build(),
+                tool.toolExecutor(),
+                InvocationContext.builder().chatMemoryId("platform-thread").build(),
+                errors::handleArguments, errors::handleExecution);
+
+        assertTrue(result.isError());
+        assertTrue(result.resultText().contains("\"code\":\"INVALID_OPERATION_ARGUMENTS_JSON\""));
+        assertTrue(result.resultText().contains("\"retryable\":true"));
     }
 
     private static AiToolCatalog catalog(Object... sources) {

@@ -123,6 +123,14 @@ public class AiTurnTransaction {
             return discard(failure, List.of(), null, false);
         }
 
+        /**
+         * 模型尚未启动但 Turn 已创建时，仍保留失败前的计划快照。
+         */
+        public synchronized FailedTurn discardBeforeModel(AiTurnFailure failure,
+                                                            Object planSnapshot) {
+            return discard(failure, List.of(), planSnapshot, false);
+        }
+
         private FailedTurn discard(AiTurnFailure failure,
                                    List<AiSseEvent> eventLog,
                                    Object planSnapshot,
